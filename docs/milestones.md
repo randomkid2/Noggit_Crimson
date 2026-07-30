@@ -12,8 +12,9 @@ is not a completed milestone.
 |---|---|---|
 | — | Groundwork: guardrails, measured schema, dev-DB tooling | **done** (2026-07-30) |
 | — | Dev database live and seeded, 29/29 assertions | **done** (2026-07-30) |
-| — | M0 fixtures captured, plan drafted | **awaiting plan approval** |
-| M0 | Schema introspection layer | ~90% unblocked — see `docs/plans/M0-schema-layer.md` |
+| M0a | Capability model + test harness | **done** — 9/9 tests, no Qt required |
+| M0b | Live introspector + connection layer | next, unblocked |
+| M0c | QSettings adapter, UID migration | blocked on Qt |
 | M1 | Spawn read + tile overlay | not started |
 | M2 | Spawn edit + changeset emission | not started |
 | M3 | Waypoint editor | not started |

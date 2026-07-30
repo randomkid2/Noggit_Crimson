@@ -1,12 +1,26 @@
 /**
+# Each directory must be un-ignored as well as its contents. `!/src/**` alone does not do it:
+# `/**` above matches the bare `src` entry too, so git prunes the directory and never looks
+# inside it. Existing files survive only because gitignore does not apply to tracked files --
+# which means NEW files added under these directories are silently invisible to `git add`.
+# That bit this fork when the first new source file under src/ failed to stage.
+!/bin/
 !/bin/**
+!/cmake/
 !/cmake/**
+!/etc/
 !/etc/**
+!/include/
 !/include/**
+!/media/
 !/media/**
+!/resources/
 !/resources/**
+!/sql/
 !/sql/**
+!/src/
 !/src/**
+!/test/
 !/test/**
 !/.idea/**
 !.gitignore

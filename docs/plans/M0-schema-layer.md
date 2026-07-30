@@ -1,6 +1,19 @@
 # M0 plan — schema introspection layer
 
-**Status: awaiting approval.** No implementation code until this is signed off.
+**Status: approved and partially implemented (2026-07-30).**
+
+| Part | State |
+|---|---|
+| `ColumnInfo`, `SchemaModel` | **done** — 9 test cases, 70 assertions, built and run **with no Qt present** |
+| `tests/` target, Catch2 v3.7.1, fixture loader | **done** — 9/9 via ctest, zero warnings at `/W4 /permissive-` |
+| `SchemaIntrospector` | next — needs Connector/C++ (staged) and the dev DB (seeded) |
+| `WorldDatabaseConnection` | next — same dependencies |
+| `DatabaseSettings` (QSettings adapter) | blocked on Qt, ~40 lines |
+| Migrate UID functions, delete old `connect()` | blocked on Qt (needs a full build to verify) |
+
+**Deviation from the plan below:** the fixture loader was placed in `tests/FixtureLoader.*`
+rather than `src/noggit/database/SchemaFixture.*`, so no test-only code ships inside the
+application. Everything else was built as specified.
 
 ## The one idea that changes the schedule
 
