@@ -12,7 +12,8 @@ is not a completed milestone.
 |---|---|---|
 | — | Groundwork: guardrails, measured schema, dev-DB tooling | **done** (2026-07-30) |
 | — | Dev database live and seeded, 29/29 assertions | **done** (2026-07-30) |
-| M0 | Schema introspection layer | blocked on Qt / Connector only |
+| — | M0 fixtures captured, plan drafted | **awaiting plan approval** |
+| M0 | Schema introspection layer | ~90% unblocked — see `docs/plans/M0-schema-layer.md` |
 | M1 | Spawn read + tile overlay | not started |
 | M2 | Spawn edit + changeset emission | not started |
 | M3 | Waypoint editor | not started |
@@ -47,11 +48,13 @@ These block compilation and are not code problems. See `docs/environment.md`.
    `src/external/NodeEditor/CMakeLists.txt:37` requires `Qt5 5.10`, so `Qt5::OpenGL` is never
    defined, and `framelesshelper` wants `Qt::GuiPrivate`. Nothing else is outstanding for a
    base build. Install **Qt 5.15.2 msvc2019_64**.
-5. **MySQL Connector/C++** — needed for `USE_SQL`. When installing, note that
-   `src/mysql/mysql.cpp` includes `<driver.h>` while CMake's `FIND_PATH` and the README both
-   resolve `MYSQLCPPCONN_INCLUDE` to the *parent* of `cppconn/`. Point it at the directory that
-   actually contains `driver.h`, or switch the include to `<cppconn/driver.h>` (the
-   commented-out line, which is the correct form).
+5. ~~**MySQL Connector/C++**~~ — done. 26.7.0 staged in the sibling `Noggit3libs` layout;
+   `-DUSE_SQL=ON` resolves all three `FIND_*` calls with no `-D` paths. Current Connector/C++
+   still ships the legacy `cppconn` API. See `docs/setup.md`.
+
+   Confirmed while doing it: `MYSQLCPPCONN_INCLUDE` resolves to the *parent* of `cppconn/`, so
+   `src/mysql/mysql.cpp`'s `#include <driver.h>` will not compile. The commented-out
+   `<cppconn/driver.h>` form is correct. Left unfixed until it can actually be built.
 
 ## M0 — Schema introspection layer
 

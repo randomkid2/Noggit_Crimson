@@ -48,6 +48,39 @@ The failure surfaces at **generate**, not configure, so a configure that says
 
 ## MySQL Connector/C++ for `USE_SQL`
 
+Noggit needs the **legacy JDBC (`cppconn`) API**, not the X DevAPI. Current Connector/C++
+(**26.7.0** — MySQL moved to year-based versioning, so there is no 9.x/10.x) still ships it
+under `include/jdbc/`. Verified against 26.7.0.
+
+Download `mysql-connector-c++-<version>-winx64.zip` from
+<https://dev.mysql.com/downloads/connector/cpp/>. Fetch it with a browser: `dev.mysql.com`
+returns 403 to scripted requests regardless of user-agent.
+
+The zip layout, which is not quite what the README implies:
+
+```
+include/jdbc/cppconn/driver.h          <- what FIND_PATH looks for
+lib64/vs14/mysqlcppconn.lib            <- import library
+lib64/mysqlcppconn-<n>-vs14.dll        <- runtime DLL, one level ABOVE vs14/
+```
+
+**Easiest setup — no `-D` flags at all.** CMake already searches
+`${CMAKE_SOURCE_DIR}/../Noggit3libs/mysql`, so build this sibling layout and everything resolves
+itself. `FIND_PATH` wants `cppconn/driver.h` *directly* under `connector/`, so copy the
+**contents** of `include/jdbc` in — not the `jdbc` folder itself:
+
+```
+<repo>/../Noggit3libs/
+  mysql/
+    libmysql.lib                  from your MySQL Server lib/ directory
+    connector/
+      cppconn/…                   contents of the zip's include/jdbc/
+      mysqlcppconn.lib            from lib64/vs14/
+      mysqlcppconn-<n>-vs14.dll   from lib64/  (copy next to noggit.exe at runtime)
+```
+
+Then `cmake … -DUSE_SQL=ON` and nothing else. Explicit paths still work if you prefer:
+
 ```bash
 -DUSE_SQL=ON
 -DMYSQL_LIBRARY="<MySQL Server>/lib/libmysql.lib"
@@ -55,8 +88,8 @@ The failure surfaces at **generate**, not configure, so a configure that says
 -DMYSQLCPPCONN_LIBRARY="<Connector>/lib64/vs14/mysqlcppconn.lib"
 ```
 
-CMake also searches `${CMAKE_SOURCE_DIR}/../Noggit3libs/mysql`, so a sibling `Noggit3libs`
-directory works without passing any paths.
+If the paths are wrong, CMake stops with `MySQL lib or connector not found` at *configure*
+time — so a configure that gets as far as Qt errors has already proven your MySQL paths good.
 
 > [!warning] The `USE_SQL` path has a known include contradiction
 > `src/mysql/mysql.cpp` does `#include <driver.h>`, but CMake's

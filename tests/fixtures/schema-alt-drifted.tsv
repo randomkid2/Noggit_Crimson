@@ -1,0 +1,149 @@
+table_name	ordinal_position	column_name	column_type	is_nullable	column_default	extra
+creature	1	guid	int unsigned	NO	\N	auto_increment
+creature	2	id	int unsigned	NO	0
+creature	3	map	smallint unsigned	NO	0
+creature	4	spawnMask	tinyint unsigned	NO	1
+creature	5	phaseMask	int unsigned	NO	1
+creature	6	modelid	int unsigned	NO	0
+creature	7	equipment_id	tinyint	NO	0
+creature	8	position_x	float	NO	0
+creature	9	position_y	float	NO	0
+creature	10	position_z	float	NO	0
+creature	11	orientation	float	NO	0
+creature	12	spawntimesecs	int unsigned	NO	120
+creature	13	spawndist	float	NO	0
+creature	14	currentwaypoint	int unsigned	NO	0
+creature	15	curhealth	int unsigned	NO	1
+creature	16	curmana	int unsigned	NO	0
+creature	17	MovementType	tinyint unsigned	NO	0
+creature	18	npcflag	int unsigned	NO	0
+creature	19	unit_flags	int unsigned	NO	0
+creature	20	dynamicflags	int unsigned	NO	0
+creature	21	ScriptName	char(64)	NO
+creature	22	Comment	varchar(255)	YES	\N
+creature_addon	1	guid	int unsigned	NO	0
+creature_addon	2	path_id	int unsigned	NO	0
+creature_addon	3	mount	int unsigned	NO	0
+creature_addon	4	bytes1	int unsigned	NO	0
+creature_addon	5	bytes2	int unsigned	NO	0
+creature_addon	6	emote	int unsigned	NO	0
+creature_addon	7	auras	text	YES	\N
+creature_template_addon	1	entry	int unsigned	NO	0
+creature_template_addon	2	path_id	int unsigned	NO	0
+creature_template_addon	3	mount	int unsigned	NO	0
+creature_template_addon	4	bytes1	int unsigned	NO	0
+creature_template_addon	5	bytes2	int unsigned	NO	0
+creature_template_addon	6	emote	int unsigned	NO	0
+creature_template_addon	7	auras	text	YES	\N
+creature_model_info	1	DisplayID	int unsigned	NO	0
+creature_model_info	2	BoundingRadius	float	NO	0
+creature_model_info	3	CombatReach	float	NO	0
+creature_model_info	4	DisplayID_Other_Gender	int unsigned	NO	0
+creature_model_info	5	VerifiedBuild	int	YES	0
+creature_template	1	entry	int unsigned	NO	0
+creature_template	2	name	char(100)	NO
+creature_template	3	subname	char(100)	YES	\N
+creature_template	4	minlevel	tinyint unsigned	NO	1
+creature_template	5	maxlevel	tinyint unsigned	NO	1
+creature_template	6	faction	smallint unsigned	NO	0
+creature_template	7	AIName	char(64)	NO
+creature_template	8	MovementType	tinyint unsigned	NO	0
+creature_template_model	1	CreatureID	int unsigned	NO	0
+creature_template_model	2	Idx	int unsigned	NO	0
+creature_template_model	3	CreatureDisplayID	int unsigned	NO	0
+creature_template_model	4	DisplayScale	float	NO	1
+creature_template_model	5	Probability	float	NO	1
+creature_template_model	6	VerifiedBuild	int	YES	0
+gameobject	1	guid	int unsigned	NO	\N	auto_increment
+gameobject	2	id	int unsigned	NO	0
+gameobject	3	map	smallint unsigned	NO	0
+gameobject	4	spawnMask	tinyint unsigned	NO	1
+gameobject	5	phaseMask	int unsigned	NO	1
+gameobject	6	position_x	float	NO	0
+gameobject	7	position_y	float	NO	0
+gameobject	8	position_z	float	NO	0
+gameobject	9	orientation	float	NO	0
+gameobject	10	rotation0	float	NO	0
+gameobject	11	rotation1	float	NO	0
+gameobject	12	rotation2	float	NO	0
+gameobject	13	rotation3	float	NO	0
+gameobject	14	spawntimesecs	int	NO	0
+gameobject	15	animprogress	tinyint unsigned	NO	0
+gameobject	16	state	tinyint unsigned	NO	0
+gameobject	17	ScriptName	char(64)	NO
+gameobject_template_addon	1	entry	int unsigned	NO	0
+gameobject_template_addon	2	faction	smallint unsigned	NO	0
+gameobject_template_addon	3	flags	int unsigned	NO	0
+gameobject_template_addon	4	mingold	int unsigned	NO	0
+gameobject_template_addon	5	maxgold	int unsigned	NO	0
+gameobject_template_addon	6	artkit0	int	NO	0
+gameobject_template_addon	7	artkit1	int	NO	0
+gameobject_template_addon	8	artkit2	int	NO	0
+gameobject_template_addon	9	artkit3	int	NO	0
+gameobject_template_addon	10	artkit4	int	NO	0
+gameobject_template_addon	11	WorldEffectID	int unsigned	NO	0
+gameobject_template_addon	12	AIAnimKitID	int unsigned	NO	0
+smart_scripts	1	entryorguid	int	NO	0
+smart_scripts	2	source_type	tinyint unsigned	NO	0
+smart_scripts	3	id	smallint unsigned	NO	0
+smart_scripts	4	link	smallint unsigned	NO	0
+smart_scripts	5	event_type	tinyint unsigned	NO	0
+smart_scripts	6	event_phase_mask	smallint unsigned	NO	0
+smart_scripts	7	event_chance	tinyint unsigned	NO	100
+smart_scripts	8	event_flags	smallint unsigned	NO	0
+smart_scripts	9	event_param1	int unsigned	NO	0
+smart_scripts	10	event_param2	int unsigned	NO	0
+smart_scripts	11	event_param3	int unsigned	NO	0
+smart_scripts	12	event_param4	int unsigned	NO	0
+smart_scripts	13	action_type	tinyint unsigned	NO	0
+smart_scripts	14	action_param1	int unsigned	NO	0
+smart_scripts	15	action_param2	int unsigned	NO	0
+smart_scripts	16	action_param3	int unsigned	NO	0
+smart_scripts	17	action_param4	int unsigned	NO	0
+smart_scripts	18	action_param5	int unsigned	NO	0
+smart_scripts	19	action_param6	int unsigned	NO	0
+smart_scripts	20	target_type	tinyint unsigned	NO	0
+smart_scripts	21	target_param1	int unsigned	NO	0
+smart_scripts	22	target_param2	int unsigned	NO	0
+smart_scripts	23	target_param3	int unsigned	NO	0
+smart_scripts	24	target_x	float	NO	0
+smart_scripts	25	target_y	float	NO	0
+smart_scripts	26	target_z	float	NO	0
+smart_scripts	27	target_o	float	NO	0
+smart_scripts	28	comment	text	NO	\N
+waypoint_data	1	id	int unsigned	NO	0
+waypoint_data	2	point	int unsigned	NO	0
+waypoint_data	3	position_x	float	NO	0
+waypoint_data	4	position_y	float	NO	0
+waypoint_data	5	position_z	float	NO	0
+waypoint_data	6	orientation	float	YES	\N
+waypoint_data	7	delay	int unsigned	NO	0
+waypoint_data	8	move_type	int	NO	0
+waypoint_data	9	action	int	NO	0
+waypoint_data	10	action_chance	smallint	NO	100
+waypoint_data	11	wpguid	int	NO	0
+waypoints	1	entry	int unsigned	NO	0
+waypoints	2	pointid	int unsigned	NO	0
+waypoints	3	position_x	float	NO	0
+waypoints	4	position_y	float	NO	0
+waypoints	5	position_z	float	NO	0
+waypoints	6	point_comment	text	YES	\N
+script_waypoint	1	entry	int unsigned	NO	0
+script_waypoint	2	pointid	int unsigned	NO	0
+script_waypoint	3	location_x	float	NO	0
+script_waypoint	4	location_y	float	NO	0
+script_waypoint	5	location_z	float	NO	0
+script_waypoint	6	waittime	int unsigned	NO	0
+pool_creature	1	guid	int unsigned	NO	0
+pool_creature	2	pool_entry	int unsigned	NO	0
+pool_creature	3	chance	float unsigned	NO	0
+pool_creature	4	description	varchar(255)	YES	\N
+pool_gameobject	1	guid	int unsigned	NO	0
+pool_gameobject	2	pool_entry	int unsigned	NO	0
+pool_gameobject	3	chance	float unsigned	NO	0
+pool_gameobject	4	description	varchar(255)	YES	\N
+pool_template	1	entry	int unsigned	NO	0
+pool_template	2	max_limit	int unsigned	NO	0
+pool_template	3	description	varchar(255)	YES	\N
+version_db_world	1	db_version	varchar(120)	YES	\N
+version_db_world	2	cache_id	int	YES	0
