@@ -32,6 +32,7 @@ when. Changes made in this fork:
 | 2026-07-30 | Added `docs/plans/M0-schema-layer.md` — design for the database schema introspection layer. |
 | 2026-07-30 | Added `src/noggit/database/` (`ColumnInfo.hpp`, `SchemaModel.hpp/.cpp`) — schema capability model. First new application source in this fork; carries the project GPL header. |
 | 2026-07-30 | Added `tests/` — standalone Catch2 target for the schema layer. The repository had no test framework before this. |
+| 2026-07-30 | Added `src/noggit/database/` connection and introspection layer (`ConnectionConfig.hpp`, `WorldDatabaseConnection.hpp/.cpp`, `SchemaIntrospector.hpp/.cpp`) plus live integration tests. |
 
 Keep this table current. When application code lands under `src/`, every new file needs the
 project's GPL header, matching the 337 existing files that carry it:
