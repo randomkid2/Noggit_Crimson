@@ -13,9 +13,16 @@ is not a completed milestone.
 | — | Groundwork: guardrails, measured schema, dev-DB tooling | **done** (2026-07-30) |
 | — | Dev database live and seeded, 29/29 assertions | **done** (2026-07-30) |
 | M0a | Capability model + test harness | **done** |
-| M0b | Live introspector + connection layer | **done** — 15/15 tests, no Qt required |
-| M0c | QSettings adapter, UID migration | blocked on Qt (~40 lines) |
-| M1 | Spawn read + tile overlay | next after Qt |
+| M0b | Live introspector + connection layer | **done** |
+| M0c | QSettings adapter | **written, NOT COMPILED** — needs Qt to verify |
+| M0c | UID migration off the old `connect()` | blocked on Qt |
+| M1 | Tile math + spawn query (logic) | **done** — rendering blocked on Qt |
+| M2 | Changeset emission (logic) | **done** — staging UI blocked on Qt |
+| M3 | Waypoint path model + emission | **done** — visual editor blocked on Qt |
+| M4 | Coordinate transforms for chunk moves | **partial** — maths done, terrain side needs Qt |
+| M5 | Doctor, recovery, coordinate round-trip | not started |
+
+**98 test cases, 693 assertions, 11/11 ctest groups** — all with Qt absent.
 | M1 | Spawn read + tile overlay | not started |
 | M2 | Spawn edit + changeset emission | not started |
 | M3 | Waypoint editor | not started |

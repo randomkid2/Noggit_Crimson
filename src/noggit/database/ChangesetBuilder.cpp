@@ -1,0 +1,1050 @@
+// This file is part of Noggit3, licensed under GNU General Public License (version 3).
+
+#include <noggit/database/ChangesetBuilder.hpp>
+#include <noggit/database/TileCoordinates.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <iomanip>
+#include <locale>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+using namespace Noggit::Database;
+
+namespace
+{
+  // Only names that do NOT vary between schema generations appear here as literals. Everything
+  // that varies -- the wander distance column, the creature_addon pose columns -- is resolved
+  // through the SchemaModel at emission time. A literal "wander_distance" in this file would
+  // silently produce a broken changeset against an AzerothCore target, which is the single
+  // failure this class exists to prevent.
+  constexpr char const* TABLE_CREATURE = "creature";
+  constexpr char const* TABLE_CREATURE_ADDON = "creature_addon";
+  constexpr char const* TABLE_GAMEOBJECT = "gameobject";
+
+  constexpr char const* COLUMN_GUID = "guid";
+  constexpr char const* COLUMN_ID = "id";
+
+  constexpr char const* VARIABLE_CREATURE_GUID = "@CGUID";
+  constexpr char const* VARIABLE_GAMEOBJECT_GUID = "@OGUID";
+  constexpr char const* VARIABLE_PATH = "@PATH";
+
+  // Six decimals is comfortably inside FLOAT precision at world magnitudes: at ~9500 yards the
+  // representable step of a FLOAT is roughly 1e-3, so the emitted text carries more digits than
+  // the column can hold and nothing is lost on write.
+  constexpr int COORDINATE_DECIMALS = 6;
+
+  constexpr std::size_t LINE_WIDTH = 92;
+  constexpr std::size_t RULE_WIDTH = 90;
+
+  constexpr std::uint64_t MAX_UINT32 = 0xFFFFFFFFull;
+  constexpr double TWO_PI = 6.283185307179586;
+
+  // Largest yaw disagreement between `orientation` and `rotation0..3` that is written off as
+  // float noise rather than reported. A tenth of a degree is far below anything a reviewer
+  // could see in game.
+  constexpr double ORIENTATION_AGREEMENT_TOLERANCE = 1.0e-3;
+
+  // creature_addon pose defaults.
+  //
+  // CreatureSpawn carries no pose data on purpose: Noggit places spawns, it does not author
+  // emotes or stand states. These are the TDB defaults, and SheathState 1 (melee) is what the
+  // reference changeset in tools/dev-db/03_example_changeset.sql writes.
+  constexpr std::uint32_t DEFAULT_MOUNT = 0;
+  constexpr std::uint32_t DEFAULT_MOUNT_CREATURE_ID = 0;
+  constexpr std::uint32_t DEFAULT_STAND_STATE = 0;
+  constexpr std::uint32_t DEFAULT_ANIM_TIER = 0;
+  constexpr std::uint32_t DEFAULT_VIS_FLAGS = 0;
+  constexpr std::uint32_t DEFAULT_SHEATH_STATE = 1;
+  constexpr std::uint32_t DEFAULT_PVP_FLAGS = 0;
+  constexpr std::uint32_t DEFAULT_EMOTE = 0;
+  constexpr std::uint32_t DEFAULT_VISIBILITY_DISTANCE_TYPE = 0;
+
+  ValidationIssue makeIssue(ValidationIssue::Severity severity, std::string message)
+  {
+    ValidationIssue issue;
+    issue.severity = severity;
+    issue.message = std::move(message);
+    return issue;
+  }
+
+  char const* severityLabel(ValidationIssue::Severity severity)
+  {
+    return severity == ValidationIssue::Severity::ERROR ? "ERROR" : "WARNING";
+  }
+
+  // Copies `source` into `sink`, prefixing every message with the spawn it concerns. Without
+  // the prefix a caller holding issues() sees "wander distance must be zero" with no way to
+  // tell which of two hundred spawns produced it.
+  void appendIssues
+    ( std::vector<ValidationIssue>& sink
+    , std::vector<ValidationIssue> const& source
+    , std::string const& context
+    )
+  {
+    for (ValidationIssue const& issue : source)
+    {
+      sink.push_back(makeIssue(issue.severity, context + ": " + issue.message));
+    }
+  }
+
+  // Identifiers are validated, never escaped. A name carrying anything a MySQL identifier
+  // cannot hold did not come out of information_schema, so splicing it into a statement means
+  // something upstream is already wrong -- refusing is the only safe answer.
+  std::string quoteIdentifier(std::string const& name)
+  {
+    if (name.empty())
+    {
+      throw ChangesetError("Refusing to emit an empty SQL identifier.");
+    }
+
+    for (char c : name)
+    {
+      bool const acceptable
+        (  (c >= 'a' && c <= 'z')
+        || (c >= 'A' && c <= 'Z')
+        || (c >= '0' && c <= '9')
+        || c == '_'
+        || c == '$'
+        );
+
+      if (!acceptable)
+      {
+        throw ChangesetError
+          ("Refusing to emit the SQL identifier '" + name + "': it holds a character that cannot"
+           " appear in an introspected table or column name. The schema this was resolved from"
+           " is not trustworthy.");
+      }
+    }
+
+    return "`" + name + "`";
+  }
+
+  std::string unsignedText(std::uint64_t value)
+  {
+    return std::to_string(value);
+  }
+
+  std::string signedText(std::int64_t value)
+  {
+    return std::to_string(value);
+  }
+
+  // Joins `pieces` with ", ", wrapping onto a new line indented by `indent` once a line would
+  // pass LINE_WIDTH. `used` is how many columns the caller has already written on the first
+  // line. Deterministic: the same changeset formats identically on every run, so a review diff
+  // shows content changes and nothing else.
+  std::string joinWrapped
+    (std::vector<std::string> const& pieces, std::string const& indent, std::size_t used)
+  {
+    std::string out;
+    std::size_t line = used;
+
+    for (std::size_t i = 0; i < pieces.size(); ++i)
+    {
+      bool const last (i + 1 == pieces.size());
+      std::string const piece (pieces[i] + (last ? "" : ","));
+
+      if (i != 0)
+      {
+        if (line + 1 + piece.size() > LINE_WIDTH)
+        {
+          out += "\n" + indent;
+          line = indent.size();
+        }
+        else
+        {
+          out += " ";
+          ++line;
+        }
+      }
+
+      out += piece;
+      line += piece.size();
+    }
+
+    return out;
+  }
+
+  std::string sectionHeader(std::string const& title)
+  {
+    std::string out ("-- " + title + " ");
+
+    while (out.size() < RULE_WIDTH)
+    {
+      out += "-";
+    }
+
+    return out + "\n";
+  }
+
+  // Renders `text` as SQL line comments. Splitting on newlines is not cosmetic: a description
+  // holding a newline would otherwise end the comment and let the rest of the line execute.
+  std::string commentBlock(std::string const& text)
+  {
+    std::string out;
+    std::string line;
+
+    for (char c : text)
+    {
+      if (c == '\n')
+      {
+        out += "-- " + line + "\n";
+        line.clear();
+      }
+      else if (c != '\r')
+      {
+        line.push_back(c);
+      }
+    }
+
+    if (!line.empty())
+    {
+      out += "-- " + line + "\n";
+    }
+
+    return out;
+  }
+
+  // "@CGUID" for the base value, "@CGUID+7" for anything above it. One SET line at the top
+  // retargets every statement in the file, which is the TDB convention and the reason a
+  // reviewer can move a whole changeset by editing the header.
+  std::string variableExpression
+    (char const* variable, std::uint64_t base, std::uint64_t value)
+  {
+    if (value == base)
+    {
+      return variable;
+    }
+
+    return std::string(variable) + "+" + unsignedText(value - base);
+  }
+
+  std::string deleteStatement
+    ( std::string const& table
+    , std::string const& key_column
+    , std::vector<std::uint64_t> values
+    , char const* variable
+    , std::uint64_t base
+    )
+  {
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+
+    std::string out
+      ("DELETE FROM " + quoteIdentifier(table) + " WHERE " + quoteIdentifier(key_column));
+
+    if (values.size() == 1)
+    {
+      return out + " = " + variableExpression(variable, base, values.front()) + ";\n";
+    }
+
+    std::vector<std::string> expressions;
+    expressions.reserve(values.size());
+
+    for (std::uint64_t value : values)
+    {
+      expressions.push_back(variableExpression(variable, base, value));
+    }
+
+    out += " IN (";
+
+    return out + joinWrapped(expressions, "   ", out.size()) + ");\n";
+  }
+
+  std::string insertStatement
+    ( std::string const& table
+    , std::vector<std::string> const& columns
+    , std::vector<std::vector<std::string>> const& rows
+    )
+  {
+    std::vector<std::string> quoted;
+    quoted.reserve(columns.size());
+
+    for (std::string const& column : columns)
+    {
+      quoted.push_back(quoteIdentifier(column));
+    }
+
+    std::string out ("INSERT INTO " + quoteIdentifier(table) + "\n  (");
+    out += joinWrapped(quoted, "   ", 3) + ") VALUES\n";
+
+    for (std::size_t i = 0; i < rows.size(); ++i)
+    {
+      // A value list that has drifted out of step with the column list is the worst possible
+      // outcome for this class: MySQL accepts nothing, or worse, accepts a row with every
+      // field shifted by one. Catch it here rather than in a world database.
+      if (rows[i].size() != columns.size())
+      {
+        throw ChangesetError
+          ("Internal error building the " + table + " statement: row " + unsignedText(i)
+           + " has " + unsignedText(rows[i].size()) + " values for " + unsignedText(columns.size())
+           + " columns. Refusing to emit a misaligned INSERT.");
+      }
+
+      out += "  (" + joinWrapped(rows[i], "   ", 3) + ")";
+      out += (i + 1 == rows.size()) ? ";\n" : ",\n";
+    }
+
+    return out;
+  }
+
+  // Exact comparison against the default is deliberate here, and is not the float-equality
+  // mistake the schema notes warn about: the question is "did the caller leave this field
+  // untouched", not "are these two computed rotations the same".
+  bool isDefaultRotation(TileCoordinates::Quaternion const& rotation)
+  {
+    return rotation.r0 == 0.0 && rotation.r1 == 0.0 && rotation.r2 == 0.0 && rotation.r3 == 1.0;
+  }
+
+  // rotation0..3 is a quaternion, not Euler angles. A caller that set only `orientation` gets
+  // the quaternion derived from it; emitting the identity instead would leave every rotated
+  // object facing north in game while looking correct in the editor.
+  TileCoordinates::Quaternion resolvedRotation(GameObjectSpawn const& spawn)
+  {
+    if (isDefaultRotation(spawn.rotation))
+    {
+      return TileCoordinates::quaternionForOrientation(spawn.orientation);
+    }
+
+    return spawn.rotation;
+  }
+
+  // Empty unless an explicitly supplied quaternion disagrees with `orientation`. The two are
+  // written to the same row and the core trusts the quaternion, so a disagreement means the
+  // object faces one way in the editor and another in game.
+  std::string rotationDisagreement(GameObjectSpawn const& spawn)
+  {
+    if (isDefaultRotation(spawn.rotation))
+    {
+      return {};
+    }
+
+    double const from_quaternion (TileCoordinates::orientationForQuaternion(spawn.rotation));
+    double const from_orientation (TileCoordinates::normaliseOrientation(spawn.orientation));
+
+    double delta (std::fabs(from_quaternion - from_orientation));
+    delta = std::min(delta, TWO_PI - delta);
+
+    if (delta <= ORIENTATION_AGREEMENT_TOLERANCE)
+    {
+      return {};
+    }
+
+    return "the supplied rotation quaternion yields orientation "
+         + SqlFormat::coordinate(from_quaternion) + " but the orientation column says "
+         + SqlFormat::coordinate(from_orientation) + ". The quaternion is emitted as given;"
+           " the core uses it, not the orientation column.";
+  }
+}
+
+std::string SqlFormat::coordinate(double value)
+{
+  // A non-finite coordinate would stream as "nan" or "inf", neither of which is a SQL number.
+  // Emitting it produces a syntax error at apply time at best; substituting zero would move
+  // the spawn to the map origin silently.
+  if (!std::isfinite(value))
+  {
+    throw ChangesetError
+      ("Refusing to format a non-finite coordinate for SQL. A NaN or infinite position means"
+       " the value was computed from bad input; writing any substitute would move the spawn.");
+  }
+
+  // std::fixed rather than the default float format: the default switches to scientific
+  // notation for small magnitudes, and 1e-05 is not accepted where MySQL expects a plain
+  // number in every context this text is used. The classic locale is imbued because a
+  // comma decimal separator would silently turn one value into two.
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  out << std::fixed << std::setprecision(COORDINATE_DECIMALS) << value;
+
+  std::string text (out.str());
+
+  // "-0.000000" is legal SQL but reads as a bug in review, and it is what every value between
+  // -1e-7 and -0.0 formats to. Normalise the sign away when no significant digit survived.
+  if (!text.empty() && text.front() == '-')
+  {
+    bool const all_zero
+      (text.find_first_of("123456789") == std::string::npos);
+
+    if (all_zero)
+    {
+      text.erase(text.begin());
+    }
+  }
+
+  return text;
+}
+
+std::string SqlFormat::quote(std::string const& value)
+{
+  // Returns the escaped BODY of a literal, without the surrounding quotes, so the result can
+  // be embedded wherever a single-quoted literal is being assembled. The escape set matches
+  // mysql_real_escape_string: anything less lets a crafted name close the literal.
+  std::string out;
+  out.reserve(value.size() + 8);
+
+  for (char c : value)
+  {
+    switch (c)
+    {
+      case '\\': out += "\\\\"; break;
+      case '\'': out += "\\'";  break;
+      case '"':  out += "\\\""; break;
+      case '\n': out += "\\n";  break;
+      case '\r': out += "\\r";  break;
+      case '\0': out += "\\0";  break;
+      case '\x1a': out += "\\Z"; break;
+      default: out.push_back(c); break;
+    }
+  }
+
+  return out;
+}
+
+ChangesetBuilder::ChangesetBuilder(SchemaModel schema, Options options)
+  : _schema (std::move(schema))
+  , _options (std::move(options))
+{
+}
+
+void ChangesetBuilder::addCreature(CreatureSpawn const& spawn)
+{
+  std::string const context ("creature guid " + unsignedText(spawn.guid));
+
+  for (CreatureSpawn const& existing : _creatures)
+  {
+    if (existing.guid == spawn.guid)
+    {
+      _issues.push_back
+        ( makeIssue
+            ( ValidationIssue::Severity::ERROR
+            , context + ": added to this changeset twice. Two rows sharing a guid break"
+                        " idempotency and collide on the primary key."
+            )
+        );
+      break;
+    }
+  }
+
+  // Everything below is applied to a copy, and the copy is what gets validated and emitted.
+  // Validating the caller's struct instead would report errors for conditions this builder
+  // then fixes, and would let a fix go out unvalidated.
+  CreatureSpawn resolved (spawn);
+
+  if (resolved.movement_type == MovementType::WAYPOINT)
+  {
+    // A waypoint creature is bound to its path through creature_addon.path_id and nowhere
+    // else. Emitting the creature row without the addon row produces a spawn that stands
+    // still, which reads to the user as "the editor lost my path" rather than as an error.
+    resolved.has_addon = true;
+
+    if (resolved.path_id == 0)
+    {
+      std::uint64_t const derived
+        (static_cast<std::uint64_t>(resolved.guid) * _options.path_id_multiplier);
+
+      if (derived == 0)
+      {
+        _issues.push_back
+          ( makeIssue
+              ( ValidationIssue::Severity::ERROR
+              , context + ": follows a waypoint path but no path id was given and the"
+                          " configured multiplier derives 0, which the core reads as"
+                          " \"no path\"."
+              )
+          );
+      }
+      else if (derived > MAX_UINT32)
+      {
+        _issues.push_back
+          ( makeIssue
+              ( ValidationIssue::Severity::ERROR
+              , context + ": the conventional path id guid * "
+                        + unsignedText(_options.path_id_multiplier) + " is "
+                        + unsignedText(derived) + ", which does not fit the unsigned 32-bit"
+                          " path_id column. Assign a path id explicitly."
+              )
+          );
+      }
+      else
+      {
+        resolved.path_id = static_cast<std::uint32_t>(derived);
+      }
+    }
+  }
+
+  appendIssues(_issues, SpawnValidation::validate(resolved), context);
+
+  _creatures.push_back(resolved);
+}
+
+void ChangesetBuilder::addGameObject(GameObjectSpawn const& spawn)
+{
+  std::string const context ("gameobject guid " + unsignedText(spawn.guid));
+
+  for (GameObjectSpawn const& existing : _gameobjects)
+  {
+    if (existing.guid == spawn.guid)
+    {
+      _issues.push_back
+        ( makeIssue
+            ( ValidationIssue::Severity::ERROR
+            , context + ": added to this changeset twice. Two rows sharing a guid break"
+                        " idempotency and collide on the primary key."
+            )
+        );
+      break;
+    }
+  }
+
+  appendIssues(_issues, SpawnValidation::validate(spawn), context);
+
+  std::string const disagreement (rotationDisagreement(spawn));
+
+  if (!disagreement.empty())
+  {
+    _issues.push_back
+      (makeIssue(ValidationIssue::Severity::WARNING, context + ": " + disagreement));
+  }
+
+  _gameobjects.push_back(spawn);
+}
+
+void ChangesetBuilder::addWaypointPath(WaypointPath const& path)
+{
+  std::string const context ("waypoint path " + unsignedText(path.id));
+
+  for (WaypointPath const& existing : _paths)
+  {
+    if (existing.id == path.id)
+    {
+      _issues.push_back
+        ( makeIssue
+            ( ValidationIssue::Severity::ERROR
+            , context + ": added to this changeset twice. The second set of nodes would be"
+                        " appended to the first rather than replacing it."
+            )
+        );
+      break;
+    }
+  }
+
+  appendIssues(_issues, SpawnValidation::validate(path), context);
+
+  _paths.push_back(path);
+}
+
+void ChangesetBuilder::removeCreature(std::uint32_t guid)
+{
+  _removed_creatures.push_back(guid);
+}
+
+void ChangesetBuilder::removeGameObject(std::uint32_t guid)
+{
+  _removed_gameobjects.push_back(guid);
+}
+
+void ChangesetBuilder::removeWaypointPath(std::uint32_t path_id)
+{
+  _removed_paths.push_back(path_id);
+}
+
+bool ChangesetBuilder::empty() const
+{
+  return _creatures.empty()
+      && _gameobjects.empty()
+      && _paths.empty()
+      && _removed_creatures.empty()
+      && _removed_gameobjects.empty()
+      && _removed_paths.empty();
+}
+
+std::string ChangesetBuilder::build() const
+{
+  if (_options.reject_invalid && SpawnValidation::hasErrors(_issues))
+  {
+    std::string detail;
+
+    for (ValidationIssue const& issue : _issues)
+    {
+      if (issue.severity == ValidationIssue::Severity::ERROR)
+      {
+        detail += "\n  - " + issue.message;
+      }
+    }
+
+    throw ChangesetError
+      ("Refusing to build a changeset that failed validation. The server would reject or"
+       " silently correct these rows at load, which is a worse outcome than not emitting"
+       " them:" + detail);
+  }
+
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+
+  out << "-- Noggit changeset. Review before applying.\n";
+
+  if (!_options.description.empty())
+  {
+    out << "--\n" << commentBlock(_options.description);
+  }
+
+  if (empty())
+  {
+    out << "--\n"
+           "-- Nothing to do: this changeset is intentionally empty and applying it is a no-op.\n";
+    return out.str();
+  }
+
+  out << "--\n"
+         "--   Apply:  mysql <world> -e \"source <this file>\"\n"
+         "--\n"
+         "-- Idempotent: every table touched is cleared for the affected keys before it is\n"
+         "-- rewritten, so applying this file twice leaves identical rows and raises no error.\n"
+         "-- Variable-driven: guids and path ids are declared once below, so a reviewer can\n"
+         "-- retarget the whole changeset by editing the header.\n"
+         "-- Column-explicit: never positional. Every column name was resolved from the target\n"
+         "-- schema rather than assumed, so a database that spells them differently gets correct\n"
+         "-- SQL instead of silently wrong SQL.\n"
+         "--\n"
+         "-- The zone and area columns are omitted on purpose: ObjectMgr::LoadCreatures does not\n"
+         "-- read them and the core does not write them either. The server derives both.\n"
+         "-- Waypoint rows carry no core-managed guid column: authoring it corrupts the path.\n";
+
+  if (!_issues.empty())
+  {
+    out << "--\n-- Validation notes:\n";
+
+    for (ValidationIssue const& issue : _issues)
+    {
+      out << "--   " << severityLabel(issue.severity) << ": " << issue.message << "\n";
+    }
+  }
+
+  out << "\n";
+
+  // --- Variable header -------------------------------------------------------------------
+  // Each base is the smallest key of its kind, so every offset is non-negative and the file
+  // reads in ascending order.
+
+  std::vector<std::uint64_t> creature_keys;
+  std::vector<std::uint64_t> gameobject_keys;
+  std::vector<std::uint64_t> path_keys;
+
+  for (CreatureSpawn const& spawn : _creatures)
+  {
+    creature_keys.push_back(spawn.guid);
+
+    if (spawn.has_addon && spawn.path_id != 0)
+    {
+      path_keys.push_back(spawn.path_id);
+    }
+  }
+
+  for (std::uint32_t guid : _removed_creatures)
+  {
+    creature_keys.push_back(guid);
+  }
+
+  for (GameObjectSpawn const& spawn : _gameobjects)
+  {
+    gameobject_keys.push_back(spawn.guid);
+  }
+
+  for (std::uint32_t guid : _removed_gameobjects)
+  {
+    gameobject_keys.push_back(guid);
+  }
+
+  for (WaypointPath const& path : _paths)
+  {
+    path_keys.push_back(path.id);
+  }
+
+  for (std::uint32_t path_id : _removed_paths)
+  {
+    path_keys.push_back(path_id);
+  }
+
+  std::uint64_t const creature_base
+    (creature_keys.empty()
+       ? 0u
+       : *std::min_element(creature_keys.begin(), creature_keys.end()));
+  std::uint64_t const gameobject_base
+    (gameobject_keys.empty()
+       ? 0u
+       : *std::min_element(gameobject_keys.begin(), gameobject_keys.end()));
+  std::uint64_t const path_base
+    (path_keys.empty() ? 0u : *std::min_element(path_keys.begin(), path_keys.end()));
+
+  if (!creature_keys.empty())
+  {
+    out << "SET " << VARIABLE_CREATURE_GUID << "  := " << unsignedText(creature_base) << ";\n";
+  }
+
+  if (!gameobject_keys.empty())
+  {
+    out << "SET " << VARIABLE_GAMEOBJECT_GUID << "  := " << unsignedText(gameobject_base)
+        << ";\n";
+  }
+
+  if (!path_keys.empty())
+  {
+    out << "SET " << VARIABLE_PATH << "   := " << unsignedText(path_base) << ";\n";
+  }
+
+  // --- creature --------------------------------------------------------------------------
+
+  if (!creature_keys.empty())
+  {
+    out << "\n" << sectionHeader(TABLE_CREATURE);
+
+    std::vector<std::uint64_t> delete_keys;
+
+    for (CreatureSpawn const& spawn : _creatures)
+    {
+      delete_keys.push_back(spawn.guid);
+    }
+
+    for (std::uint32_t guid : _removed_creatures)
+    {
+      delete_keys.push_back(guid);
+    }
+
+    out << deleteStatement
+             ( TABLE_CREATURE, COLUMN_GUID, delete_keys
+             , VARIABLE_CREATURE_GUID, creature_base
+             );
+
+    if (!_creatures.empty())
+    {
+      // The one column whose name differs between cores. Resolved, never assumed.
+      std::string const wander_column (_schema.wanderDistanceColumn());
+
+      // The core's own WORLD_INS_CREATURE shape, which is exactly what the server writes when
+      // a GM spawns a creature, and therefore the shape least likely to surprise it. No zone
+      // or area column: the core derives both.
+      std::vector<std::string> const columns
+        { "guid", "id", "map", "spawnMask", "phaseMask", "modelid", "equipment_id"
+        , "position_x", "position_y", "position_z", "orientation"
+        , "spawntimesecs", wander_column, "currentwaypoint", "curhealth", "curmana"
+        , "MovementType", "npcflag", "unit_flags", "dynamicflags"
+        };
+
+      std::vector<std::vector<std::string>> rows;
+      std::string notes;
+
+      for (CreatureSpawn const& spawn : _creatures)
+      {
+        for (ValidationIssue const& issue : SpawnValidation::validate(spawn))
+        {
+          notes += std::string("-- ") + severityLabel(issue.severity) + " (guid "
+                 + unsignedText(spawn.guid) + "): " + issue.message + "\n";
+        }
+
+        rows.push_back
+          ( { variableExpression(VARIABLE_CREATURE_GUID, creature_base, spawn.guid)
+            , unsignedText(spawn.id)
+            , unsignedText(spawn.map)
+            , unsignedText(spawn.spawn_mask)
+            , unsignedText(spawn.phase_mask)
+            , unsignedText(spawn.model_id)
+            , signedText(spawn.equipment_id)
+            , SqlFormat::coordinate(spawn.position.x)
+            , SqlFormat::coordinate(spawn.position.y)
+            , SqlFormat::coordinate(spawn.position.z)
+            , SqlFormat::coordinate(TileCoordinates::normaliseOrientation(spawn.orientation))
+            , unsignedText(spawn.spawn_time_secs)
+            , SqlFormat::coordinate(spawn.wander_distance)
+            , unsignedText(spawn.current_waypoint)
+            , unsignedText(spawn.cur_health)
+            , unsignedText(spawn.cur_mana)
+            , unsignedText(static_cast<std::uint32_t>(spawn.movement_type))
+            , unsignedText(spawn.npc_flag)
+            , unsignedText(spawn.unit_flags)
+            , unsignedText(spawn.dynamic_flags)
+            }
+          );
+      }
+
+      out << notes << insertStatement(TABLE_CREATURE, columns, rows);
+    }
+  }
+
+  // --- creature_addon --------------------------------------------------------------------
+  // The delete covers every creature this changeset touches, not only those getting an addon
+  // row. A spawn that lost its path would otherwise keep the addon row from a previous
+  // changeset and go on following a path the reviewer thinks was removed.
+
+  if (!creature_keys.empty())
+  {
+    out << "\n" << sectionHeader(TABLE_CREATURE_ADDON);
+
+    std::vector<std::uint64_t> delete_keys;
+
+    for (CreatureSpawn const& spawn : _creatures)
+    {
+      delete_keys.push_back(spawn.guid);
+    }
+
+    for (std::uint32_t guid : _removed_creatures)
+    {
+      delete_keys.push_back(guid);
+    }
+
+    out << deleteStatement
+             ( TABLE_CREATURE_ADDON, COLUMN_GUID, delete_keys
+             , VARIABLE_CREATURE_GUID, creature_base
+             );
+
+    std::vector<CreatureSpawn> with_addon;
+
+    for (CreatureSpawn const& spawn : _creatures)
+    {
+      if (spawn.has_addon)
+      {
+        with_addon.push_back(spawn);
+      }
+    }
+
+    if (!with_addon.empty())
+    {
+      AddonPoseEncoding const encoding (_schema.addonPoseEncoding());
+
+      // Not every schema generation carries this one, and naming an absent column fails the
+      // whole statement.
+      bool const has_visibility_distance
+        (_schema.hasColumn(TABLE_CREATURE_ADDON, "visibilityDistanceType"));
+
+      std::vector<std::string> columns { "guid", "path_id", "mount" };
+
+      if (encoding == AddonPoseEncoding::DISCRETE_COLUMNS)
+      {
+        columns.insert
+          ( columns.end()
+          , { "MountCreatureID", "StandState", "AnimTier", "VisFlags", "SheathState", "PvPFlags" }
+          );
+      }
+      else
+      {
+        columns.insert(columns.end(), { "bytes1", "bytes2" });
+      }
+
+      columns.push_back("emote");
+
+      if (has_visibility_distance)
+      {
+        columns.push_back("visibilityDistanceType");
+      }
+
+      columns.push_back("auras");
+
+      std::vector<std::vector<std::string>> rows;
+
+      for (CreatureSpawn const& spawn : with_addon)
+      {
+        std::vector<std::string> row
+          { variableExpression(VARIABLE_CREATURE_GUID, creature_base, spawn.guid)
+          , spawn.path_id == 0
+              ? std::string("0")
+              : variableExpression(VARIABLE_PATH, path_base, spawn.path_id)
+          , unsignedText(DEFAULT_MOUNT)
+          };
+
+        if (encoding == AddonPoseEncoding::DISCRETE_COLUMNS)
+        {
+          row.push_back(unsignedText(DEFAULT_MOUNT_CREATURE_ID));
+          row.push_back(unsignedText(DEFAULT_STAND_STATE));
+          row.push_back(unsignedText(DEFAULT_ANIM_TIER));
+          row.push_back(unsignedText(DEFAULT_VIS_FLAGS));
+          row.push_back(unsignedText(DEFAULT_SHEATH_STATE));
+          row.push_back(unsignedText(DEFAULT_PVP_FLAGS));
+        }
+        else
+        {
+          // The packed form is the same information in the older layout: bytes1 holds the
+          // stand state in byte 0, vis flags in byte 2 and anim tier in byte 3; bytes2 holds
+          // the sheath state in byte 0 and the pvp flags in byte 1. Derived from the same
+          // constants so the two branches cannot drift apart.
+          std::uint32_t const bytes1
+            (DEFAULT_STAND_STATE | (DEFAULT_VIS_FLAGS << 16) | (DEFAULT_ANIM_TIER << 24));
+          std::uint32_t const bytes2 (DEFAULT_SHEATH_STATE | (DEFAULT_PVP_FLAGS << 8));
+
+          row.push_back(unsignedText(bytes1));
+          row.push_back(unsignedText(bytes2));
+        }
+
+        row.push_back(unsignedText(DEFAULT_EMOTE));
+
+        if (has_visibility_distance)
+        {
+          row.push_back(unsignedText(DEFAULT_VISIBILITY_DISTANCE_TYPE));
+        }
+
+        row.push_back("NULL");
+
+        rows.push_back(row);
+      }
+
+      out << insertStatement(TABLE_CREATURE_ADDON, columns, rows);
+    }
+  }
+
+  // --- gameobject ------------------------------------------------------------------------
+
+  if (!gameobject_keys.empty())
+  {
+    out << "\n" << sectionHeader(TABLE_GAMEOBJECT);
+
+    std::vector<std::uint64_t> delete_keys;
+
+    for (GameObjectSpawn const& spawn : _gameobjects)
+    {
+      delete_keys.push_back(spawn.guid);
+    }
+
+    for (std::uint32_t guid : _removed_gameobjects)
+    {
+      delete_keys.push_back(guid);
+    }
+
+    out << deleteStatement
+             ( TABLE_GAMEOBJECT, COLUMN_GUID, delete_keys
+             , VARIABLE_GAMEOBJECT_GUID, gameobject_base
+             );
+
+    if (!_gameobjects.empty())
+    {
+      std::vector<std::string> const columns
+        { "guid", "id", "map", "spawnMask", "phaseMask"
+        , "position_x", "position_y", "position_z", "orientation"
+        , "rotation0", "rotation1", "rotation2", "rotation3"
+        , "spawntimesecs", "animprogress", "state"
+        };
+
+      std::vector<std::vector<std::string>> rows;
+      std::string notes;
+
+      for (GameObjectSpawn const& spawn : _gameobjects)
+      {
+        for (ValidationIssue const& issue : SpawnValidation::validate(spawn))
+        {
+          notes += std::string("-- ") + severityLabel(issue.severity) + " (guid "
+                 + unsignedText(spawn.guid) + "): " + issue.message + "\n";
+        }
+
+        std::string const disagreement (rotationDisagreement(spawn));
+
+        if (!disagreement.empty())
+        {
+          notes += "-- WARNING (guid " + unsignedText(spawn.guid) + "): " + disagreement + "\n";
+        }
+
+        TileCoordinates::Quaternion const rotation (resolvedRotation(spawn));
+
+        rows.push_back
+          ( { variableExpression(VARIABLE_GAMEOBJECT_GUID, gameobject_base, spawn.guid)
+            , unsignedText(spawn.id)
+            , unsignedText(spawn.map)
+            , unsignedText(spawn.spawn_mask)
+            , unsignedText(spawn.phase_mask)
+            , SqlFormat::coordinate(spawn.position.x)
+            , SqlFormat::coordinate(spawn.position.y)
+            , SqlFormat::coordinate(spawn.position.z)
+            , SqlFormat::coordinate(TileCoordinates::normaliseOrientation(spawn.orientation))
+            , SqlFormat::coordinate(rotation.r0)
+            , SqlFormat::coordinate(rotation.r1)
+            , SqlFormat::coordinate(rotation.r2)
+            , SqlFormat::coordinate(rotation.r3)
+            , signedText(spawn.spawn_time_secs)
+            , unsignedText(spawn.anim_progress)
+            , unsignedText(spawn.state)
+            }
+          );
+      }
+
+      out << notes << insertStatement(TABLE_GAMEOBJECT, columns, rows);
+    }
+  }
+
+  // --- waypoint path ---------------------------------------------------------------------
+  // Only paths this changeset actually authors are cleared. A creature whose path id was
+  // derived but whose nodes were not supplied keeps the path it already has.
+
+  if (!_paths.empty() || !_removed_paths.empty())
+  {
+    std::string const waypoint_table (_schema.waypointPathTable());
+
+    out << "\n" << sectionHeader(waypoint_table);
+
+    std::vector<std::uint64_t> delete_keys;
+
+    for (WaypointPath const& path : _paths)
+    {
+      delete_keys.push_back(path.id);
+    }
+
+    for (std::uint32_t path_id : _removed_paths)
+    {
+      delete_keys.push_back(path_id);
+    }
+
+    out << deleteStatement(waypoint_table, COLUMN_ID, delete_keys, VARIABLE_PATH, path_base);
+
+    // `point` is 1-based and must stay contiguous: the core walks the nodes in order and a gap
+    // truncates the path silently rather than erroring. The core-managed guid column is never
+    // named here -- authoring it corrupts the path.
+    std::vector<std::string> const columns
+      { "id", "point", "position_x", "position_y", "position_z", "orientation"
+      , "delay", "move_type", "action", "action_chance"
+      };
+
+    std::vector<std::vector<std::string>> rows;
+    std::string notes;
+
+    for (WaypointPath const& path : _paths)
+    {
+      for (ValidationIssue const& issue : SpawnValidation::validate(path))
+      {
+        notes += std::string("-- ") + severityLabel(issue.severity) + " (path "
+               + unsignedText(path.id) + "): " + issue.message + "\n";
+      }
+
+      for (WaypointNode const& node : path.nodes)
+      {
+        rows.push_back
+          ( { variableExpression(VARIABLE_PATH, path_base, path.id)
+            , unsignedText(node.point)
+            , SqlFormat::coordinate(node.position.x)
+            , SqlFormat::coordinate(node.position.y)
+            , SqlFormat::coordinate(node.position.z)
+            , node.has_orientation
+                ? SqlFormat::coordinate
+                    (TileCoordinates::normaliseOrientation(node.orientation))
+                : std::string("NULL")
+            , unsignedText(node.delay_ms)
+            , unsignedText(static_cast<std::uint32_t>(node.move_type))
+            , unsignedText(node.action)
+            , unsignedText(node.action_chance)
+            }
+          );
+      }
+    }
+
+    if (!rows.empty())
+    {
+      out << notes << insertStatement(waypoint_table, columns, rows);
+    }
+    else
+    {
+      out << notes;
+    }
+  }
+
+  return out.str();
+}

@@ -33,6 +33,8 @@ when. Changes made in this fork:
 | 2026-07-30 | Added `src/noggit/database/` (`ColumnInfo.hpp`, `SchemaModel.hpp/.cpp`) — schema capability model. First new application source in this fork; carries the project GPL header. |
 | 2026-07-30 | Added `tests/` — standalone Catch2 target for the schema layer. The repository had no test framework before this. |
 | 2026-07-30 | Added `src/noggit/database/` connection and introspection layer (`ConnectionConfig.hpp`, `WorldDatabaseConnection.hpp/.cpp`, `SchemaIntrospector.hpp/.cpp`) plus live integration tests. |
+| 2026-07-30 | Added the Qt-free logic layer for M1–M4: `TileCoordinates`, `SpawnTypes`, `SpawnQuery`, `ChangesetBuilder`, with 98 test cases. |
+| 2026-07-30 | Added `DatabaseSettings.hpp/.cpp` — QSettings adapter. **Written but not compiled**; it is the only Qt-dependent file in this layer and no Qt is available here yet. |
 
 Keep this table current. When application code lands under `src/`, every new file needs the
 project's GPL header, matching the 337 existing files that carry it:

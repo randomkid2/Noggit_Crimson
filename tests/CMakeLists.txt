@@ -41,18 +41,50 @@ set(NOGGIT_LIBS_HINT "${CMAKE_CURRENT_SOURCE_DIR}/../../Noggit3libs/mysql")
 find_path(MYSQLCPPCONN_INCLUDE NAMES cppconn/driver.h HINTS "${NOGGIT_LIBS_HINT}/connector")
 find_library(MYSQLCPPCONN_LIBRARY NAMES mysqlcppconn HINTS "${NOGGIT_LIBS_HINT}/connector")
 
-set(NOGGIT_DB_SOURCES "${NOGGIT_SRC_DIR}/noggit/database/SchemaModel.cpp")
-set(NOGGIT_DB_TESTS SchemaModelTests.cpp)
+# Sources are added only when present, so a partially-implemented tree still configures and
+# the modules that do exist stay under test.
+function(noggit_add_if_present list_var)
+  foreach(candidate ${ARGN})
+    if(EXISTS "${candidate}")
+      list(APPEND ${list_var} "${candidate}")
+    else()
+      message(STATUS "  skipping absent source: ${candidate}")
+    endif()
+  endforeach()
+  set(${list_var} "${${list_var}}" PARENT_SCOPE)
+endfunction()
+
+# Pure logic: no Qt, no database client. This is what makes the suite runnable on a bare
+# machine, and it is deliberately the larger half of the layer.
+set(NOGGIT_DB_SOURCES "")
+noggit_add_if_present(NOGGIT_DB_SOURCES
+  "${NOGGIT_SRC_DIR}/noggit/database/SchemaModel.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/database/TileCoordinates.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/database/SpawnTypes.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/database/ChangesetBuilder.cpp"
+)
+
+set(NOGGIT_DB_TESTS "")
+noggit_add_if_present(NOGGIT_DB_TESTS
+  "${CMAKE_CURRENT_SOURCE_DIR}/SchemaModelTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/TileCoordinatesTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/SpawnTypesTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/ChangesetBuilderTests.cpp"
+)
 
 if(MYSQLCPPCONN_INCLUDE AND MYSQLCPPCONN_LIBRARY)
   message(STATUS "Connector/C++ found - building live database tests")
-  list(APPEND NOGGIT_DB_SOURCES
+  noggit_add_if_present(NOGGIT_DB_SOURCES
     "${NOGGIT_SRC_DIR}/noggit/database/WorldDatabaseConnection.cpp"
     "${NOGGIT_SRC_DIR}/noggit/database/SchemaIntrospector.cpp"
+    "${NOGGIT_SRC_DIR}/noggit/database/SpawnQuery.cpp"
   )
-  list(APPEND NOGGIT_DB_TESTS DatabaseIntegrationTests.cpp)
+  noggit_add_if_present(NOGGIT_DB_TESTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/DatabaseIntegrationTests.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/SpawnQueryTests.cpp"
+  )
 else()
-  message(STATUS "Connector/C++ not found - schema model tests only. "
+  message(STATUS "Connector/C++ not found - pure logic tests only. "
                  "Set MYSQLCPPCONN_INCLUDE and MYSQLCPPCONN_LIBRARY to enable the rest.")
 endif()
 
@@ -102,9 +134,36 @@ endif()
 
 enable_testing()
 
-list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
-include(Catch)
+# Registered by tag rather than with catch_discover_tests.
+#
+# catch_discover_tests parses `--list-tests` output into a CMake list, so a test NAME containing
+# a comma silently corrupts the generated script: every case collapses into one entry whose
+# name is all 98 names concatenated, and it reports as failed even when the binary passes.
+# Several names here legitimately contain commas ("[0, 2pi)", "tile (49,31)"). Tags are ours to
+# control and contain no separators, so grouping by tag is robust.
+#
+# The executable still reports per-case results; this only affects ctest's granularity.
+#
+# SKIP_RETURN_CODE 4 is what Catch2 returns when every selected case skips, which is exactly
+# what happens to [integration] on a machine with no database. Without it that reads as failure.
+set(NOGGIT_TEST_TAGS
+  schema drift tile spawn validation changeset spawnquery sqlformat safety
+)
 
-# Catch2 exits 4 when a test case skips. Without this, ctest reports every skipped integration
-# test as a failure on a machine with no database, which defeats the point of skipping.
-catch_discover_tests(noggit_schema_tests PROPERTIES SKIP_RETURN_CODE 4)
+enable_testing()
+
+foreach(tag ${NOGGIT_TEST_TAGS})
+  add_test(NAME "tag.${tag}"
+           COMMAND noggit_schema_tests "[${tag}]" --reporter compact)
+  set_tests_properties("tag.${tag}" PROPERTIES SKIP_RETURN_CODE 4)
+endforeach()
+
+# Integration is separated so it can be excluded with -LE, and so a database-less machine sees
+# one clear skip rather than several.
+add_test(NAME "tag.integration"
+         COMMAND noggit_schema_tests "[integration]" --reporter compact)
+set_tests_properties("tag.integration" PROPERTIES SKIP_RETURN_CODE 4 LABELS "needs-database")
+
+# Backstop: the whole suite in one run, so nothing can be missed by a tag that no case carries.
+add_test(NAME "all" COMMAND noggit_schema_tests)
+set_tests_properties("all" PROPERTIES SKIP_RETURN_CODE 4)
