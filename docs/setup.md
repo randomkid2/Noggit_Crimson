@@ -122,6 +122,27 @@ time — so a configure that gets as far as Qt errors has already proven your My
 > The file also uses `QMessageBox` and `std::stringstream` without including them. Assume this
 > path needs fixing before it builds. See `CLAUDE.md` for the full list of defects here.
 
+## Running it
+
+CMake copies the Qt DLLs next to `noggit.exe` itself, but not the Qt *plugins* — without the
+platform plugin the binary exits immediately with no useful message. Deploy them once:
+
+```bash
+H:/Qt/5.15.2/msvc2019_64/bin/windeployqt.exe --release --no-translations build/bin/RelWithDebInfo/noggit.exe
+```
+
+For a `USE_SQL` build also copy the connector runtime next to the executable. Note it lives one
+level **above** the `vs14/` directory that holds the import library:
+
+```
+<Connector>/lib64/mysqlcppconn-<n>-vs14.dll
+<MySQL Server>/lib/libmysql.dll
+```
+
+A healthy start writes `log.txt` beside the executable, reporting the build revision, the
+OpenGL version and renderer, and whether the listfile and DBC definitions were found. If the
+window never appears, read that file first — it names the missing piece.
+
 ## Dev database
 
 This project **never writes to a live database**. All edits are emitted as reviewable `.sql`
