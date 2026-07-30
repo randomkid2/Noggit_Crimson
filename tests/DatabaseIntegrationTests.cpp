@@ -111,7 +111,10 @@ TEST_CASE("write refusal does not need a server to be enforced", "[db][safety]")
     , DatabaseAccessError
     );
 
-  config.schema = "haste_world";
+  // A stand-in for any live schema that is not the writable one. Deliberately generic: this
+  // repository is published, and naming somebody's actual databases in a test is infrastructure
+  // detail that does not belong in it.
+  config.schema = "legacy_world";
   CHECK_THROWS_AS
     ( WorldDatabaseConnection(config, AccessMode::DEV_WRITE, WRITABLE_SCHEMA)
     , DatabaseAccessError

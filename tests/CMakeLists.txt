@@ -56,12 +56,21 @@ endfunction()
 
 # Pure logic: no Qt, no database client. This is what makes the suite runnable on a bare
 # machine, and it is deliberately the larger half of the layer.
+# SpawnQueryDetail holds every SQL builder and row decoder. It is listed here, not in the
+# connector group, precisely because it links no database client -- which is what lets the
+# spawn-query tests run on a machine with no MySQL at all. DoctorReport is split the same way:
+# the checks that need a connection live in DoctorConnectionChecks.cpp.
 set(NOGGIT_DB_SOURCES "")
 noggit_add_if_present(NOGGIT_DB_SOURCES
   "${NOGGIT_SRC_DIR}/noggit/database/SchemaModel.cpp"
   "${NOGGIT_SRC_DIR}/noggit/database/TileCoordinates.cpp"
   "${NOGGIT_SRC_DIR}/noggit/database/SpawnTypes.cpp"
   "${NOGGIT_SRC_DIR}/noggit/database/ChangesetBuilder.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/database/SpawnQueryDetail.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/database/ChunkTransform.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/database/GmCommands.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/database/ChangesetArchive.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/database/DoctorReport.cpp"
 )
 
 set(NOGGIT_DB_TESTS "")
@@ -70,6 +79,11 @@ noggit_add_if_present(NOGGIT_DB_TESTS
   "${CMAKE_CURRENT_SOURCE_DIR}/TileCoordinatesTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/SpawnTypesTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/ChangesetBuilderTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/SpawnQueryTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/ChunkTransformTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/GmCommandsTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/ChangesetArchiveTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/DoctorReportTests.cpp"
 )
 
 if(MYSQLCPPCONN_INCLUDE AND MYSQLCPPCONN_LIBRARY)
@@ -78,10 +92,10 @@ if(MYSQLCPPCONN_INCLUDE AND MYSQLCPPCONN_LIBRARY)
     "${NOGGIT_SRC_DIR}/noggit/database/WorldDatabaseConnection.cpp"
     "${NOGGIT_SRC_DIR}/noggit/database/SchemaIntrospector.cpp"
     "${NOGGIT_SRC_DIR}/noggit/database/SpawnQuery.cpp"
+    "${NOGGIT_SRC_DIR}/noggit/database/DoctorConnectionChecks.cpp"
   )
   noggit_add_if_present(NOGGIT_DB_TESTS
     "${CMAKE_CURRENT_SOURCE_DIR}/DatabaseIntegrationTests.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/SpawnQueryTests.cpp"
   )
 else()
   message(STATUS "Connector/C++ not found - pure logic tests only. "
@@ -149,6 +163,7 @@ enable_testing()
 # Tags carried by files that are ALWAYS compiled.
 set(NOGGIT_TEST_TAGS
   schema drift tile spawn validation changeset sqlformat safety
+  spawnquery sql chunk gm archive doctor recovery roundtrip
 )
 
 # Tags carried ONLY by connector-gated files. Registering these unconditionally is a trap:
@@ -157,9 +172,8 @@ set(NOGGIT_TEST_TAGS
 # of 4, so ctest reports a failure on a machine that is behaving exactly as intended. Verified
 # empirically: a filter matching nothing returns 2. Registering them alongside their sources
 # keeps a zero match a genuine error rather than an expected state.
-if(MYSQLCPPCONN_INCLUDE AND MYSQLCPPCONN_LIBRARY)
-  list(APPEND NOGGIT_TEST_TAGS spawnquery sql)
-endif()
+# spawnquery and sql are no longer gated: SpawnQueryDetail.cpp links no database client, so
+# those cases compile and run with no MySQL present.
 
 enable_testing()
 

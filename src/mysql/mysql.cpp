@@ -4,11 +4,20 @@
 #include <noggit/world.h>
 
 #include <QtCore/QSettings>
+// QMessageBox is used throughout testConnection but was never included; it lives in QtWidgets,
+// not QtCore. std::stringstream and std::unique_ptr were likewise relied on transitively.
+#include <QtWidgets/QMessageBox>
 
-#include <driver.h>
-#include <prepared_statement.h>
-// #include <cppconn/driver.h>
-// #include <cppconn/prepared_statement.h>
+// cppconn-qualified on purpose. CMake's FIND_PATH looks for `cppconn/driver.h` and the README
+// tells you to point MYSQLCPPCONN_INCLUDE at the folder CONTAINING cppconn/, so the bare
+// <driver.h> form these two lines replace could never resolve against a stock Connector/C++
+// layout -- `driver.h` lives in cppconn/, not beside it. Verified against Connector/C++ 26.7.0.
+#include <cppconn/driver.h>
+#include <cppconn/prepared_statement.h>
+
+#include <memory>
+#include <sstream>
+#include <string>
 
 namespace
 {

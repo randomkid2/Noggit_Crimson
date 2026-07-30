@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iomanip>
+#include <limits>
 #include <locale>
 #include <sstream>
 #include <string>
@@ -37,6 +38,17 @@ namespace
   // representable step of a FLOAT is roughly 1e-3, so the emitted text carries more digits than
   // the column can hold and nothing is lost on write.
   constexpr int COORDINATE_DECIMALS = 6;
+
+  // Nine significant digits name any IEEE binary32 value uniquely (FLT_MAX_DIGITS10 is 9), so a
+  // rotation component emitted at this precision reloads as the float it came from rather than
+  // as a neighbour of it. Six DECIMALS would be only six significant digits where |v| <= 1,
+  // which is eight float steps of slack -- enough to rewrite an untouched row.
+  constexpr int ROTATION_SIGNIFICANT_DIGITS = 9;
+
+  // Ceiling on the decimals the significant-digit rule may ask for. Nine significant digits of a
+  // value as small as the smallest subnormal float needs 53 of them; nothing a FLOAT column can
+  // hold needs more. It exists so no input can produce an unbounded literal.
+  constexpr int ROTATION_MAX_DECIMALS = 53;
 
   constexpr std::size_t LINE_WIDTH = 92;
   constexpr std::size_t RULE_WIDTH = 90;
@@ -340,6 +352,51 @@ namespace
          + SqlFormat::coordinate(from_orientation) + ". The quaternion is emitted as given;"
            " the core uses it, not the orientation column.";
   }
+
+  // Fixed-notation text with `decimals` places after the point. Both formatters go through this
+  // one function, so neither can lose the classic locale or the "-0" rule while the other keeps
+  // it.
+  std::string fixedText(double value, int decimals)
+  {
+    // std::fixed rather than the default float format: the default switches to scientific
+    // notation for small magnitudes, and 1e-05 is not accepted where MySQL expects a plain
+    // number in every context this text is used. The classic locale is imbued because a
+    // comma decimal separator would silently turn one value into two.
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::fixed << std::setprecision(decimals) << value;
+
+    std::string text (out.str());
+
+    // "-0.000000" is legal SQL but reads as a bug in review, and it is what every value between
+    // -1e-7 and -0.0 formats to. Normalise the sign away when no significant digit survived.
+    if (!text.empty() && text.front() == '-')
+    {
+      bool const all_zero
+        (text.find_first_of("123456789") == std::string::npos);
+
+      if (all_zero)
+      {
+        text.erase(text.begin());
+      }
+    }
+
+    return text;
+  }
+
+  // Reads emitted text back the way the server will: parse as a double, then narrow to the FLOAT
+  // the column actually holds. Parsing straight into a float would round twice, and could agree
+  // with the value it came from where MySQL disagrees.
+  float reparsedAsFloat(std::string const& text)
+  {
+    std::istringstream in (text);
+    in.imbue(std::locale::classic());
+
+    double value (0.0);
+    in >> value;
+
+    return static_cast<float>(value);
+  }
 }
 
 std::string SqlFormat::coordinate(double value)
@@ -354,30 +411,60 @@ std::string SqlFormat::coordinate(double value)
        " the value was computed from bad input; writing any substitute would move the spawn.");
   }
 
-  // std::fixed rather than the default float format: the default switches to scientific
-  // notation for small magnitudes, and 1e-05 is not accepted where MySQL expects a plain
-  // number in every context this text is used. The classic locale is imbued because a
-  // comma decimal separator would silently turn one value into two.
-  std::ostringstream out;
-  out.imbue(std::locale::classic());
-  out << std::fixed << std::setprecision(COORDINATE_DECIMALS) << value;
+  return fixedText(value, COORDINATE_DECIMALS);
+}
 
-  std::string text (out.str());
-
-  // "-0.000000" is legal SQL but reads as a bug in review, and it is what every value between
-  // -1e-7 and -0.0 formats to. Normalise the sign away when no significant digit survived.
-  if (!text.empty() && text.front() == '-')
+std::string SqlFormat::rotationComponent(double value)
+{
+  if (!std::isfinite(value))
   {
-    bool const all_zero
-      (text.find_first_of("123456789") == std::string::npos);
+    throw ChangesetError
+      ("Refusing to format a non-finite rotation component for SQL. A NaN or infinite quaternion"
+       " component is not a rotation at all, and substituting the identity would silently turn"
+       " the object to face a direction nobody chose.");
+  }
 
-    if (all_zero)
+  // Where the leading significant digit falls decides how many DECIMALS nine SIGNIFICANT digits
+  // costs. A quaternion component lives in [-1, 1], so that is nine decimals for the components
+  // carrying the rotation and more for the small ones: 0.0479425549 needs ten places to hold the
+  // same nine digits, and cos(o/2) for o near pi lands more than a decade below that again.
+  int decimals (ROTATION_SIGNIFICANT_DIGITS);
+
+  if (value != 0.0)
+  {
+    int const leading_place (static_cast<int>(std::floor(std::log10(std::fabs(value)))));
+
+    decimals = std::max(decimals, ROTATION_SIGNIFICANT_DIGITS - 1 - leading_place);
+    decimals = std::min(decimals, ROTATION_MAX_DECIMALS);
+  }
+
+  // Narrowing a double from outside the FLOAT range is undefined behaviour, not merely lossy, so
+  // the round-trip check below cannot be run on one. Such a value is not a quaternion component
+  // either -- these live in [-1, 1] -- and there is nothing meaningful to round-trip against, so
+  // the significant-digit text stands as written and validation reports the shape of the
+  // quaternion separately.
+  if (std::fabs(value) > static_cast<double>(std::numeric_limits<float>::max()))
+  {
+    return fixedText(value, decimals);
+  }
+
+  float const target (static_cast<float>(value));
+
+  // The digit count above is the guarantee; reading the text back is the proof of it. std::log10
+  // is entitled to a rounding error of its own at a decade boundary, and one digit too few would
+  // silently reinstate the very defect this function exists to remove. It normally agrees on the
+  // first attempt, so the check costs one parse per component.
+  for (int attempt (decimals); attempt <= ROTATION_MAX_DECIMALS; ++attempt)
+  {
+    std::string const text (fixedText(value, attempt));
+
+    if (reparsedAsFloat(text) == target)
     {
-      text.erase(text.begin());
+      return text;
     }
   }
 
-  return text;
+  return fixedText(value, ROTATION_MAX_DECIMALS);
 }
 
 namespace
@@ -1052,10 +1139,13 @@ std::string ChangesetBuilder::build() const
             , SqlFormat::coordinate(spawn.position.y)
             , SqlFormat::coordinate(spawn.position.z)
             , SqlFormat::coordinate(TileCoordinates::normaliseOrientation(spawn.orientation))
-            , SqlFormat::coordinate(rotation.r0)
-            , SqlFormat::coordinate(rotation.r1)
-            , SqlFormat::coordinate(rotation.r2)
-            , SqlFormat::coordinate(rotation.r3)
+            // Not coordinate(): the quaternion components live where |v| <= 1, and six decimals
+            // there is six significant digits -- enough slack to rewrite the stored bytes of a
+            // gameobject this changeset never edited.
+            , SqlFormat::rotationComponent(rotation.r0)
+            , SqlFormat::rotationComponent(rotation.r1)
+            , SqlFormat::rotationComponent(rotation.r2)
+            , SqlFormat::rotationComponent(rotation.r3)
             , signedText(spawn.spawn_time_secs)
             , unsignedText(spawn.anim_progress)
             , unsignedText(spawn.state)

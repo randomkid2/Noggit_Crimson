@@ -7,9 +7,13 @@
 #include <noggit/database/SchemaModel.hpp>
 #include <noggit/database/SpawnTypes.hpp>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#include <locale>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -80,6 +84,77 @@ namespace
     }
 
     return out;
+  }
+
+  // The value list of the INSERT into `gameobject`, split on its commas and stripped of the
+  // emitter's line wrapping. Reading the emitted text back is the only honest way to test what
+  // MySQL will store: the values a reviewer sees are the only ones that reach the column.
+  std::vector<std::string> gameObjectValues(std::string const& sql)
+  {
+    std::string const flat (flattened(sql));
+    std::string const marker (") VALUES (");
+
+    std::size_t const insert (flat.find("INSERT INTO `gameobject`"));
+    REQUIRE(insert != std::string::npos);
+
+    std::size_t const values (flat.find(marker, insert));
+    REQUIRE(values != std::string::npos);
+
+    std::size_t const begin (values + marker.size());
+    std::size_t const end (flat.find(')', begin));
+    REQUIRE(end != std::string::npos);
+
+    std::vector<std::string> out;
+    std::string field;
+
+    for (std::size_t at (begin); at < end; ++at)
+    {
+      if (flat[at] == ',')
+      {
+        out.push_back(field);
+        field.clear();
+      }
+      else if (flat[at] != ' ')
+      {
+        field.push_back(flat[at]);
+      }
+    }
+
+    out.push_back(field);
+
+    return out;
+  }
+
+  // Parses emitted text the way the server does: as a double, then narrowed to the FLOAT the
+  // column holds. Locale-classic on purpose -- a host under a comma-decimal locale would read
+  // -9512.345 as -9512 and every assertion below would pass for the wrong reason.
+  float reparsed(std::string const& text)
+  {
+    std::istringstream in (text);
+    in.imbue(std::locale::classic());
+
+    double value (0.0);
+    in >> value;
+
+    return static_cast<float>(value);
+  }
+
+  // The stored bytes, which is what a changeset review diffs. Compared as bits rather than with
+  // == so "unchanged" means unchanged, and not merely "equal to within a comparison that treats
+  // -0.0 and 0.0 as the same value".
+  std::uint32_t bitsOf(float value)
+  {
+    std::uint32_t bits (0);
+    std::memcpy(&bits, &value, sizeof bits);
+    return bits;
+  }
+
+  // A rotation component as it comes back from the database: a FLOAT, widened to the double the
+  // spawn structs carry. Every value the editor reads has been through this narrowing, so these
+  // are the values a re-emitted changeset has to reproduce exactly.
+  double asStoredFloat(double value)
+  {
+    return static_cast<double>(static_cast<float>(value));
   }
 
   // The spawn from tools/dev-db/03_example_changeset.sql, so the emitted output can be checked
@@ -347,9 +422,23 @@ TEST_CASE("gameobject rotation is emitted as a quaternion", "[changeset][gameobj
 
   CHECK(contains(flat, "`rotation0`, `rotation1`, `rotation2`, `rotation3`"));
 
-  // orientation pi: rotation2 = sin(pi/2) = 1, rotation3 = cos(pi/2) = 0. cos(pi/2) in double
-  // is ~6.1e-17, so this also proves nothing leaks out in scientific notation.
-  CHECK(contains(flat, " 0.000000, 0.000000, 1.000000, 0.000000, 300, 100, 1);"));
+  // orientation ~pi: rotation2 = sin(o/2) = 1, rotation3 = cos(o/2). The reference orientation is
+  // pi truncated to fifteen digits, so cos(o/2) is 1.6155445744325867e-15 rather than zero, and
+  // the quaternion formatter says so in full: nine significant digits of it, in fixed notation,
+  // because rounding it away would rewrite a column the editor never touched. Doubles as proof
+  // that nothing leaks out in scientific notation even four decades below the coordinate grid.
+  CHECK(contains(flat, " 0.000000000, 0.000000000, 1.000000000,"
+                       " 0.00000000000000161554457, 300, 100, 1);"));
+
+  // Asserted over the extracted values rather than the whole file: the comment header legitimately
+  // contains "e-" in prose such as "core-derived", so scanning the text would pass for the wrong
+  // reason today and fail for the wrong reason tomorrow.
+  for (std::string const& value : gameObjectValues(sql))
+  {
+    CAPTURE(value);
+    CHECK(value.find('e') == std::string::npos);
+    CHECK(value.find('E') == std::string::npos);
+  }
 }
 
 TEST_CASE("an explicitly supplied rotation is preserved rather than recomputed"
@@ -369,7 +458,116 @@ TEST_CASE("an explicitly supplied rotation is preserved rather than recomputed"
 
   // A tilted object would lose its tilt if the emitter always derived the quaternion from
   // the orientation column.
-  CHECK(contains(flat, "0.250000, 0.000000, 0.000000, 0.968246,"));
+  CHECK(contains(flat, "0.250000000, 0.000000000, 0.000000000, 0.968246000,"));
+}
+
+TEST_CASE("an unedited gameobject's rotation re-emits bit for bit", "[changeset][gameobject]")
+{
+  // The defect this covers: rotation0..3 were formatted with the coordinate helper, at six
+  // DECIMALS. That is eleven significant digits at a world coordinate's magnitude and only six
+  // where |v| <= 1, so a gameobject that was read and written back unchanged had its stored
+  // rotation bytes rewritten -- about eight float steps, ~1e-6 radians of yaw. Invisible in game
+  // and highly visible in a changeset review, which is the whole point of emitting a reviewable
+  // file.
+  //
+  // Every value here is a FLOAT widened to double, exactly as the reader hands it over, so the
+  // comparison is against what the database actually holds.
+  GameObjectSpawn spawn (referenceGameObject());
+  spawn.orientation = 1.0;
+  spawn.rotation.r0 = 0.0;
+  spawn.rotation.r1 = 0.0;
+  spawn.rotation.r2 = asStoredFloat(std::sin(0.5));    // 0.4794255495071411
+  spawn.rotation.r3 = asStoredFloat(std::cos(0.5));    // 0.8775825500488281
+
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addGameObject(spawn);
+
+  // The quaternion agrees with the orientation column, so nothing here is a warning about
+  // disagreement -- the only thing under test is precision.
+  CHECK(builder.issues().empty());
+
+  std::vector<std::string> const values (gameObjectValues(builder.build()));
+
+  REQUIRE(values.size() == 16);
+
+  double const stored[4]
+    {spawn.rotation.r0, spawn.rotation.r1, spawn.rotation.r2, spawn.rotation.r3};
+
+  for (std::size_t i (0); i < 4u; ++i)
+  {
+    std::string const& text (values[9 + i]);
+
+    CAPTURE(i, text);
+
+    // Bit-identical after the emitted text has been read back the way the server reads it.
+    CHECK(bitsOf(reparsed(text)) == bitsOf(static_cast<float>(stored[i])));
+
+    // And no exponent, which would be legal SQL but unreadable in review and unmatchable here.
+    CHECK(text.find('e') == std::string::npos);
+    CHECK(text.find('E') == std::string::npos);
+  }
+
+  // The two components that carry the rotation are exactly the ones the old formatter lost, so
+  // this asserts the defect was real rather than theoretical. If coordinate() ever gains enough
+  // precision to pass this, the separate formatter has stopped being necessary.
+  for (std::size_t i (2); i < 4u; ++i)
+  {
+    CAPTURE(i);
+    CHECK(bitsOf(reparsed(SqlFormat::coordinate(stored[i])))
+            != bitsOf(static_cast<float>(stored[i])));
+  }
+}
+
+TEST_CASE("applying a changeset and re-emitting the row it wrote is a no-op"
+         , "[changeset][gameobject][idempotency]")
+{
+  // The consequence a reviewer actually sees, stated end to end: emit, apply, read the row back,
+  // emit again. The reloaded spawn has to be the spawn that was written, and the second file has
+  // to be the first file, or every later review carries a rotation diff nobody made.
+  //
+  // Both halves are asserted, because only the first one distinguishes the formatters. The old
+  // six-decimal path satisfies the file comparison on its own -- once it has rounded a value, it
+  // rounds the rounded value to the same text for ever -- so a test that checked only that would
+  // pass while the first application of the file quietly rewrote the data. That is the worse
+  // failure: the one changeset that did move the rotation looks exactly like the ones that did not.
+  double const orientation (2.4980915);
+
+  GameObjectSpawn authored (referenceGameObject());
+  authored.orientation = orientation;
+  authored.rotation.r0 = 0.0;
+  authored.rotation.r1 = 0.0;
+  authored.rotation.r2 = asStoredFloat(std::sin(orientation / 2.0));
+  authored.rotation.r3 = asStoredFloat(std::cos(orientation / 2.0));
+
+  ChangesetBuilder original (modelFrom(REAL_FIXTURE));
+  original.addGameObject(authored);
+
+  std::string const emitted (original.build());
+  std::vector<std::string> const values (gameObjectValues(emitted));
+
+  REQUIRE(values.size() == 16);
+
+  // What the reader hands back once the file has been applied: the FLOAT the column now holds,
+  // widened to the double a spawn struct carries.
+  GameObjectSpawn reloaded (authored);
+  reloaded.rotation.r0 = static_cast<double>(reparsed(values[9]));
+  reloaded.rotation.r1 = static_cast<double>(reparsed(values[10]));
+  reloaded.rotation.r2 = static_cast<double>(reparsed(values[11]));
+  reloaded.rotation.r3 = static_cast<double>(reparsed(values[12]));
+
+  CHECK(bitsOf(static_cast<float>(reloaded.rotation.r0))
+          == bitsOf(static_cast<float>(authored.rotation.r0)));
+  CHECK(bitsOf(static_cast<float>(reloaded.rotation.r1))
+          == bitsOf(static_cast<float>(authored.rotation.r1)));
+  CHECK(bitsOf(static_cast<float>(reloaded.rotation.r2))
+          == bitsOf(static_cast<float>(authored.rotation.r2)));
+  CHECK(bitsOf(static_cast<float>(reloaded.rotation.r3))
+          == bitsOf(static_cast<float>(authored.rotation.r3)));
+
+  ChangesetBuilder rebuilt (modelFrom(REAL_FIXTURE));
+  rebuilt.addGameObject(reloaded);
+
+  CHECK(rebuilt.build() == emitted);
 }
 
 TEST_CASE("removals emit a DELETE and no INSERT", "[changeset][removal]")
@@ -618,6 +816,115 @@ TEST_CASE("coordinate refuses a value that is not a number", "[changeset][sqlfor
     (SqlFormat::coordinate(std::numeric_limits<double>::quiet_NaN()), ChangesetError);
   CHECK_THROWS_AS
     (SqlFormat::coordinate(std::numeric_limits<double>::infinity()), ChangesetError);
+}
+
+TEST_CASE("rotationComponent works to nine significant digits, not six decimals"
+         , "[changeset][sqlformat]")
+{
+  // Nine SIGNIFICANT digits, so the number of decimals follows the magnitude. A quaternion
+  // component lives in [-1, 1], where six decimals would be only six significant digits.
+  CHECK(SqlFormat::rotationComponent(0.0) == "0.000000000");
+  CHECK(SqlFormat::rotationComponent(1.0) == "1.000000000");
+  CHECK(SqlFormat::rotationComponent(-1.0) == "-1.000000000");
+  CHECK(SqlFormat::rotationComponent(0.25) == "0.250000000");
+
+  // A component one decade smaller gets one more decimal place, because nine significant digits
+  // of 0.0479425549 do not fit in nine decimals.
+  CHECK(SqlFormat::rotationComponent(0.0479425549) == "0.0479425549");
+
+  // The value from the defect report, as stored in the FLOAT column and as computed in double.
+  CHECK(SqlFormat::rotationComponent(asStoredFloat(std::sin(0.5))) == "0.479425550");
+  CHECK(SqlFormat::rotationComponent(std::sin(0.5)) == "0.479425539");
+
+  // Fixed notation throughout: the default float format would emit 1.61554457e-15 for a
+  // rotation3 derived from an orientation near pi, and the emitter's other guarantee is that no
+  // exponent reaches the SQL.
+  CHECK(SqlFormat::rotationComponent(1.6155445744325867e-15)
+          == "0.00000000000000161554457");
+  CHECK(SqlFormat::rotationComponent(1.0e-9).find('e') == std::string::npos);
+  CHECK(SqlFormat::rotationComponent(1.0e-30).find('e') == std::string::npos);
+
+  // "-0" is as unwelcome here as it is in a coordinate: a value with no significant digit left
+  // must not keep a sign that means nothing.
+  CHECK(SqlFormat::rotationComponent(-0.0) == "0.000000000");
+
+  // A negative that does survive keeps its sign, to all nine digits.
+  CHECK(SqlFormat::rotationComponent(asStoredFloat(-std::sin(0.5))) == "-0.479425550");
+
+  // A finite value too large for a FLOAT is not a quaternion component at all, and narrowing it to
+  // one is undefined behaviour rather than merely lossy. It is still formatted rather than refused:
+  // reporting the shape of a quaternion is validation's job, and saying what the value was is
+  // this function's.
+  CHECK(SqlFormat::rotationComponent(1.0e40).find('e') == std::string::npos);
+  CHECK(SqlFormat::rotationComponent(-1.0e40).front() == '-');
+}
+
+TEST_CASE("rotationComponent round-trips a float where coordinate cannot"
+         , "[changeset][sqlformat]")
+{
+  // float -> text -> float, unchanged, for values that actually occur in rotation0..3. sin(0.5)
+  // and cos(0.5) are the quaternion of a one-radian yaw; the rest are the components of the
+  // eighth-turn orientations, plus the awkward cases at the ends of the range.
+  std::vector<double> values
+    { std::sin(0.5), std::cos(0.5)
+    , 1.0, -1.0, 0.0, 0.5, -0.5, 0.25
+    , 1.0 / 3.0, 0.1, 0.0123456789, 0.968246, -0.707107
+    , 1.6155445744325867e-15
+    };
+
+  for (int k (0); k < 16; ++k)
+  {
+    double const half_orientation (static_cast<double>(k) * 3.14159265358979 / 16.0);
+    values.push_back(std::sin(half_orientation));
+    values.push_back(std::cos(half_orientation));
+  }
+
+  for (double const raw : values)
+  {
+    // Both the double the maths produced and the float the column would hold, because the
+    // editor sees the second and derives the first.
+    for (double const value : {raw, asStoredFloat(raw)})
+    {
+      std::string const text (SqlFormat::rotationComponent(value));
+
+      CAPTURE(value, text);
+
+      CHECK(bitsOf(reparsed(text)) == bitsOf(static_cast<float>(value)));
+      CHECK(text.find('e') == std::string::npos);
+      CHECK(text.find('E') == std::string::npos);
+    }
+  }
+}
+
+TEST_CASE("rotationComponent tells two adjacent floats apart", "[changeset][sqlformat]")
+{
+  // What "round-trips a float exactly" means, stated as the property rather than as a list of
+  // values: no two distinct floats may format to the same text, or one of them is being written
+  // as the other.
+  float const stored (static_cast<float>(std::sin(0.5)));
+  float const neighbour (std::nextafter(stored, 1.0f));
+
+  REQUIRE(bitsOf(stored) != bitsOf(neighbour));
+
+  CHECK(SqlFormat::rotationComponent(stored) != SqlFormat::rotationComponent(neighbour));
+
+  // And the reason a second formatter had to exist: at six decimals the two are the same text,
+  // so whichever one was in the database, the other one is what gets written back.
+  CHECK(SqlFormat::coordinate(stored) == SqlFormat::coordinate(neighbour));
+}
+
+TEST_CASE("rotationComponent refuses a value that is not a number"
+         , "[changeset][sqlformat][safety]")
+{
+  // A NaN or infinite quaternion component is not a rotation at all. Substituting the identity
+  // would turn the object to face a direction nobody chose, and emitting "nan" produces a syntax
+  // error part-way through a file whose DELETE statements have already committed.
+  CHECK_THROWS_AS
+    (SqlFormat::rotationComponent(std::numeric_limits<double>::quiet_NaN()), ChangesetError);
+  CHECK_THROWS_AS
+    (SqlFormat::rotationComponent(std::numeric_limits<double>::infinity()), ChangesetError);
+  CHECK_THROWS_AS
+    (SqlFormat::rotationComponent(-std::numeric_limits<double>::infinity()), ChangesetError);
 }
 
 TEST_CASE("quote escapes what would break out of a literal", "[changeset][sqlformat][safety]")

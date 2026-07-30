@@ -9,7 +9,7 @@ install belong in `docs/environment.md`, which is gitignored — this file is th
 |---|---|---|
 | MSVC | VS 2019 or 2022, x64 | `cl`/`msbuild` need a Developer prompt, or just use the VS generator. |
 | CMake | 3.5+ | If you have CMake **4.x**, see the policy flag below — it fails before anything else. |
-| Qt | **5.15.2**, `msvc2019_64` | Hard floor is 5.10; see "Qt version floor". Pick one Qt version and one compiler only. |
+| Qt | **5.15.2**, `msvc2019_64` | Hard floor is 5.10; see "Qt version floor". Pick one Qt version and one compiler only. **No Qt account needed** — see below. |
 | MySQL Server | 8.0 or 8.4 | Supplies `libmysql.lib` and hosts the dev schema. |
 | MySQL Connector/C++ | 8.0+ | Only needed for `-DUSE_SQL=ON`. Ships as a ZIP, no installer required. |
 | Submodules | initialised | `cmake/` is itself a submodule, so nothing configures without this. |
@@ -32,6 +32,30 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_POLICY_VERSION_MI
 **Quote the flag.** Unquoted, some shells strip the `.5`, the cache ends up holding `3`, and
 every subproject then fails with a message that blames the subproject rather than the flag.
 If you see `Invalid CMAKE_POLICY_VERSION_MINIMUM value "3"`, that is this.
+
+## Installing Qt without a Qt account
+
+The official Qt online installer requires an account. `aqtinstall` fetches the same packages from
+the same mirrors and does not:
+
+```bash
+python -m pip install aqtinstall
+python -m aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 -O H:/Qt
+```
+
+That completes in about 90 seconds and yields `Qt5Core`, `Qt5Widgets`, `Qt5Gui`, `Qt5OpenGL`,
+`Qt5OpenGLExtensions`, `Qt5Network`, `Qt5Xml` and `Qt5Multimedia` — every component this project's
+`find_package` calls need.
+
+Do **not** pass `-m qtmultimedia`: in 5.15.2 Multimedia ships in the base package and naming it as
+a module fails with "packages were not found while parsing XML of package information". Check what
+a version actually offers with `aqt list-qt windows desktop --modules 5.15.2 win64_msvc2019_64`.
+
+Then point CMake at it:
+
+```bash
+"-DCMAKE_PREFIX_PATH=H:/Qt/5.15.2/msvc2019_64"
+```
 
 ## Qt version floor
 

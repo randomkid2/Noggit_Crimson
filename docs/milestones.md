@@ -14,15 +14,51 @@ is not a completed milestone.
 | — | Dev database live and seeded, 29/29 assertions | **done** (2026-07-30) |
 | M0a | Capability model + test harness | **done** |
 | M0b | Live introspector + connection layer | **done** |
-| M0c | QSettings adapter | **written, NOT COMPILED** — needs Qt to verify |
-| M0c | UID migration off the old `connect()` | blocked on Qt |
-| M1 | Tile math + spawn query (logic) | **done** — rendering blocked on Qt |
-| M2 | Changeset emission (logic) | **done** — staging UI blocked on Qt |
-| M3 | Waypoint path model + emission | **done** — visual editor blocked on Qt |
-| M4 | Coordinate transforms for chunk moves | **partial** — maths done, terrain side needs Qt |
-| M5 | Doctor, recovery, coordinate round-trip | not started |
+| M0c | QSettings adapter | **done and compiled** — links into `noggit.exe` |
+| M0c | UID migration off the old `connect()` | remaining |
+| M1 | Tile math + spawn query (logic) | **done** — rendering remaining |
+| M2 | Changeset emission (logic) | **done** — staging UI remaining |
+| M3 | Waypoint path model + emission | **done** — visual editor remaining |
+| M4 | Chunk transform plan (translate + rotate) | **done** — terrain side remaining |
+| M5 | Doctor, archive/recovery, coordinate round-trip | **done** — UI surface remaining |
 
-**99 test cases, 715 assertions** — all with Qt absent.
+**181 test cases, 2239 assertions.** Qt 5.15.2 is installed (via `aqtinstall`, no Qt account
+needed), `noggit.exe` builds with `-DUSE_SQL=ON`, and all 14 database translation units link into
+it.
+
+Everything remaining is UI and rendering: wiring the tested logic layer into `MapView`'s render
+path, ghost placement, the pending-changes panel, the waypoint visual editor, the terrain half of
+the chunk mover, and a Doctor dialog over `DoctorReport::render()`.
+
+### Known follow-ups from the M4–M5 review
+
+Real, judged non-urgent, recorded so they are not rediscovered as surprises.
+
+1. **`ChangesetArchive::collect` stores a narrow `std::string` filename.** A name the active code
+   page cannot represent (a UTF-8 name copied from another machine) is converted with replacement
+   characters, so `list()` reports a name that no longer opens, `load()` fails on it, and
+   `prune()` throws on `remove()` — permanently blocking pruning while that file sits in the root.
+   Fix is to keep the native `std::filesystem::path` in the stored entry.
+2. **`ChangesetArchive::load` sizes the file then reads that many bytes**, so the short-read guard
+   only detects shrinkage. A file that *grew* between the stat and the read is returned silently
+   truncated — the exact failure the guard's comment claims to make impossible.
+3. **`ChangesetArchive::collect` fails the whole archive on one unsizable entry.** An unrelated
+   backup vanishing mid-scan (a concurrent `prune`) makes `store()` refuse to archive a changeset
+   that had nothing wrong with it. A not-found error should skip the entry, as `prune` already does.
+4. **`isDefaultRotation`, `TWO_PI`, `ORIENTATION_AGREEMENT_TOLERANCE` and `yawSeparation` are
+   duplicated across three translation units** (`ChangesetBuilder`, `ChunkTransform`,
+   `GmCommands`), with `TWO_PI` written as two different literals. Each copy is tested only
+   against itself, so changing the identity test in one place silently desynchronises the emitter,
+   the transform planner and the `.go` command. They belong in `TileCoordinates`, which owns
+   `Quaternion`. `addIssue`/`addError`/`addWarning` are likewise duplicated between `SpawnTypes`
+   and `ChunkTransform`.
+5. **Case folding in `DoctorReport` uses locale-sensitive `std::tolower`.** Under a Turkish
+   `LC_CTYPE` (Qt calls `setlocale(LC_ALL, "")` at startup) the configured writable schema
+   compares unequal to itself and the loud live-database alarm fires against the *correct* schema.
+   Fold ASCII by hand, as `ChangesetArchive::sanitiseLabel` already does.
+6. **Two assertions in `GmCommandsTests` are tautologies** over a hardcoded literal rather than
+   over emitted output, so on a machine with no comma-decimal locale the test reports having
+   verified locale independence while verifying nothing.
 
 ### Known follow-ups from the M1–M4 review
 

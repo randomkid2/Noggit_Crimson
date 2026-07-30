@@ -2,23 +2,33 @@
 
 // Pure tests for the tile spawn reader.
 //
-// Nothing here touches a database. The SQL builders are pure functions of a SchemaModel and a
-// set of bounds, and the row decoders are pure functions of a result row, which is exactly what
-// makes the interesting failure modes -- the wrong column name, a filter on a derived column, a
-// tile whose bounds do not match its index -- testable on a machine with no MySQL at all.
-// Live behaviour is covered separately by the integration suite.
+// Nothing here touches a database, and nothing here needs one to be installed. The SQL builders
+// are pure functions of a SchemaModel and a set of bounds, and the row decoders are pure functions
+// of a result row, which is exactly what makes the interesting failure modes -- the wrong column
+// name, a filter on a derived column, a tile whose bounds do not match its index, a row that came
+// back short -- testable on a machine with no MySQL at all. All of it is defined in
+// SpawnQueryDetail.cpp, which links no database client, so this file needs only that object and
+// the schema model. Live behaviour is covered separately by the integration suite.
+//
+// The internal entry points come from SpawnQueryDetail.hpp. They used to be re-declared by hand at
+// the top of this file, which was a second and unchecked source of truth for their signatures:
+// they matched the definitions in SpawnQuery.cpp only because ResultRow is a typedef for
+// std::vector<std::string>, and a changed parameter type would have shown up as a link error at
+// best. Including the real header is what makes the compiler check them.
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <FixtureLoader.hpp>
 #include <noggit/database/SchemaModel.hpp>
 #include <noggit/database/SpawnQuery.hpp>
+#include <noggit/database/SpawnQueryDetail.hpp>
 #include <noggit/database/SpawnTypes.hpp>
 #include <noggit/database/TileCoordinates.hpp>
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -28,21 +38,6 @@
 using namespace Noggit::Database;
 using Noggit::Tests::fixturePath;
 using Noggit::Tests::loadSchemaFixture;
-
-// Implementation entry points defined in SpawnQuery.cpp but deliberately kept out of the
-// header: they are not part of the module's contract, only of how it keeps its promises.
-// Declaring them here rather than in a header means no test-only surface ships in src/.
-namespace Noggit::Database::SpawnQuery
-{
-  bool isPlainIdentifier(std::string const& name);
-
-  std::string waypointSelectSql
-    (SchemaModel const& schema, std::vector<std::uint32_t> const& path_ids);
-
-  CreatureSpawn parseCreatureRow(std::vector<std::string> const& row);
-  GameObjectSpawn parseGameObjectRow(std::vector<std::string> const& row);
-  WaypointNode parseWaypointRow(std::vector<std::string> const& row);
-}
 
 namespace
 {
@@ -390,7 +385,7 @@ TEST_CASE("the waypoint query never reads the core-managed wpguid", "[spawnquery
 
   REQUIRE(schema.hasColumn("waypoint_data", "wpguid"));
 
-  std::string const sql (SpawnQuery::waypointSelectSql(schema, {90000040u, 12u}));
+  std::string const sql (SpawnQuery::Detail::waypointSelectSql(schema, {90000040u, 12u}));
 
   CHECK_FALSE(containsNoCase(sql, "wpguid"));
   CHECK(contains(sql, "FROM `waypoint_data`"));
@@ -405,7 +400,7 @@ TEST_CASE("the waypoint query never reads the core-managed wpguid", "[spawnquery
   CHECK(selectColumnCount(sql) == 10);
 
   // An empty id list must still be a legal statement rather than "IN ()".
-  CHECK_FALSE(contains(SpawnQuery::waypointSelectSql(schema, {}), "IN ()"));
+  CHECK_FALSE(contains(SpawnQuery::Detail::waypointSelectSql(schema, {}), "IN ()"));
 }
 
 TEST_CASE("nothing but validated identifiers and numbers is interpolated"
@@ -413,22 +408,22 @@ TEST_CASE("nothing but validated identifiers and numbers is interpolated"
 {
   // Column names cannot be bound as parameters, so the schema-resolved ones are interpolated.
   // They are refused rather than escaped when they are not plain identifiers.
-  CHECK(SpawnQuery::isPlainIdentifier("wander_distance"));
-  CHECK(SpawnQuery::isPlainIdentifier("spawndist"));
-  CHECK(SpawnQuery::isPlainIdentifier("waypoint_data"));
-  CHECK(SpawnQuery::isPlainIdentifier("a$b_9"));
+  CHECK(SpawnQuery::Detail::isPlainIdentifier("wander_distance"));
+  CHECK(SpawnQuery::Detail::isPlainIdentifier("spawndist"));
+  CHECK(SpawnQuery::Detail::isPlainIdentifier("waypoint_data"));
+  CHECK(SpawnQuery::Detail::isPlainIdentifier("a$b_9"));
 
-  CHECK_FALSE(SpawnQuery::isPlainIdentifier(""));
-  CHECK_FALSE(SpawnQuery::isPlainIdentifier("has space"));
-  CHECK_FALSE(SpawnQuery::isPlainIdentifier("back`tick"));
-  CHECK_FALSE(SpawnQuery::isPlainIdentifier("quote'mark"));
-  CHECK_FALSE(SpawnQuery::isPlainIdentifier("wander_distance`; DROP TABLE `creature"));
-  CHECK_FALSE(SpawnQuery::isPlainIdentifier("creature; --"));
-  CHECK_FALSE(SpawnQuery::isPlainIdentifier(std::string(65, 'x')));
+  CHECK_FALSE(SpawnQuery::Detail::isPlainIdentifier(""));
+  CHECK_FALSE(SpawnQuery::Detail::isPlainIdentifier("has space"));
+  CHECK_FALSE(SpawnQuery::Detail::isPlainIdentifier("back`tick"));
+  CHECK_FALSE(SpawnQuery::Detail::isPlainIdentifier("quote'mark"));
+  CHECK_FALSE(SpawnQuery::Detail::isPlainIdentifier("wander_distance`; DROP TABLE `creature"));
+  CHECK_FALSE(SpawnQuery::Detail::isPlainIdentifier("creature; --"));
+  CHECK_FALSE(SpawnQuery::Detail::isPlainIdentifier(std::string(65, 'x')));
 
   // Every identifier either schema could hand the builder passes that rule.
-  CHECK(SpawnQuery::isPlainIdentifier(modelFrom(REAL_FIXTURE).wanderDistanceColumn()));
-  CHECK(SpawnQuery::isPlainIdentifier(modelFrom(DRIFTED_FIXTURE).wanderDistanceColumn()));
+  CHECK(SpawnQuery::Detail::isPlainIdentifier(modelFrom(REAL_FIXTURE).wanderDistanceColumn()));
+  CHECK(SpawnQuery::Detail::isPlainIdentifier(modelFrom(DRIFTED_FIXTURE).wanderDistanceColumn()));
 
   // And the generated statements contain no string literal, no statement separator and no
   // comment introducer at all, so there is nothing for an injected value to break out of.
@@ -437,7 +432,7 @@ TEST_CASE("nothing but validated identifiers and numbers is interpolated"
 
   std::string const creatures (SpawnQuery::creatureSelectSql(schema, 0, bounds));
   std::string const gameobjects (SpawnQuery::gameObjectSelectSql(schema, 0, bounds));
-  std::string const waypoints (SpawnQuery::waypointSelectSql(schema, {1u, 2u}));
+  std::string const waypoints (SpawnQuery::Detail::waypointSelectSql(schema, {1u, 2u}));
 
   for (std::string const& sql : {creatures, gameobjects, waypoints})
   {
@@ -446,6 +441,41 @@ TEST_CASE("nothing but validated identifiers and numbers is interpolated"
     CHECK(sql.find(';') == std::string::npos);
     CHECK(sql.find("--") == std::string::npos);
     CHECK(sql.find("/*") == std::string::npos);
+  }
+}
+
+TEST_CASE("a resolved identifier that is not plain is refused rather than escaped"
+         , "[spawnquery][safety]")
+{
+  // requireIdentifier is the gate every interpolated name passes through, and it is the one
+  // internal function this file could not reach while it was re-declaring them by hand: five of
+  // the six were copied out, and the one left out was the one whose failure mode is worst.
+  CHECK(SpawnQuery::Detail::requireIdentifier("wander_distance") == "wander_distance");
+  CHECK(SpawnQuery::Detail::requireIdentifier("spawndist") == "spawndist");
+  CHECK(SpawnQuery::Detail::requireIdentifier(std::string(64, 'x')).size() == 64);
+
+  // Refused, never sanitised. A name that needs sanitising did not come out of
+  // information_schema, so the schema it was resolved from is not trustworthy and quoting it
+  // would only hide that.
+  CHECK_THROWS_AS(SpawnQuery::Detail::requireIdentifier(""), SchemaCapabilityError);
+  CHECK_THROWS_AS(SpawnQuery::Detail::requireIdentifier("has space"), SchemaCapabilityError);
+  CHECK_THROWS_AS
+    ( SpawnQuery::Detail::requireIdentifier("wander_distance`; DROP TABLE `creature")
+    , SchemaCapabilityError
+    );
+  CHECK_THROWS_AS
+    (SpawnQuery::Detail::requireIdentifier(std::string(65, 'x')), SchemaCapabilityError);
+
+  // The message has to name what it rejected: a schema-drift report that does not say which
+  // identifier failed is unactionable.
+  try
+  {
+    SpawnQuery::Detail::requireIdentifier("no good");
+    FAIL("requireIdentifier accepted an identifier containing a space");
+  }
+  catch (SchemaCapabilityError const& error)
+  {
+    CHECK(contains(error.what(), "no good"));
   }
 }
 
@@ -459,7 +489,7 @@ TEST_CASE("an unusable schema or unusable bounds are refused, not papered over"
     (SpawnQuery::creatureSelectSql(SchemaModel(), 0, bounds), SchemaCapabilityError);
   CHECK_THROWS_AS
     (SpawnQuery::gameObjectSelectSql(SchemaModel(), 0, bounds), SchemaCapabilityError);
-  CHECK_THROWS_AS(SpawnQuery::waypointSelectSql(SchemaModel(), {1u}), SchemaCapabilityError);
+  CHECK_THROWS_AS(SpawnQuery::Detail::waypointSelectSql(SchemaModel(), {1u}), SchemaCapabilityError);
 
   // A creature table carrying neither wander_distance nor spawndist. Guessing one would
   // produce a statement that fails at the server; guessing neither would silently drop the
@@ -498,7 +528,7 @@ TEST_CASE("a creature row decodes to the spawn it describes", "[spawnquery][pars
     , "90000040", "1"
     };
 
-  CreatureSpawn const spawn (SpawnQuery::parseCreatureRow(row));
+  CreatureSpawn const spawn (SpawnQuery::Detail::parseCreatureRow(row));
 
   CHECK(spawn.guid == 9000004u);
   CHECK(spawn.id == 990001u);
@@ -534,7 +564,7 @@ TEST_CASE("a creature with no addon row is not mistaken for one with path 0"
   row[20] = "";
   row[21] = "0";
 
-  CreatureSpawn const missing (SpawnQuery::parseCreatureRow(row));
+  CreatureSpawn const missing (SpawnQuery::Detail::parseCreatureRow(row));
 
   CHECK_FALSE(missing.has_addon);
   CHECK(missing.path_id == 0u);
@@ -543,7 +573,7 @@ TEST_CASE("a creature with no addon row is not mistaken for one with path 0"
   row[20] = "0";
   row[21] = "1";
 
-  CreatureSpawn const present (SpawnQuery::parseCreatureRow(row));
+  CreatureSpawn const present (SpawnQuery::Detail::parseCreatureRow(row));
 
   CHECK(present.has_addon);
   CHECK(present.path_id == 0u);
@@ -554,7 +584,7 @@ TEST_CASE("a short, empty or nonsense row decodes rather than crashing"
 {
   // Truncated after map. Everything past the end of the row reads as 0 instead of off the end
   // of the vector.
-  CreatureSpawn const truncated (SpawnQuery::parseCreatureRow({"42", "17", "0"}));
+  CreatureSpawn const truncated (SpawnQuery::Detail::parseCreatureRow({"42", "17", "0"}));
 
   CHECK(truncated.guid == 42u);
   CHECK(truncated.id == 17u);
@@ -564,13 +594,13 @@ TEST_CASE("a short, empty or nonsense row decodes rather than crashing"
   CHECK_FALSE(truncated.has_addon);
   CHECK(near(truncated.position.x, 0.0));
 
-  CreatureSpawn const nothing (SpawnQuery::parseCreatureRow({}));
+  CreatureSpawn const nothing (SpawnQuery::Detail::parseCreatureRow({}));
   CHECK(nothing.guid == 0u);
 
-  GameObjectSpawn const no_gameobject (SpawnQuery::parseGameObjectRow({}));
+  GameObjectSpawn const no_gameobject (SpawnQuery::Detail::parseGameObjectRow({}));
   CHECK(no_gameobject.guid == 0u);
 
-  WaypointNode const no_node (SpawnQuery::parseWaypointRow({}));
+  WaypointNode const no_node (SpawnQuery::Detail::parseWaypointRow({}));
   CHECK(no_node.point == 0u);
   CHECK_FALSE(no_node.has_orientation);
 
@@ -578,7 +608,7 @@ TEST_CASE("a short, empty or nonsense row decodes rather than crashing"
   std::vector<std::string> junk (22, std::string("not a number"));
   junk[0] = "";
 
-  CreatureSpawn const garbage (SpawnQuery::parseCreatureRow(junk));
+  CreatureSpawn const garbage (SpawnQuery::Detail::parseCreatureRow(junk));
 
   CHECK(garbage.guid == 0u);
   CHECK(near(garbage.position.x, 0.0));
@@ -589,13 +619,32 @@ TEST_CASE("a short, empty or nonsense row decodes rather than crashing"
   std::vector<std::string> huge (numberedRow(22));
   huge[0] = "99999999999999";
 
-  CHECK(SpawnQuery::parseCreatureRow(huge).guid == 4294967295u);
+  CHECK(SpawnQuery::Detail::parseCreatureRow(huge).guid == 4294967295u);
 
   // An unknown movement type is read as idle rather than as an enumerator that does not exist.
   std::vector<std::string> odd (numberedRow(22));
   odd[16] = "9";
 
-  CHECK(SpawnQuery::parseCreatureRow(odd).movement_type == MovementType::IDLE);
+  CHECK(SpawnQuery::Detail::parseCreatureRow(odd).movement_type == MovementType::IDLE);
+}
+
+TEST_CASE("an unsigned field saturates rather than wrapping", "[spawnquery][parse][safety]")
+{
+  // The one decoding primitive both halves of the module use: the decoders read every unsigned
+  // column through it, and the reading half uses it for the path id a waypoint row is grouped by
+  // and for MAX(guid). That second use is why saturation rather than wrapping matters -- a
+  // wrapped maximum would hand out guids that are already in use.
+  std::vector<std::string> const row
+    {"", "0", "4294967295", "4294967296", "99999999999999", "-1", "12x"};
+
+  CHECK(SpawnQuery::Detail::rowUInt32(row, 0) == 0u);            // SQL NULL
+  CHECK(SpawnQuery::Detail::rowUInt32(row, 1) == 0u);
+  CHECK(SpawnQuery::Detail::rowUInt32(row, 2) == 4294967295u);   // the column's own maximum
+  CHECK(SpawnQuery::Detail::rowUInt32(row, 3) == 4294967295u);   // one past it, saturated
+  CHECK(SpawnQuery::Detail::rowUInt32(row, 4) == 4294967295u);
+  CHECK(SpawnQuery::Detail::rowUInt32(row, 5) == 0u);            // clamped, not wrapped to ~4e9
+  CHECK(SpawnQuery::Detail::rowUInt32(row, 6) == 12u);           // trailing junk ignored
+  CHECK(SpawnQuery::Detail::rowUInt32(row, 99) == 0u);           // past the end of the row
 }
 
 TEST_CASE("the select list and the row decoder agree on the shape of a row"
@@ -609,13 +658,13 @@ TEST_CASE("the select list and the row decoder agree on the shape of a row"
   // holding the two halves of the module together.
   CHECK(selectColumnCount(SpawnQuery::creatureSelectSql(schema, 0, bounds)) == 22);
   CHECK(selectColumnCount(SpawnQuery::gameObjectSelectSql(schema, 0, bounds)) == 16);
-  CHECK(selectColumnCount(SpawnQuery::waypointSelectSql(schema, {1u})) == 10);
+  CHECK(selectColumnCount(SpawnQuery::Detail::waypointSelectSql(schema, {1u})) == 10);
 
   // The last creature column really is has_addon: a row one field short reports no addon.
   std::vector<std::string> const full (numberedRow(22));
 
-  CHECK(SpawnQuery::parseCreatureRow(full).has_addon);
-  CHECK_FALSE(SpawnQuery::parseCreatureRow(numberedRow(21)).has_addon);
+  CHECK(SpawnQuery::Detail::parseCreatureRow(full).has_addon);
+  CHECK_FALSE(SpawnQuery::Detail::parseCreatureRow(numberedRow(21)).has_addon);
 }
 
 TEST_CASE("a gameobject row decodes with its quaternion intact", "[spawnquery][parse]")
@@ -628,7 +677,7 @@ TEST_CASE("a gameobject row decodes with its quaternion intact", "[spawnquery][p
     , "300", "100", "1"
     };
 
-  GameObjectSpawn const spawn (SpawnQuery::parseGameObjectRow(row));
+  GameObjectSpawn const spawn (SpawnQuery::Detail::parseGameObjectRow(row));
 
   CHECK(spawn.guid == 9000010u);
   CHECK(spawn.id == 990002u);
@@ -648,11 +697,11 @@ TEST_CASE("a gameobject row decodes with its quaternion intact", "[spawnquery][p
 
   // A missing rotation3 is the identity rotation, not the zero quaternion: (0,0,0,0) is not a
   // rotation at all. A stored 0 is still read as 0, since cos(pi/2) is legitimately zero.
-  CHECK(near(SpawnQuery::parseGameObjectRow({"1"}).rotation.r3, 1.0));
+  CHECK(near(SpawnQuery::Detail::parseGameObjectRow({"1"}).rotation.r3, 1.0));
 
   std::vector<std::string> explicit_zero (row);
   explicit_zero[12] = "0";
-  CHECK(near(SpawnQuery::parseGameObjectRow(explicit_zero).rotation.r3, 0.0));
+  CHECK(near(SpawnQuery::Detail::parseGameObjectRow(explicit_zero).rotation.r3, 0.0));
 }
 
 TEST_CASE("a waypoint row keeps NULL orientation distinct from zero", "[spawnquery][parse]")
@@ -661,7 +710,7 @@ TEST_CASE("a waypoint row keeps NULL orientation distinct from zero", "[spawnque
   std::vector<std::string> row
     { "90000040", "3", "-9512.345", "83.117", "58.271", "", "1500", "1", "0", "100" };
 
-  WaypointNode const null_orientation (SpawnQuery::parseWaypointRow(row));
+  WaypointNode const null_orientation (SpawnQuery::Detail::parseWaypointRow(row));
 
   // point comes from column 1, not from the path id in column 0.
   CHECK(null_orientation.point == 3u);
@@ -675,18 +724,18 @@ TEST_CASE("a waypoint row keeps NULL orientation distinct from zero", "[spawnque
   // The column is nullable and usually NULL, so "facing north" and "no facing" must not read
   // the same.
   row[5] = "0";
-  WaypointNode const zero_orientation (SpawnQuery::parseWaypointRow(row));
+  WaypointNode const zero_orientation (SpawnQuery::Detail::parseWaypointRow(row));
 
   CHECK(zero_orientation.has_orientation);
   CHECK(near(zero_orientation.orientation, 0.0));
 
   row[5] = "3.14159";
-  CHECK(near(SpawnQuery::parseWaypointRow(row).orientation, 3.14159));
+  CHECK(near(SpawnQuery::Detail::parseWaypointRow(row).orientation, 3.14159));
 
   // move_type is a closed set of four; anything else walks.
   row[7] = "3";
-  CHECK(SpawnQuery::parseWaypointRow(row).move_type == WaypointMoveType::TAKEOFF);
+  CHECK(SpawnQuery::Detail::parseWaypointRow(row).move_type == WaypointMoveType::TAKEOFF);
 
   row[7] = "77";
-  CHECK(SpawnQuery::parseWaypointRow(row).move_type == WaypointMoveType::WALK);
+  CHECK(SpawnQuery::Detail::parseWaypointRow(row).move_type == WaypointMoveType::WALK);
 }

@@ -108,6 +108,23 @@ namespace Noggit::Database
     // magnitudes and round-trips within tolerance.
     std::string coordinate(double value);
 
+    // Formats one component of the rotation0..3 quaternion for SQL.
+    //
+    // Separate from coordinate() because the two sit at opposite ends of a float's dynamic
+    // range, and a count of DECIMALS means different things there. Six decimals is about eleven
+    // significant digits at a world coordinate's magnitude of ~1e4, but only six where
+    // |v| <= 1 -- which is where every quaternion component lives, and six is not enough to
+    // name a float uniquely. A gameobject read back with rotation2 = 0.4794255495071411
+    // re-emits at six decimals as 0.479426 and reloads as 0.47942599654197693, eight float
+    // steps away: a changeset that edited nothing still rewrites the stored bytes and shows up
+    // as a diff in review, which is exactly what the "-0" handling next door exists to avoid.
+    //
+    // Nine SIGNIFICANT digits name any IEEE binary32 value uniquely, so this works to a
+    // significant-digit precision rather than a fixed number of decimals. It stays in fixed
+    // notation, so no exponent reaches the SQL, and it keeps coordinate()'s promise that no
+    // value is ever emitted as "-0".
+    std::string rotationComponent(double value);
+
     // Escapes a string for single-quoted SQL. Used for names and comments, never for
     // identifiers -- identifiers are validated, not escaped.
     std::string quote(std::string const& value);
