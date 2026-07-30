@@ -1,0 +1,69 @@
+{
+  "_comment": [
+    "Connection settings for the dev-DB tooling. Copy to dev-db.config.json and edit.",
+    "dev-db.config.json is gitignored because it contains paths specific to your machine.",
+    "",
+    "No passwords live here. They are resolved at call time into MYSQL_PWD for the lifetime",
+    "of one child process: never written to disk, never printed, never placed on a command",
+    "line where the process table and mysql's own insecurity warning would expose them.",
+    "",
+    "source = the live schema you read the real structure FROM. Read-only by contract.",
+    "dev    = the disposable schema this project writes TO. The only writable target."
+  ],
+
+  "source": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "trinity",
+    "schema": "world",
+    "passwordEnv": "NOGGIT_SRC_DB_PWD",
+
+    "_sourcePasswordFileComment": [
+      "Optional convenience: if passwordEnv is unset, parse the password out of a",
+      "TrinityCore .conf file whose value is host;port;user;pass;db. Point this at your own",
+      "worldserver.conf, or delete both keys and rely on the env var alone."
+    ],
+    "sourcePasswordFile": "",
+    "sourcePasswordKey": "WorldDatabaseInfo"
+  },
+
+  "dev": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "noggit_rw",
+    "schema": "noggit_dev_world",
+    "passwordEnv": "NOGGIT_DEV_DB_PWD"
+  },
+
+  "mysqlBinDir": "C:/Program Files/MySQL/MySQL Server 8.4/bin",
+
+  "_tablesComment": "The spawn-editing working set. Structure is copied from source, never data.",
+  "tables": [
+    "version",
+    "creature",
+    "creature_template",
+    "creature_addon",
+    "creature_template_addon",
+    "creature_equip_template",
+    "creature_model_info",
+    "creature_template_locale",
+    "creature_formations",
+    "gameobject",
+    "gameobject_template",
+    "gameobject_template_addon",
+    "gameobject_template_locale",
+    "waypoint_data",
+    "waypoint_scripts",
+    "smart_scripts",
+    "conditions",
+    "spawn_group",
+    "spawn_group_template",
+    "linked_respawn",
+    "pool_template",
+    "pool_members",
+    "game_event",
+    "game_event_creature",
+    "game_event_gameobject",
+    "game_tele"
+  ]
+}

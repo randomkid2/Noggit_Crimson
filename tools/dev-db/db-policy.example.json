@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "Database write policy. Copy to db-policy.json and edit for your machine.",
+    "db-policy.json is gitignored: it names YOUR databases, which is not information to publish.",
+    "",
+    "The defaults below cover the standard TrinityCore schema names plus MySQL's own system",
+    "schemas. Add every other live database on your server to protectedSchemas.",
+    "",
+    "IMPORTANT: this list is defence in depth, not the primary guard. The guard's core rule is",
+    "that any state-changing statement which does not explicitly name writableSchema is refused.",
+    "That holds even if protectedSchemas is empty, so an incomplete list does not open a hole -",
+    "it only costs you the clearer error message that names the schema you nearly hit."
+  ],
+
+  "writableSchema": "noggit_dev_world",
+
+  "protectedSchemas": [
+    "world",
+    "characters",
+    "auth",
+    "hotfixes",
+    "mysql",
+    "sys",
+    "performance_schema",
+    "information_schema"
+  ]
+}
