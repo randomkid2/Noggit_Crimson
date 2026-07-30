@@ -229,17 +229,65 @@ TEST_CASE("the map filter and both coordinate bounds reach the WHERE clause"
   CHECK(contains(creatures, "`map` = 0"));
   CHECK(contains(gameobjects, "`map` = 571"));
 
-  // Half-open on both axes: >= min, < max, so a spawn on a shared edge is read once.
-  CHECK(contains(creatures, "`position_x` >= "));
-  CHECK(contains(creatures, "`position_x` < "));
-  CHECK(contains(creatures, "`position_y` >= "));
-  CHECK(contains(creatures, "`position_y` < "));
+  // (min, max] on both axes: lower edge EXCLUSIVE, upper edge INCLUSIVE, because the axis runs
+  // backwards. Asserted as exact operator text rather than "some comparison is present",
+  // because the earlier version of this test checked only for ">= " and "< " and so passed
+  // against a predicate that used the opposite interval to tileForPosition -- which put every
+  // tile-edge spawn on the wrong ADT.
+  CHECK(contains(creatures, "`position_x` > "));
+  CHECK(contains(creatures, "`position_x` <= "));
+  CHECK(contains(creatures, "`position_y` > "));
+  CHECK(contains(creatures, "`position_y` <= "));
 
-  CHECK(contains(gameobjects, "`position_x` >= "));
-  CHECK(contains(gameobjects, "`position_y` < "));
+  CHECK(contains(gameobjects, "`position_x` > "));
+  CHECK(contains(gameobjects, "`position_y` <= "));
+
+  // The inverted forms must be absent outright. ">= " contains "> " as a substring, so the
+  // checks above cannot by themselves distinguish the two conventions.
+  CHECK_FALSE(contains(creatures, "`position_x` >= "));
+  CHECK_FALSE(contains(creatures, "`position_y` >= "));
+  CHECK_FALSE(contains(gameobjects, "`position_x` >= "));
+
+  // "< " likewise appears inside "<= ", so absence has to be checked on the full comparison.
+  CHECK_FALSE(contains(creatures, "`position_x` < "));
+  CHECK_FALSE(contains(creatures, "`position_y` < "));
+  CHECK_FALSE(contains(gameobjects, "`position_y` < "));
 
   // Ordering by guid keeps two reads of an unchanged tile comparable.
   CHECK(contains(creatures, "ORDER BY"));
+}
+
+TEST_CASE("the query interval owns a tile edge exactly where tileForPosition does"
+         , "[spawnquery][sql][tile][bounds]")
+{
+  // Direct regression test for a real defect: the predicate was built as [min, max) while
+  // tileForPosition owns (min, max], so a spawn at exactly x = 0.0 or y = 0.0 -- both exactly
+  // representable in a FLOAT column and common in real data -- was excluded from its own tile
+  // and returned for the neighbour. The tile the editor opened looked empty and the spawn
+  // rendered on the wrong ADT.
+  //
+  // Asserted over the interval rather than the SQL text so it holds whatever the operators are
+  // spelled as.
+  auto ownedBy = [] (TileIndex const& tile, double x, double y)
+  {
+    TileBounds const b (TileCoordinates::boundsForTile(tile));
+    return x > b.min_x && x <= b.max_x && y > b.min_y && y <= b.max_y;
+  };
+
+  for (double const edge : {0.0, TILE_SIZE, -TILE_SIZE, 2.0 * TILE_SIZE})
+  {
+    CAPTURE(edge);
+
+    TileIndex const owner (TileCoordinates::tileForPosition(edge, edge));
+
+    // The tile tileForPosition names must be the tile whose interval contains the value.
+    CHECK(ownedBy(owner, edge, edge));
+
+    // And exactly one tile may claim it. The neighbour on the far side of the shared edge is
+    // the one with the HIGHER index, because the axis runs backwards.
+    CHECK_FALSE(ownedBy(TileIndex{owner.x + 1, owner.y + 1}, edge, edge));
+    CHECK_FALSE(ownedBy(TileIndex{owner.x - 1, owner.y - 1}, edge, edge));
+  }
 }
 
 TEST_CASE("bounds for tile (49,31) carry that tile's numbers", "[spawnquery][sql][tile]")
@@ -249,10 +297,12 @@ TEST_CASE("bounds for tile (49,31) carry that tile's numbers", "[spawnquery][sql
   // Sanity on the fixture itself: the verified real spawn must sit inside the bounds this test
   // then looks for in the SQL. Without this the assertions below would happily confirm the
   // wrong tile.
-  CHECK(bounds.min_x <= ELWYNN_SPAWN_X);
-  CHECK(ELWYNN_SPAWN_X < bounds.max_x);
-  CHECK(bounds.min_y <= ELWYNN_SPAWN_Y);
-  CHECK(ELWYNN_SPAWN_Y < bounds.max_y);
+  // Expressed as (min, max] -- lower exclusive, upper inclusive -- to match both
+  // TileCoordinates::boundsForTile and the emitted predicate.
+  CHECK(bounds.min_x < ELWYNN_SPAWN_X);
+  CHECK(ELWYNN_SPAWN_X <= bounds.max_x);
+  CHECK(bounds.min_y < ELWYNN_SPAWN_Y);
+  CHECK(ELWYNN_SPAWN_Y <= bounds.max_y);
 
   // Increasing world x gives a decreasing tile index, so tile 49 is at negative x. A sign
   // error here still produces plausible-looking indices, which is why the numbers are pinned.

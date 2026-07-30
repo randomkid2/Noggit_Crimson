@@ -146,9 +146,20 @@ enable_testing()
 #
 # SKIP_RETURN_CODE 4 is what Catch2 returns when every selected case skips, which is exactly
 # what happens to [integration] on a machine with no database. Without it that reads as failure.
+# Tags carried by files that are ALWAYS compiled.
 set(NOGGIT_TEST_TAGS
-  schema drift tile spawn validation changeset spawnquery sqlformat safety
+  schema drift tile spawn validation changeset sqlformat safety
 )
+
+# Tags carried ONLY by connector-gated files. Registering these unconditionally is a trap:
+# without the connector those translation units are never compiled, the filter matches zero
+# cases, and Catch2 exits 2 for "no tests ran" -- which is NOT the configured SKIP_RETURN_CODE
+# of 4, so ctest reports a failure on a machine that is behaving exactly as intended. Verified
+# empirically: a filter matching nothing returns 2. Registering them alongside their sources
+# keeps a zero match a genuine error rather than an expected state.
+if(MYSQLCPPCONN_INCLUDE AND MYSQLCPPCONN_LIBRARY)
+  list(APPEND NOGGIT_TEST_TAGS spawnquery sql)
+endif()
 
 enable_testing()
 
@@ -159,10 +170,14 @@ foreach(tag ${NOGGIT_TEST_TAGS})
 endforeach()
 
 # Integration is separated so it can be excluded with -LE, and so a database-less machine sees
-# one clear skip rather than several.
-add_test(NAME "tag.integration"
-         COMMAND noggit_schema_tests "[integration]" --reporter compact)
-set_tests_properties("tag.integration" PROPERTIES SKIP_RETURN_CODE 4 LABELS "needs-database")
+# one clear skip rather than several. Also gated: without the connector the file does not exist.
+if(MYSQLCPPCONN_INCLUDE AND MYSQLCPPCONN_LIBRARY)
+  foreach(tag db integration)
+    add_test(NAME "tag.${tag}"
+             COMMAND noggit_schema_tests "[${tag}]" --reporter compact)
+    set_tests_properties("tag.${tag}" PROPERTIES SKIP_RETURN_CODE 4 LABELS "needs-database")
+  endforeach()
+endif()
 
 # Backstop: the whole suite in one run, so nothing can be missed by a tag that no case carries.
 add_test(NAME "all" COMMAND noggit_schema_tests)

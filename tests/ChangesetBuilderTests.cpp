@@ -622,17 +622,30 @@ TEST_CASE("coordinate refuses a value that is not a number", "[changeset][sqlfor
 
 TEST_CASE("quote escapes what would break out of a literal", "[changeset][sqlformat][safety]")
 {
-  // Backslash and single quote at minimum.
-  CHECK(SqlFormat::quote("O'Brien") == "O\\'Brien");
-  CHECK(SqlFormat::quote("C:\\path") == "C:\\\\path");
-  CHECK(SqlFormat::quote("it's a \\ mess") == "it\\'s a \\\\ mess");
+  // A quote is escaped by DOUBLING it, which is correct whether or not the target server runs
+  // with NO_BACKSLASH_ESCAPES. Backslash escaping would be a syntax error under that sql_mode,
+  // and sql_mode belongs to whichever server the changeset is applied against -- not to any
+  // connection this tool controls.
+  CHECK(SqlFormat::quote("O'Brien") == "O''Brien");
+  CHECK(SqlFormat::quote("it's a mess") == "it''s a mess");
+
+  // Backslash is left ALONE. It cannot close a literal, and doubling it would insert a spurious
+  // second backslash on a NO_BACKSLASH_ESCAPES server.
+  CHECK(SqlFormat::quote("C:\\path") == "C:\\path");
+  CHECK(SqlFormat::quote("it's a \\ mess") == "it''s a \\ mess");
 
   CHECK(SqlFormat::quote("") == "");
   CHECK(SqlFormat::quote("plain name 42") == "plain name 42");
 
-  // A newline inside a literal is legal but a newline inside an escape sequence is not, so it
-  // is escaped rather than passed through.
-  CHECK(SqlFormat::quote("a\nb") == "a\\nb");
+  // A double quote needs no escaping inside a single-quoted literal.
+  CHECK(SqlFormat::quote("say \"hi\"") == "say \"hi\"");
+
+  // Control characters are refused rather than escaped: every escape sequence for them is
+  // backslash-based, so none of them is portable across sql_modes. Refusing is honest; emitting
+  // something that works on one server and corrupts on another is not.
+  CHECK_THROWS_AS(SqlFormat::quote("a\nb"), ChangesetError);
+  CHECK_THROWS_AS(SqlFormat::quote("a\rb"), ChangesetError);
+  CHECK_THROWS_AS(SqlFormat::quote(std::string("a\0b", 3)), ChangesetError);
 }
 
 TEST_CASE("a quoted value is safe to embed in a single-quoted literal"
@@ -649,21 +662,27 @@ TEST_CASE("a quoted value is safe to embed in a single-quoted literal"
   {
     std::string const literal ("'" + SqlFormat::quote(hostile) + "'");
 
-    // Walk the literal the way a parser would: the opening quote must be closed by the final
-    // character and by nothing before it.
+    // Walk the literal the way a parser would under NO_BACKSLASH_ESCAPES, which is the mode
+    // that matters: a backslash is an ORDINARY character there, and the only way to represent a
+    // quote inside a literal is to double it. Escaping with a backslash instead would terminate
+    // the literal early on such a server -- a syntax error part-way through a file whose
+    // earlier DELETEs had already committed.
+    //
+    // So: no special handling of '\\' here, deliberately. A doubled '' is consumed as one
+    // datum character, and a single ' closes the literal.
     std::size_t at = 1;
     bool closed = false;
 
     while (at < literal.size())
     {
-      if (literal[at] == '\\')
-      {
-        at += 2;
-        continue;
-      }
-
       if (literal[at] == '\'')
       {
+        if (at + 1 < literal.size() && literal[at + 1] == '\'')
+        {
+          at += 2;           // an escaped quote, still inside the literal
+          continue;
+        }
+
         closed = true;
         break;
       }

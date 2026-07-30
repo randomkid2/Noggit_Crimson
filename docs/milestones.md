@@ -22,7 +22,26 @@ is not a completed milestone.
 | M4 | Coordinate transforms for chunk moves | **partial** — maths done, terrain side needs Qt |
 | M5 | Doctor, recovery, coordinate round-trip | not started |
 
-**98 test cases, 693 assertions, 11/11 ctest groups** — all with Qt absent.
+**99 test cases, 715 assertions** — all with Qt absent.
+
+### Known follow-ups from the M1–M4 review
+
+Found by adversarial review, judged real but deliberately deferred. Neither is a correctness
+risk today; both are recorded so they are not rediscovered as surprises.
+
+1. **`rotation0..3` are formatted at six decimals**, the same precision as world coordinates.
+   That is 11 significant digits at world magnitude but only six where `|v| <= 1`, against a
+   `float` step of 5.96e-8. Re-emitting an *untouched* gameobject therefore rewrites the stored
+   bytes of its rotation columns by ~4e-7 — about eight float steps, roughly 1e-6 radians of
+   yaw. Harmless in the world, but it shows up as a spurious diff in changeset review, which is
+   precisely what the `-0.0` handling elsewhere exists to avoid. Fix is to format the rotation
+   components with a significant-digit precision rather than reusing the coordinate helper.
+2. **`SpawnQuery.cpp` gives external linkage to six functions its header does not declare**
+   (the pure SQL builders and row decoders), and `SpawnQueryTests.cpp` keeps a hand-written
+   parallel copy of five of those signatures to reach them. They only stay in step by accident
+   of `ResultRow` being a typedef. It also means the pure builders sit inside a translation unit
+   that links the database connector, so they are gated behind Connector/C++ despite needing no
+   database. Fix is to move them into their own translation unit with a small internal header.
 | M1 | Spawn read + tile overlay | not started |
 | M2 | Spawn edit + changeset emission | not started |
 | M3 | Waypoint editor | not started |

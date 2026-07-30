@@ -23,9 +23,19 @@ namespace Noggit::Database
   //      leaves identical rows and raises no error.
   //   2. Variable-driven -- GUIDs declared once at the top as @CGUID/@OGUID/@PATH so a
   //      reviewer can retarget the whole changeset by editing the header.
-  //   3. Column-explicit -- never positional. Column NAMES come from the SchemaModel, never
-  //      from string literals, so a database using spawndist or bytes1 gets correct SQL
-  //      instead of silently wrong SQL.
+  //   3. Column-explicit -- never positional, and no emitted column name is assumed to exist.
+  //
+  //      Names that DIFFER between core generations are resolved through the SchemaModel: the
+  //      wander-distance column, the creature_addon pose columns, and the waypoint path table.
+  //      A database using spawndist or bytes1 therefore gets correct SQL rather than silently
+  //      wrong SQL.
+  //
+  //      Names that are stable across every supported generation appear as literals. That is
+  //      deliberate, but it is not a guarantee they exist on an arbitrary target, so build()
+  //      verifies every column name it has emitted against the schema before returning and
+  //      throws if any is absent. Without that check a schema the READ path tolerates -- the
+  //      reader treats a dozen columns as optional -- could produce a changeset that dies with
+  //      ERROR 1054 at apply time, after its DELETE statements had already committed.
   //
   // zoneId and areaId are never emitted: the core derives them.
   class ChangesetBuilder

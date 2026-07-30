@@ -380,26 +380,119 @@ std::string SqlFormat::coordinate(double value)
   return text;
 }
 
+namespace
+{
+  // Scans assembled changeset text for `INSERT INTO `table` (`c1`, `c2`, ...)` and confirms
+  // every named column exists in the schema. Reading the output back keeps this honest without
+  // a manifest that could fall out of step with the emit sites.
+  void requireEmittedColumnsExist
+    (std::string const& sql, Noggit::Database::SchemaModel const& schema)
+  {
+    std::string const marker ("INSERT INTO `");
+    std::vector<std::string> missing;
+
+    for (std::size_t at = sql.find(marker); at != std::string::npos; at = sql.find(marker, at + 1))
+    {
+      std::size_t const table_begin (at + marker.size());
+      std::size_t const table_end (sql.find('`', table_begin));
+
+      if (table_end == std::string::npos)
+      {
+        continue;
+      }
+
+      std::string const table (sql.substr(table_begin, table_end - table_begin));
+
+      std::size_t const list_begin (sql.find('(', table_end));
+      std::size_t const list_end (sql.find(')', list_begin == std::string::npos ? 0 : list_begin));
+
+      if (list_begin == std::string::npos || list_end == std::string::npos)
+      {
+        continue;
+      }
+
+      std::string const list (sql.substr(list_begin, list_end - list_begin));
+
+      for (std::size_t open = list.find('`'); open != std::string::npos;
+           open = list.find('`', open + 1))
+      {
+        std::size_t const close (list.find('`', open + 1));
+
+        if (close == std::string::npos)
+        {
+          break;
+        }
+
+        std::string const column (list.substr(open + 1, close - open - 1));
+
+        if (!column.empty() && !schema.hasColumn(table, column))
+        {
+          missing.push_back(table + "." + column);
+        }
+
+        open = close;
+      }
+    }
+
+    if (!missing.empty())
+    {
+      std::string joined;
+
+      for (std::string const& name : missing)
+      {
+        joined += (joined.empty() ? "" : ", ") + name;
+      }
+
+      throw Noggit::Database::ChangesetError
+        ("Refusing to emit a changeset naming column(s) absent from the target schema: "
+         + joined
+         + ". Applying it would fail with ERROR 1054 after the DELETE statements had already"
+           " committed. The target is a schema generation this emitter does not yet cover.");
+    }
+  }
+}
+
 std::string SqlFormat::quote(std::string const& value)
 {
   // Returns the escaped BODY of a literal, without the surrounding quotes, so the result can
-  // be embedded wherever a single-quoted literal is being assembled. The escape set matches
-  // mysql_real_escape_string: anything less lets a crafted name close the literal.
+  // be embedded wherever a single-quoted literal is being assembled.
+  //
+  // A quote is escaped by DOUBLING it ('') rather than with a backslash. Backslash escaping is
+  // what mysql_real_escape_string does, but it is only valid when the server is not running
+  // with NO_BACKSLASH_ESCAPES -- which is part of ANSI sql_mode and common on hardened
+  // installs. Changesets are applied with `mysql ... -e "source file.sql"`, so sql_mode comes
+  // from the target server's configuration and not from any connection this tool controls.
+  // Under NO_BACKSLASH_ESCAPES a name like O'Reilly emitted as 'O\'Reilly' terminates the
+  // literal early and the remainder parses as SQL: a syntax error part-way through a file
+  // whose earlier DELETEs have already committed. Doubling is correct under both sql_modes.
+  //
+  // Backslash itself is therefore left alone -- doubling it would be wrong under
+  // NO_BACKSLASH_ESCAPES and is unnecessary otherwise, since a backslash cannot close a
+  // literal. Control characters are rejected rather than escaped, because every escape
+  // sequence for them is backslash-based and so not portable across sql_modes.
+  for (char c : value)
+  {
+    if (c == '\n' || c == '\r' || c == '\0' || c == '\x1a')
+    {
+      throw ChangesetError
+        ("Refusing to quote a value containing a control character: no portable escape for it"
+         " exists, since every alternative is backslash-based and backslashes are literal under"
+         " NO_BACKSLASH_ESCAPES.");
+    }
+  }
+
   std::string out;
   out.reserve(value.size() + 8);
 
   for (char c : value)
   {
-    switch (c)
+    if (c == '\'')
     {
-      case '\\': out += "\\\\"; break;
-      case '\'': out += "\\'";  break;
-      case '"':  out += "\\\""; break;
-      case '\n': out += "\\n";  break;
-      case '\r': out += "\\r";  break;
-      case '\0': out += "\\0";  break;
-      case '\x1a': out += "\\Z"; break;
-      default: out.push_back(c); break;
+      out += "''";
+    }
+    else
+    {
+      out.push_back(c);
     }
   }
 
@@ -608,9 +701,11 @@ std::string ChangesetBuilder::build() const
          "-- rewritten, so applying this file twice leaves identical rows and raises no error.\n"
          "-- Variable-driven: guids and path ids are declared once below, so a reviewer can\n"
          "-- retarget the whole changeset by editing the header.\n"
-         "-- Column-explicit: never positional. Every column name was resolved from the target\n"
-         "-- schema rather than assumed, so a database that spells them differently gets correct\n"
-         "-- SQL instead of silently wrong SQL.\n"
+         "-- Column-explicit: never positional. Names that differ between core generations --\n"
+         "-- the wander-distance column, the creature_addon pose columns, the waypoint table --\n"
+         "-- were resolved from the target schema rather than assumed. Names that are stable\n"
+         "-- across every supported generation appear literally, and every name emitted below\n"
+         "-- was checked to exist in the target schema before this file was written.\n"
          "--\n"
          "-- The zone and area columns are omitted on purpose: ObjectMgr::LoadCreatures does not\n"
          "-- read them and the core does not write them either. The server derives both.\n"
@@ -1046,5 +1141,18 @@ std::string ChangesetBuilder::build() const
     }
   }
 
-  return out.str();
+  std::string const sql (out.str());
+
+  // Verify every column this file actually names exists on the target, by reading back the SQL
+  // just produced rather than consulting a hand-maintained list. A manifest would drift from
+  // the emit sites; the output cannot.
+  //
+  // This matters because the READ path is deliberately more tolerant than the write path:
+  // SpawnQuery treats a dozen columns as optional and substitutes defaults when they are
+  // absent, so a schema it loads happily can still be one this emitter names columns for. Left
+  // unchecked that surfaces as ERROR 1054 part-way through applying the file, after the DELETE
+  // statements at the top have already committed -- data removed and nothing written back.
+  requireEmittedColumnsExist(sql, _schema);
+
+  return sql;
 }

@@ -139,12 +139,21 @@ namespace
   {
     requireUsableBounds(bounds);
 
-    // Half-open on both axes, matching TileCoordinates::boundsForTile: a position on a shared
-    // edge belongs to exactly one tile and is never read twice.
-    return columnRef(alias, COLUMN_POSITION_X) + " >= " + formatBound(bounds.min_x)
-      + " AND " + columnRef(alias, COLUMN_POSITION_X) + " < " + formatBound(bounds.max_x)
-      + " AND " + columnRef(alias, COLUMN_POSITION_Y) + " >= " + formatBound(bounds.min_y)
-      + " AND " + columnRef(alias, COLUMN_POSITION_Y) + " < " + formatBound(bounds.max_y);
+    // (min, max] -- lower edge EXCLUSIVE, upper edge INCLUSIVE. This must match
+    // TileCoordinates::tileForPosition exactly, and the interval is that way round because the
+    // axis runs backwards: inverting floor(32 - x / TILE_SIZE) == i gives
+    // (31-i)*TILE_SIZE < x <= (32-i)*TILE_SIZE.
+    //
+    // Getting this backwards is not a cosmetic off-by-one. With `>= min AND < max`, a spawn at
+    // exactly x = 0.0 or y = 0.0 -- both exactly representable in a FLOAT column and common in
+    // real data -- is excluded from the tile tileForPosition assigns it to and returned for the
+    // neighbour instead, so it renders on the wrong ADT and its own tile looks empty. The
+    // shift is uniform: for v = m * TILE_SIZE the owner is tile 32-m but `>=`/`<` matches
+    // 31-m. A position at exactly +MAP_HALF_EXTENT would belong to no queryable tile at all.
+    return columnRef(alias, COLUMN_POSITION_X) + " > " + formatBound(bounds.min_x)
+      + " AND " + columnRef(alias, COLUMN_POSITION_X) + " <= " + formatBound(bounds.max_x)
+      + " AND " + columnRef(alias, COLUMN_POSITION_Y) + " > " + formatBound(bounds.min_y)
+      + " AND " + columnRef(alias, COLUMN_POSITION_Y) + " <= " + formatBound(bounds.max_y);
   }
 
   // --- Row decoding ----------------------------------------------------------------------

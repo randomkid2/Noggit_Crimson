@@ -5,6 +5,9 @@
 
 #include <cmath>
 #include <cstddef>
+#include <iomanip>
+#include <locale>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -62,18 +65,29 @@ namespace
       return value > 0.0 ? "inf" : "-inf";
     }
 
-    std::string text (std::to_string(value));
+    // Not std::to_string: it is specified as sprintf("%f"), so it reads LC_NUMERIC. Qt calls
+    // setlocale(LC_ALL, "") when a QCoreApplication is constructed, and nothing here resets
+    // LC_NUMERIC, so under a comma-decimal locale every number in a validation message would
+    // come out as "4,712400" -- and the '.' guard below would then never fire, leaving the
+    // trailing zeros in place too. Every other formatter in this layer imbues the classic
+    // locale for exactly this reason.
+    std::ostringstream stream;
+    stream.imbue(std::locale::classic());
 
-    if (text.find('.') == std::string::npos)
+    // Enough significant digits to distinguish any float the caller could be complaining about.
+    // The previous fixed six DECIMALS collapsed anything below 5e-7 to "0", so a spawn with
+    // wander_distance = 1e-7 produced "requires wander_distance = 0" while reporting the value
+    // as 0 -- a message asserting the value is already what it demands.
+    stream << std::setprecision(9) << value;
+
+    std::string text (stream.str());
+
+    // Canonicalise negative zero. fmod and unary minus both preserve the sign, so -0.0 reaches
+    // here and renders as "-0", which reads as a defect in review and differs textually from a
+    // stored 0.
+    if (text == "-0")
     {
-      return text;
-    }
-
-    text.erase(text.find_last_not_of('0') + 1);
-
-    if (!text.empty() && text.back() == '.')
-    {
-      text.pop_back();
+      return "0";
     }
 
     return text;
