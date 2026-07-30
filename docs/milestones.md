@@ -30,6 +30,35 @@ Everything remaining is UI and rendering: wiring the tested logic layer into `Ma
 path, ghost placement, the pending-changes panel, the waypoint visual editor, the terrain half of
 the chunk mover, and a Doctor dialog over `DoctorReport::render()`.
 
+### M1 rendering — next steps, in order
+
+Recon (four read-only agents, all findings cited to file:line) established the architecture and
+turned up two blockers that must be cleared before anything can be drawn.
+
+1. **`gGameObjectDisplayInfoDB` is declared but never defined.** `src/noggit/DBC.h:403` declares
+   it; `DBC.cpp` defines 19 globals and this is not one of them, and it is absent from `OpenDBs`.
+   It links today only because nothing references it — **the first line of code that touches it is
+   an unresolved external**. Two one-line additions to `DBC.cpp` fix it. The field indices the
+   existing wrapper declares were checked against `dist/definitions/GameObjectDisplayInfo.dbd`
+   and are correct.
+2. **`TileSpawns` carries no template-derived display id.** `creature_template.modelid1..4` and
+   `gameobject_template.displayId` are *detected* by `SchemaModel` but never selected, and
+   gameobjects have no per-spawn display column at all. So a gameobject can never be resolved to
+   a model, and neither can a creature with `modelid = 0`. The query layer needs extending first;
+   this blocks rendering rather than polishing it.
+3. **`CreatureDisplayInfo` and `CreatureModelData` have no C++ wrapper.** Field layouts verified
+   from `dist/definitions` for build 3.3.5.12340: `CreatureDisplayInfo` ID=0, **ModelID=1**,
+   CreatureModelScale=4; `CreatureModelData` ID=0, Flags=1, **ModelName=2** — note *2*, not 1,
+   because `Flags` precedes it in WotLK. Guessing there reinterprets an integer as a string offset.
+4. **`DBCFile::getByID` is a linear scan** (`DBCFile.cpp:144-153`) and throws on miss, and
+   `getString` is raw pointer arithmetic guarded only by an `assert` — compiled out in
+   RelWithDebInfo. A resolver must cache and must bounds-check rather than call per frame.
+5. **Draw hook.** `WorldRender::draw` gathers M2 instances into
+   `robin_map<Model*, vector<mat4>> models_to_draw` and issues one instanced call per model
+   (`rendering/WorldRender.cpp:801-892`). The per-tile index it walks is
+   `MapTile::object_instances`. `activeTool()->preRender()/postRender()`
+   (`MapView.cpp:2812-2827`) are the tool-level hooks. DB spawns must never enter MDDF/MODF.
+
 ### Known follow-ups from the M4–M5 review
 
 Real, judged non-urgent, recorded so they are not rediscovered as surprises.

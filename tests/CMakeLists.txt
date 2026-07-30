@@ -1,4 +1,4 @@
-# Tests for the database schema layer.
+﻿# Tests for the database schema layer.
 #
 # This is a STANDALONE CMake project on purpose. It links neither Qt nor Noggit, and compiles
 # only the dependency-free sources under src/noggit/database. That is what allows it to be
@@ -71,6 +71,7 @@ noggit_add_if_present(NOGGIT_DB_SOURCES
   "${NOGGIT_SRC_DIR}/noggit/database/GmCommands.cpp"
   "${NOGGIT_SRC_DIR}/noggit/database/ChangesetArchive.cpp"
   "${NOGGIT_SRC_DIR}/noggit/database/DoctorReport.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/database/SpawnPlacement.cpp"
 )
 
 set(NOGGIT_DB_TESTS "")
@@ -84,6 +85,7 @@ noggit_add_if_present(NOGGIT_DB_TESTS
   "${CMAKE_CURRENT_SOURCE_DIR}/GmCommandsTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/ChangesetArchiveTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/DoctorReportTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/SpawnPlacementTests.cpp"
 )
 
 if(MYSQLCPPCONN_INCLUDE AND MYSQLCPPCONN_LIBRARY)
@@ -163,7 +165,7 @@ enable_testing()
 # Tags carried by files that are ALWAYS compiled.
 set(NOGGIT_TEST_TAGS
   schema drift tile spawn validation changeset sqlformat safety
-  spawnquery sql chunk gm archive doctor recovery roundtrip
+  spawnquery sql chunk gm archive doctor recovery roundtrip placement frame
 )
 
 # Tags carried ONLY by connector-gated files. Registering these unconditionally is a trap:
