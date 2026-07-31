@@ -82,6 +82,10 @@ noggit_add_if_present(NOGGIT_DB_SOURCES
   # builds on a bare machine even though they do not live in the database directory.
   "${NOGGIT_SRC_DIR}/noggit/AssetScan.cpp"
   "${NOGGIT_SRC_DIR}/noggit/UidCollisionLog.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/TerrainRules.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/ErosionKernel.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/AmbientOcclusion.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/AlphaIntegrity.cpp"
 )
 
 set(NOGGIT_DB_TESTS "")
@@ -100,6 +104,10 @@ noggit_add_if_present(NOGGIT_DB_TESTS
   "${CMAKE_CURRENT_SOURCE_DIR}/GameTeleBuilderTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/AssetScanTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/UidCollisionLogTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/TerrainRulesTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/ErosionKernelTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/AmbientOcclusionTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/AlphaIntegrityTests.cpp"
 )
 
 if(MYSQLCPPCONN_INCLUDE AND MYSQLCPPCONN_LIBRARY)
@@ -181,6 +189,7 @@ set(NOGGIT_TEST_TAGS
   schema drift tile spawn validation changeset sqlformat safety
   spawnquery sql chunk gm archive doctor recovery roundtrip placement frame
   modelpath display creature gameobject parse adt count tele assetscan uid
+  terrainrules erosion ao alpha
 )
 
 # Tags carried ONLY by connector-gated files. Registering these unconditionally is a trap:
