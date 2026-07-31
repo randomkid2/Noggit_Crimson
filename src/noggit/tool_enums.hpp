@@ -77,6 +77,11 @@ enum class editing_mode
   scripting = 12,
   chunk = 13,
   area_trigger = 14,
+  // Appended, never inserted. MapView indexes its tool vector with these values directly
+  // (MapView::selectedTexturePath, and the paint/object resets in ~MapView), so a tool's position
+  // in the emplace_back sequence in MapView::createGUI has to equal its enumerator -- renumbering
+  // an existing entry silently hands one tool another tool's slot.
+  erosion = 15,
 };
 
 enum water_opacity

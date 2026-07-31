@@ -2063,6 +2063,12 @@ bool MapChunk::hasColors() const
   return hasMCCV;
 }
 
+void MapChunk::setHasMccv(bool value)
+{
+  hasMCCV = value;
+  header_flags.flags.has_mccv = value ? 1 : 0;
+}
+
 void MapChunk::unload()
 {
   _chunk_update_flags = ChunkUpdateFlags::VERTEX | ChunkUpdateFlags::ALPHAMAP

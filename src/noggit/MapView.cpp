@@ -27,6 +27,9 @@
 #include <opengl/texture.hpp>
 #include <noggit/Tool.hpp>
 #include <noggit/uid_storage.hpp>
+#include <noggit/ui/AlphaIntegrityReport.hpp>
+#include <noggit/ui/AmbientOcclusionDialog.hpp>
+#include <noggit/ui/AutoTextureDialog.hpp>
 #include <noggit/ui/CurrentTexture.h>
 #include <noggit/ui/DatabaseSpawnPanel.hpp>
 #include <noggit/ui/GroundEffectSetEditor.hpp>
@@ -90,6 +93,7 @@
 #include <noggit/tools/ScriptingTool.hpp>
 #include <noggit/tools/ChunkTool.hpp>
 #include <noggit/tools/AreaTriggerTool.hpp>
+#include <noggit/tools/ErosionTool.hpp>
 #include <noggit/StringHash.hpp>
 #include <noggit/application/NoggitApplication.hpp>
 
@@ -3343,6 +3347,61 @@ void MapView::setupToolsMenu()
         editor->show();
       }
     );
+
+    // The three entries below share the separator opened above rather than adding their own.
+    // They are all the same species as the ground effect editor -- a modeless dialog with its own
+    // scope selector, doing a bulk pass over loaded tiles -- and splitting them with more rules
+    // would suggest they were unrelated groups. Each is built on demand and owned by this view, so
+    // the terrain and textures it offers are whatever is loaded now, not a snapshot from startup.
+    //
+    // Assist was the alternative home and is wrong for all three: every Assist entry acts on the
+    // ADT under the camera the instant it is clicked, with no UI and no result reported, and the
+    // point of these is that they state what they examined before anything is written.
+
+    // Rule-driven automatic texturing. A dialog rather than part of the Texturing tool's dock
+    // because it is a bulk operation over loaded tiles, not a brush.
+    auto auto_texture (new QAction("Automatic Texturing...", this));
+    auto_texture->setStatusTip
+      ("Texture terrain from slope and height rules, with a coverage preview before anything is "
+       "painted.");
+    menu->addAction(auto_texture);
+
+    connect(auto_texture, &QAction::triggered, this, [this]
+      {
+        auto dialog (new Noggit::Ui::AutoTextureDialog(this, this));
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->show();
+      }
+    );
+
+    // Alpha map integrity. Reports before it repairs, which is why it needs a window at all.
+    auto alpha_integrity (new QAction("Alpha Map Integrity...", this));
+    alpha_integrity->setStatusTip
+      ("Find and repair alpha map states an ADT can store but no renderer can display.");
+    menu->addAction(alpha_integrity);
+
+    connect(alpha_integrity, &QAction::triggered, this, [this]
+      {
+        auto report (new Noggit::Ui::AlphaIntegrityReport(this, this));
+        report->setAttribute(Qt::WA_DeleteOnClose);
+        report->show();
+      }
+    );
+
+    // Ambient occlusion bake. Not a Tool: editing_mode::mccv already belongs to VertexPainterTool
+    // and ShaderTool, and this is a one-shot bake with a parameter sheet, not a third way to paint.
+    auto ambient_occlusion (new QAction("Bake Ambient Occlusion...", this));
+    ambient_occlusion->setStatusTip
+      ("Bake horizon-sampled ambient occlusion into terrain vertex colour (MCCV).");
+    menu->addAction(ambient_occlusion);
+
+    connect(ambient_occlusion, &QAction::triggered, this, [this]
+      {
+        auto dialog (new Noggit::Ui::AmbientOcclusionDialog(this, this));
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->show();
+      }
+    );
 }
 
 void MapView::setupHelpMenu()
@@ -3715,6 +3774,10 @@ void MapView::createGUI()
   _tools.emplace_back(std::make_unique<Noggit::ScriptingTool>(this))->setupUi(_tool_panel_dock);
   _tools.emplace_back(std::make_unique<Noggit::ChunkTool>(this))->setupUi(_tool_panel_dock);
   _tools.emplace_back(std::make_unique<Noggit::AreaTriggerTool>(this))->setupUi(_tool_panel_dock);
+  // Position in this sequence IS the editing_mode value -- MapView indexes _tools with the
+  // enumerator directly (selectedTexturePath, and the paint/object resets in the destructor).
+  // Erosion is editing_mode::erosion = 15, so it is appended here and nothing above it moves.
+  _tools.emplace_back(std::make_unique<Noggit::ErosionTool>(this))->setupUi(_tool_panel_dock);
 
   // End combined dock
 

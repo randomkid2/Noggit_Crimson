@@ -105,8 +105,23 @@ void Noggit::Action::undo(bool redo)
   {
     for (auto& pair : redo ? _chunk_vertex_color_post : _chunk_vertex_color_pre)
     {
-      std::memcpy(&pair.first->mccv, pair.second.data(), 145 * 3 * sizeof(float));
-      pair.first->registerChunkUpdate(ChunkUpdateFlags::MCCV);;
+      std::memcpy(&pair.first->mccv, pair.second.colors.data(), 145 * 3 * sizeof(float));
+
+      // Both flags, both directions. Undo of a paint on a virgin chunk has to put these back to
+      // 0 or the ADT gains an MCCV block it never had; redo has to put them back to 1 or the
+      // re-applied colours are silently dropped at save time.
+      pair.first->setHasMccv(pair.second.has_mccv_runtime);
+
+      // setHasMccv already derives the header bit from the runtime flag, and the two are equal
+      // everywhere that sets them (initMCCV, and the load path at MapChunk.cpp:277). The snapshot
+      // records them separately anyway and restores the header one here, so that if some path
+      // ever does leave them disagreeing, undo reproduces what was actually there rather than
+      // what this code assumes was there.
+      pair.first->header_flags.flags.has_mccv = pair.second.has_mccv_header ? 1 : 0;
+
+      // No ChunkUpdateFlags::FLAGS here on purpose: the FLAGS upload path
+      // (TileRender.cpp:233) reads impass and the texture animation bits only, never has_mccv.
+      pair.first->registerChunkUpdate(ChunkUpdateFlags::MCCV);
     }
   }
   if (_flags & ActionFlags::eOBJECTS_ADDED
@@ -467,7 +482,9 @@ void Noggit::Action::finish()
       auto& post =_chunk_vertex_color_post.at(i);
       auto& pre = _chunk_vertex_color_pre.at(i);
       post.first = pre.first;
-      std::memcpy(post.second.data(), &post.first->mccv, 145 * 3 * sizeof(float));
+      std::memcpy(post.second.colors.data(), &post.first->mccv, 145 * 3 * sizeof(float));
+      post.second.has_mccv_runtime = post.first->hasColors();
+      post.second.has_mccv_header = post.first->header_flags.flags.has_mccv;
     }
   }
   if (_flags & ActionFlags::eOBJECTS_TRANSFORMED)
@@ -717,9 +734,11 @@ void Noggit::Action::registerChunkVertexColorChange(MapChunk* chunk)
       return;
   }
 
-  std::array<float, 145 * 3> data{};
-  std::memcpy(data.data(), &chunk->mccv, 145 * 3 * sizeof(float));
-  _chunk_vertex_color_pre.emplace_back(std::make_pair(chunk, data));
+  VertexColorChangeCache cache{};
+  std::memcpy(cache.colors.data(), &chunk->mccv, 145 * 3 * sizeof(float));
+  cache.has_mccv_runtime = chunk->hasColors();
+  cache.has_mccv_header = chunk->header_flags.flags.has_mccv;
+  _chunk_vertex_color_pre.emplace_back(std::make_pair(chunk, cache));
 }
 
 void Noggit::Action::registerObjectTransformed(SceneObject* obj)

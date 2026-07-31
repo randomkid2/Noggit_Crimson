@@ -140,6 +140,14 @@ namespace
 
     return Noggit::ErosionStatus::Ok;
   }
+
+  // Whether a cell takes part in the flow at all, under the solver's own rule
+  // (ErosionKernel.cpp's thermalErode: gate <= 0.0 skips the edge). An empty influence span means
+  // every cell is active, which is the documented fast path.
+  bool cellIsActive(std::span<float const> influence, std::size_t index)
+  {
+    return influence.empty() || influence[index] > 0.0f;
+  }
 }
 
 namespace Noggit
@@ -377,6 +385,7 @@ namespace Noggit
                        , int width
                        , float cell_size
                        , ErosionNeighbourhood neighbourhood
+                       , std::span<float const> influence
                        )
   {
     if (heights.empty() || width <= 0 || !std::isfinite(cell_size) || cell_size <= 0.0f)
@@ -385,6 +394,11 @@ namespace Noggit
     }
 
     if (heights.size() % static_cast<std::size_t>(width) != 0)
+    {
+      return 0.0f;
+    }
+
+    if (!influence.empty() && influence.size() != heights.size())
     {
       return 0.0f;
     }
@@ -401,6 +415,11 @@ namespace Noggit
         std::size_t const i = static_cast<std::size_t>(z) * static_cast<std::size_t>(width)
                             + static_cast<std::size_t>(x);
 
+        if (!cellIsActive(influence, i))
+        {
+          continue;
+        }
+
         for (int e = 0; e < set.count; ++e)
         {
           int const nx = x + set.edges[e].dx;
@@ -413,6 +432,11 @@ namespace Noggit
 
           std::size_t const j = static_cast<std::size_t>(nz) * static_cast<std::size_t>(width)
                               + static_cast<std::size_t>(nx);
+
+          if (!cellIsActive(influence, j))
+          {
+            continue;
+          }
 
           float const drop = std::abs(heights[i] - heights[j]);
           float const slope = drop / (set.edges[e].distance * cell_size);
@@ -430,6 +454,7 @@ namespace Noggit
                                 , float cell_size
                                 , ErosionNeighbourhood neighbourhood
                                 , float repose_angle_degrees
+                                , std::span<float const> influence
                                 )
   {
     if (heights.empty() || width <= 0 || !std::isfinite(cell_size) || cell_size <= 0.0f)
@@ -438,6 +463,11 @@ namespace Noggit
     }
 
     if (heights.size() % static_cast<std::size_t>(width) != 0)
+    {
+      return 0;
+    }
+
+    if (!influence.empty() && influence.size() != heights.size())
     {
       return 0;
     }
@@ -454,6 +484,11 @@ namespace Noggit
         std::size_t const i = static_cast<std::size_t>(z) * static_cast<std::size_t>(width)
                             + static_cast<std::size_t>(x);
 
+        if (!cellIsActive(influence, i))
+        {
+          continue;
+        }
+
         for (int e = 0; e < set.count; ++e)
         {
           int const nx = x + set.edges[e].dx;
@@ -466,6 +501,11 @@ namespace Noggit
 
           std::size_t const j = static_cast<std::size_t>(nz) * static_cast<std::size_t>(width)
                               + static_cast<std::size_t>(nx);
+
+          if (!cellIsActive(influence, j))
+          {
+            continue;
+          }
 
           if (std::abs(static_cast<double>(heights[i]) - heights[j]) > set.talus[e])
           {
@@ -495,12 +535,27 @@ namespace Noggit
     std::span<float const> const readable(heights);
 
     stats.height_sum_before = heightSum(readable);
-    stats.max_slope_before = maxSlopeTangent(readable, width, settings.cell_size, settings.neighbourhood);
+
+    // The slope and unstable-edge figures are the caller's only evidence about the surface, and
+    // they are gated by the same influence the solver is. An ungated measurement counts edges
+    // against cells whose height was invented (influence 0 means the sampler refused, and
+    // sampleLattice's placeholder is 0.0f) and edges outside the brush that no flow can reach; a
+    // gentle hillside near the edge of the loaded region then reports a near-vertical slope and an
+    // unstable-edge count made mostly of edges the run is gated out of. height_sum_* stays over
+    // the WHOLE grid deliberately: it is the conservation check, and material that flowed into a
+    // partially gated cell has to keep being counted.
+    stats.max_slope_before = maxSlopeTangent( readable
+                                            , width
+                                            , settings.cell_size
+                                            , settings.neighbourhood
+                                            , influence
+                                            );
     stats.unstable_edges_before = countUnstableEdges( readable
                                                    , width
                                                    , settings.cell_size
                                                    , settings.neighbourhood
                                                    , settings.repose_angle_degrees
+                                                   , influence
                                                    );
 
     int const grid_height = static_cast<int>(heights.size() / static_cast<std::size_t>(width));
@@ -610,12 +665,18 @@ namespace Noggit
     }
 
     stats.height_sum_after = heightSum(readable);
-    stats.max_slope_after = maxSlopeTangent(readable, width, settings.cell_size, settings.neighbourhood);
+    stats.max_slope_after = maxSlopeTangent( readable
+                                           , width
+                                           , settings.cell_size
+                                           , settings.neighbourhood
+                                           , influence
+                                           );
     stats.unstable_edges_after = countUnstableEdges( readable
                                                    , width
                                                    , settings.cell_size
                                                    , settings.neighbourhood
                                                    , settings.repose_angle_degrees
+                                                   , influence
                                                    );
 
     return stats;

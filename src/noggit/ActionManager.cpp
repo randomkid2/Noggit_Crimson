@@ -105,18 +105,34 @@ void ActionManager::endAction()
 {
   assert(_cur_action && "ActionStack Error: endAction() called with no action running.");
 
-  _cur_action->finish();
-  if (!(_cur_action->getFlags() & eDO_NOT_WRITE_HISTORY))
+  // _cur_action is cleared BEFORE the first thing that can throw, and that ordering is the whole
+  // point of this block. Action::finish() allocates the redo snapshot, so a bulk operation --
+  // baking ambient occlusion over every loaded tile registers a ~1.7 KB vertex-colour snapshot
+  // per chunk -- can leave it throwing std::bad_alloc. The previous version let that propagate
+  // with _cur_action still set, and nothing ever cleared it again: beginAction() returns the
+  // running action rather than starting a new one (see above), so from that point every stroke
+  // in the session silently joined a dead action that could never be closed, and undo stopped
+  // working entirely. Failing one operation is recoverable; losing undo for the rest of the
+  // session, on a tree full of unsaved ADTs, is not.
+  //
+  // The action stays on the stack on failure. Its *undo* data was recorded as the edits happened
+  // and is intact, which is the half the user actually needs after an operation blows up; only
+  // the redo snapshot is short. Deleting it here to keep redo honest would take away the one
+  // thing that can put the terrain back.
+  Action* const action (_cur_action);
+  _cur_action = nullptr;
+
+  action->finish();
+  if (!(action->getFlags() & eDO_NOT_WRITE_HISTORY))
   {
-    emit addedAction(_cur_action);
+    emit addedAction(action);
   }
   else
   {
     _action_stack.pop_back();
   }
 
-  emit onActionEnd(_cur_action);
-  _cur_action = nullptr;
+  emit onActionEnd(action);
   emit currentActionChanged(_undo_index);
 }
 

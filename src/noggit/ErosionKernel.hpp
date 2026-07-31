@@ -125,7 +125,10 @@ namespace Noggit
     int width = 0;
     int height = 0;
     // World distance between adjacent samples. UNITSIZE (MapHeaders.h:60, 4.1667 yards) matches
-    // the outer vertex spacing; UNITSIZE/2 also catches the inner vertex rows at 4x the cells.
+    // the spacing of the terrain vertices within a row, which is the finest a non-interpolating
+    // sampler can resolve; going below it makes consecutive samples snap to the same vertex and
+    // reports the resulting stair as twice the real slope. ErosionToolSettings.cpp's
+    // EROSION_CELL_SIZE has the long version.
     float cell_size = 1.0f;
 
     bool valid() const;
@@ -256,6 +259,11 @@ namespace Noggit
 
     // Steepest edge as a TANGENT (height difference over world distance), not an angle. Compare
     // against reposeTangent(settings.repose_angle_degrees).
+    //
+    // Measured over the ACTIVE part of the grid only: an edge with an inert endpoint is skipped,
+    // because an inert cell's stored height is a placeholder the sampler never measured and no
+    // flow crosses that edge in either direction. Both figures below are gated the same way, so
+    // "at rest" means at rest everywhere the run could have moved anything.
     float max_slope_before = 0.0f;
     float max_slope_after = 0.0f;
 
@@ -286,18 +294,31 @@ namespace Noggit
   // Steepest edge in the grid, as a tangent. Only edges the given neighbourhood actually has are
   // considered, so the same surface reports a different value under VonNeumann4 and Moore8.
   // Returns 0 for a grid with no edges.
+  //
+  // `influence` is the same gate the solver uses, and passing it is what makes the number a
+  // measurement rather than an artefact. A cell at influence 0 is one the sampler could not answer
+  // for, and sampleLattice stores 0.0f as its height -- an invented value, not a measured one. An
+  // edge touching such a cell is the boundary between real terrain and a placeholder, so at a
+  // terrain height of 200 it reports a slope of 48 per cell on ground that is flat. It is also an
+  // edge no flow can ever cross, so including it describes terrain the caller cannot act on.
+  // Skipped when either endpoint is inert; empty means every cell is active, and an influence
+  // whose length disagrees with the heights returns 0 the way every other malformed input here
+  // does.
   float maxSlopeTangent( std::span<float const> heights
                        , int width
                        , float cell_size
                        , ErosionNeighbourhood neighbourhood
+                       , std::span<float const> influence = {}
                        );
 
   // Edges steeper than the repose angle, i.e. how much of the surface is still unstable.
+  // `influence` gates the count exactly as it gates maxSlopeTangent, and for the same reason.
   std::size_t countUnstableEdges( std::span<float const> heights
                                 , int width
                                 , float cell_size
                                 , ErosionNeighbourhood neighbourhood
                                 , float repose_angle_degrees
+                                , std::span<float const> influence = {}
                                 );
 
   // THE KERNEL. Relaxes `heights` in place toward the angle of repose.

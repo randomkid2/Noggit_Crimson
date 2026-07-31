@@ -147,6 +147,13 @@ public:
 
   bool hasColors() const;;
 
+  // The counterpart to initMCCV(), which can only ever SET the vertex colour flag. Undo needs to
+  // CLEAR it: restoring a chunk that had no MCCV block means restoring its absence, and save()
+  // gates the whole block on this runtime flag rather than on header_flags.flags.has_mccv, so a
+  // chunk left flagged after an undo writes vertex colours into an ADT that never had any.
+  // Sets the header bit to match, because the two disagreeing is not a state save() can express.
+  void setHasMccv(bool value);
+
   void updateVerticesData();
   void recalcExtents();
   void recalcNorms();

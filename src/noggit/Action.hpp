@@ -83,6 +83,18 @@ namespace Noggit
       float scale;
     };
 
+    // A chunk's vertex colour state is three things, not one: the mccv[] floats, the runtime
+    // MapChunk::hasMCCV, and the serialised header bit header_flags.flags.has_mccv. MapChunk::
+    // initMCCV (MapChunk.cpp:2146) sets all three, so undo has to restore all three -- restoring
+    // only mccv[] leaves the chunk looking neutral on screen while MapChunk::save
+    // (MapChunk.cpp:1553) still emits an MCCV block into an ADT that previously had none.
+    struct VertexColorChangeCache
+    {
+      std::array<float, 145 * 3> colors;
+      bool has_mccv_runtime; // MapChunk::hasMCCV
+      bool has_mccv_header;  // MapChunk::header_flags.flags.has_mccv
+    };
+
     struct VertexSelectionCache
     {
       std::unordered_set<MapTile*> vertex_tiles;
@@ -154,8 +166,8 @@ namespace Noggit
         std::vector<std::pair<MapChunk*, std::array<float, 145 * 3>>> _chunk_terrain_post;
         std::vector<std::pair<MapChunk*, TextureChangeCache>> _chunk_texture_pre;
         std::vector<std::pair<MapChunk*, TextureChangeCache>> _chunk_texture_post;
-        std::vector<std::pair<MapChunk*, std::array<float, 145 * 3>>> _chunk_vertex_color_pre;
-        std::vector<std::pair<MapChunk*, std::array<float, 145 * 3>>> _chunk_vertex_color_post;
+        std::vector<std::pair<MapChunk*, VertexColorChangeCache>> _chunk_vertex_color_pre;
+        std::vector<std::pair<MapChunk*, VertexColorChangeCache>> _chunk_vertex_color_post;
         std::vector<std::pair<unsigned, ObjectInstanceCache>> _transformed_objects_pre;
         std::vector<std::pair<unsigned, ObjectInstanceCache>> _transformed_objects_post;
         std::vector<std::pair<unsigned, ObjectInstanceCache>> _removed_objects_pre;
