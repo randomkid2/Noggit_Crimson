@@ -1,6 +1,6 @@
 # Feature recon — ten map-making features
 
-Read-only reconnaissance over the whole tree, one agent per feature, every claim cited to
+Read-only reconnaissance over the whole tree, one pass per feature, every claim cited to
 `file:line`. Recorded because the headline result is *how much already exists*: three features are
 wholly or mostly implemented already, and every remaining one is smaller than it looks because the
 machinery underneath is built.
@@ -54,7 +54,7 @@ sitting there.
 
 **#4 Seam stitching.** `MapChunk::fixGapLeft` / `fixGapAbove` (`MapChunk.cpp:1837-1860`) copy a
 neighbour's edge column and call `registerChunkUpdate(ChunkUpdateFlags::VERTEX)`, already wired to a
-menu action. Heights are done. **Alpha-map stitching does not exist at all**, and the agent found
+menu action. Heights are done. **Alpha-map stitching does not exist at all**, and the survey found
 three defects in the existing paths.
 
 **#9 Erosion.** No erosion code anywhere. But `MapChunk::blurTerrain` (`MapChunk.cpp:1110-1194`) is

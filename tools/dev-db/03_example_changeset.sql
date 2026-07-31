@@ -1,5 +1,5 @@
 -- Reference changeset. This is the exact shape the M2 emitter must produce, and the
--- known-good fixture the db-verifier agent checks new output against.
+-- known-good fixture to check new changeset output against.
 --
 --   Apply:  mysql noggit_dev_world -e "source tools/dev-db/03_example_changeset.sql"
 --

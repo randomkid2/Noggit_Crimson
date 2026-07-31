@@ -39,12 +39,9 @@
 # `/**` matches the bare `docs` entry too, so git prunes the directory and never looks inside.
 # The existing `!/src/**` above only appears to work because src/ is already tracked, and
 # gitignore does not apply to tracked files.
-!CLAUDE.md
 !ATTRIBUTION.md
 !/docs/
 !/docs/**
-!/.claude/
-!/.claude/**
 !/tools/
 !/tools/**
 !/tests/
@@ -64,8 +61,6 @@
 #
 # Structure dumps, generated credentials, filled bootstrap. Regenerate with seed-dev-db.ps1.
 /tools/dev-db/.generated/**
-# Machine-specific agent permissions (paths to local servers, clients, reference checkouts).
-/.claude/settings.local.json
 # Names the operator's own live databases. See db-policy.example.json.
 /tools/dev-db/db-policy.json
 # Machine-specific paths and connection details. See dev-db.config.example.json.

@@ -1,6 +1,6 @@
 # Milestones
 
-Each milestone is gated: run `/milestone Mn`, produce a plan, get it approved, then implement.
+Each milestone is gated: write a plan against the brief below, get it approved, then implement.
 No implementation code before an approved plan.
 
 Every definition of done requires **pasted evidence**. "Builds clean" without compiler output
@@ -33,8 +33,9 @@ the chunk mover, and a Doctor dialog over `DoctorReport::render()`.
 
 ### M1 rendering — next steps, in order
 
-Recon (four read-only agents, all findings cited to file:line) established the architecture and
-turned up two blockers that must be cleared before anything can be drawn.
+A read-only survey of the render, model, DBC and spawn paths — every finding cited to file:line —
+established the architecture and turned up two blockers that must be cleared before anything can
+be drawn.
 
 **Steps 1–4 are now done.** Evidence, 2026-07-30:
 
@@ -262,14 +263,28 @@ risk today; both are recorded so they are not rediscovered as surprises.
 
 ## Groundwork — done
 
-- `CLAUDE.md`, `docs/schema-335.md`, `docs/environment.md`, this file.
-- `.claude/hooks/guard-db.ps1` — allowlist DB guard. 22/22 self-test cases pass, including
-  compound-command bypass and the `mysql` binary/schema name collision.
-- `.claude/settings.json`, five slash commands, three subagents.
+- `docs/schema-335.md`, `docs/environment.md`, this file.
+- **The write guard lives in the shipped code, not in a convention.**
+  `Noggit::Database::WorldDatabaseConnection` refuses to construct a `DEV_WRITE` connection
+  unless `config.schema` equals the configured writable schema, and re-checks that same equality
+  inside `execute()` before every individual statement rather than trusting the construction-time
+  result — `setSchema` could have been called since. `READ_ONLY` connections are rejected by
+  `execute()` outright and additionally ask the server for `SET SESSION TRANSACTION READ ONLY`
+  where it is honoured. `executeScript` splits a changeset and routes every statement back
+  through `execute()`, so applying a whole file cannot become a way around the guard.
+- **The one inherited write path is bound by the same policy.** `src/mysql/mysql.cpp` — upstream's
+  UID storage — no longer issues the `CREATE DATABASE IF NOT EXISTS` it ran on *every*
+  `connect()`, and opens no connection at all unless `project/mysql/db` is exactly
+  `project/mysql/dev_schema`. That check is redundant against `WorldDatabaseConnection`'s guard on
+  purpose: it fires before a socket is opened and reports in terms of UID storage. The policy is
+  not reimplemented there — a second parallel policy would be a second thing to get wrong.
 - `tools/dev-db/` — root bootstrap, structure-copy seeder, synthetic fixtures, schema-check.
-- `/schema-check source`: **29/29 assertions hold** against `world` (TDB 335.25101).
+  `seed-dev-db.ps1` refuses to run when its configured dev schema is a protected name or equals
+  the source schema (`seed-dev-db.ps1:40,46`).
+- `schema-check.ps1 -Target source`: **29/29 assertions hold** against `world` (TDB 335.25101).
 - `noggit_dev_world` bootstrapped, structure copied (26 tables), fixtures seeded.
-  `/schema-check dev`: **29/29 hold**. `noggit_ro` write attempt refused with `ERROR 1142`.
+  `schema-check.ps1 -Target dev`: **29/29 hold**. `noggit_ro` write attempt refused with
+  `ERROR 1142`.
 - Submodules initialised.
 
 ## Prerequisites before M0
@@ -314,7 +329,7 @@ downstream and is the hardest thing to retrofit. Nothing else should start befor
   `StandState`", never "is this TDB ≥ N".
 - Connection modes: read-only against a live schema, read/write against `noggit_dev_world`
   only. Refuse a write when the target schema is not the configured dev schema — enforced in
-  code, independent of DB grants and of the hook.
+  the application's own code, so it holds independently of DB grants and of any external tooling.
 - Catch2 or GoogleTest via FetchContent, and a `tests/` CMake target. There is no test
   framework in the tree today.
 
@@ -324,8 +339,8 @@ downstream and is the hardest thing to retrofit. Nothing else should start befor
   fabricated master-branch-shaped one, proving the branch is taken correctly.
 - A test asserts a write to a non-dev schema is refused by the layer itself, with the DB grants
   irrelevant.
-- `/schema-check both` passes; output pasted.
-- `/build` clean; output pasted.
+- `schema-check.ps1 -Target both` passes; output pasted.
+- The build is clean; compiler output pasted.
 
 ## M1 — Spawn read + tile overlay
 
@@ -375,7 +390,18 @@ downstream and is the hardest thing to retrofit. Nothing else should start befor
 - It is idempotent — applying twice produces the same rows and no errors.
 - Round-trip: every written value re-reads identically, coordinates included. `float` columns
   will not hold a `double`; a shifted coordinate is a defect.
-- `db-verifier` reports PASS on all four of its steps.
+- The changeset is reviewed statically against `docs/schema-335.md` *before* it is run, because a
+  statically wrong changeset does not need a rehearsal. The recurring mistakes: `bytes1`/`bytes2`
+  on `creature_addon` or `creature_template_addon` (3.3.5 splits both into `MountCreatureID`,
+  `StandState`, `AnimTier`, `VisFlags`, `SheathState`, `PvPFlags`); `spawndist` instead of
+  `wander_distance`; references to `waypoints`, `script_waypoint`, `creature_template_model`,
+  `pool_creature`, `pool_gameobject` or `version_db_world`, none of which exist on the reference
+  database; `smart_scripts` assuming 4 event and 3 target parameters when there are 5 and 4;
+  a non-zero `zoneId`/`areaId` in an `INSERT INTO creature`, which the core derives; an authored
+  `wpguid`, which the core manages; and a `MovementType`/`wander_distance` pair the core rejects
+  (type 0 needs `wander_distance = 0`, type 1 needs `> 0`).
+- The rehearsal starts from a known state — reseed, then `schema-check.ps1 -Target dev` — so a
+  clean apply is not an artefact of what the schema happened to contain.
 
 ## M3 — Waypoint editor
 
@@ -407,7 +433,7 @@ M0 capability layer, because another TDB or an AzerothCore target may reintroduc
   through an emitted changeset.
 - Reordering and deleting nodes keeps `point` contiguous from 1.
 - A test asserts the target table is chosen through capability lookup, not a literal.
-- `/schema-check` still passes.
+- `schema-check.ps1` still passes.
 
 ## M4 — Chunk mover
 
@@ -431,7 +457,7 @@ M0 capability layer, because another TDB or an AzerothCore target may reintroduc
 **Build:**
 
 - **Doctor**: on startup validate DB connectivity, detect version via both tables, run the
-  `/schema-check` assertions in-process, confirm the client data path, and report plainly.
+  `schema-check.ps1` assertions in-process, confirm the client data path, and report plainly.
   Warn loudly when the connected schema is not the configured dev schema.
 - **Debug bundle**: logs plus the last changeset, for support.
 - **Recovery**: timestamped backups of every emitted `.sql`, restorable.

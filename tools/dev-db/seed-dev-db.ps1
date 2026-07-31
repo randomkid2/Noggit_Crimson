@@ -25,8 +25,8 @@ $ErrorActionPreference = 'Stop'
 $cfg = Get-NoggitDbConfig
 
 # --- Safety ---------------------------------------------------------------------------
-# The guard hook protects the agent's shell calls. This protects the script itself, which is
-# the thing actually issuing DDL, and which the hook cannot see inside.
+# This script issues DDL directly, so it carries its own refusal list rather than relying on
+# anything outside it: the schemas below are never valid targets, whatever the policy file says.
 $PROTECTED = @('mysql', 'sys', 'performance_schema', 'information_schema')
 foreach ($candidate in @('db-policy.json', 'db-policy.example.json')) {
     $policyPath = Join-Path $PSScriptRoot $candidate

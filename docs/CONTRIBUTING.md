@@ -43,14 +43,13 @@ They live in gitignored files, each with a committed `.example` twin:
 | `docs/environment.md` | `docs/environment.example.md` |
 | `tools/dev-db/db-policy.json` | `tools/dev-db/db-policy.example.json` |
 | `tools/dev-db/dev-db.config.json` | `tools/dev-db/dev-db.config.example.json` |
-| `.claude/settings.local.json` | — |
 | `tools/dev-db/.generated/**`, `tools/dev-db/*.local.sql` | — |
 
 If you need the protected-schema list, read the config. Do not paste it into a tracked file.
 Before opening a PR:
 
 ```bash
-git ls-files | grep -E "environment\.md|db-policy\.json|dev-db\.config\.json|settings\.local\.json|\.local\.sql|\.generated/"
+git ls-files | grep -E "environment\.md|db-policy\.json|dev-db\.config\.json|\.local\.sql|\.generated/"
 ```
 
 That must print nothing, and `tools/dev-db/01_bootstrap_root.sql` must still contain its two

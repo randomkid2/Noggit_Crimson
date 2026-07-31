@@ -7,6 +7,10 @@ If you only want to read one thing, read [Quick start](#quick-start-default-buil
 The database features are **opt-in and off by default**; you do not need MySQL to build or run
 this editor.
 
+This file covers *how* to build and run. For *why* the database layer is shaped the way it is —
+the changeset-only write model, the schema-discovery rule, and the transposed tile-index trap that
+moves things 9.6 km without an error — see [`design-notes.md`](design-notes.md).
+
 ## Platform
 
 **Windows x64 with MSVC is the only configuration this fork has been built on.** Measured:
@@ -118,10 +122,10 @@ FetchContent is unavailable. They do contain `find_path`/`find_library` calls th
 that, but this has not been tested here and there is no packaged StormLib/CascLib for MSVC to
 fall back *to*. Plan on having a network connection for the first configure.
 
-**Not in a clone by design.** `docs/environment.md`, `tools/dev-db/db-policy.json`,
-`tools/dev-db/dev-db.config.json` and `.claude/settings.local.json` are gitignored because they
-describe one machine's infrastructure. Each has a committed `.example` twin, and none of them is
-needed to build — only to set up the optional dev database.
+**Not in a clone by design.** `docs/environment.md`, `tools/dev-db/db-policy.json` and
+`tools/dev-db/dev-db.config.json` are gitignored because they describe one machine's
+infrastructure. Each has a committed `.example` twin, and none of them is needed to build — only
+to set up the optional dev database.
 
 ## CMake 4.x policy flag
 
@@ -518,22 +522,28 @@ your target, or your target is a different core — not that your database needs
 Strongest first. Each layer assumes the ones above it may fail.
 
 1. **Database grants.** `noggit_ro` holds `SELECT` only. Verified by attempting an `INSERT`
-   and confirming the server refuses it. This does not depend on our code being correct.
+   and confirming the server refuses it. This does not depend on our code being correct, which
+   is exactly why it is first: it is the only layer that still holds when every line of code in
+   this repository is wrong.
 2. **In-script assertions.** `seed-dev-db.ps1` refuses to run if its configured dev schema is a
-   protected name or equals the source schema.
-3. **The `PreToolUse` hook.** `.claude/hooks/guard-db.ps1` inspects agent shell commands.
-   `-Test` runs 22 self-test cases. It reads **command lines only** — not the contents of a
-   `.sql` file, not statements issued from inside a script, and nothing the compiled
-   application does at runtime. Treat it as catching obvious mistakes, not as permission.
+   protected name or equals the source schema. The names come from `protectedSchemas` in
+   `db-policy.json`; if that list is missing the script falls back to the four MySQL system
+   schemas. Note that an *incomplete* list costs you a clearer error message rather than your
+   safety — the check that matters is that the target is not the source, and grants cover the
+   rest.
+3. **The application's own refusals**, described below. Narrower than the two above, because it
+   only governs what `noggit.exe` sends.
 
-The guard's core rule is that any state-changing statement not explicitly naming the writable
-schema is refused. That holds even with an empty `protectedSchemas` list, so an incomplete list
-costs you a clearer error message, not your safety.
+The reason there are three and not one is that each covers a different actor. Grants cover
+anything that connects with the read-only account, including a mistake made by hand at a `mysql`
+prompt. The script assertions cover the tooling, which is the thing actually issuing DDL and
+which no server-side grant can make safe once it is running as `noggit_rw`. The application
+refusals cover the editor. None of the three is a substitute for either of the others.
 
 ### What the application itself guarantees
 
-Separate from the three layers above, and narrower than they are — this is only about the
-statements `noggit.exe` sends.
+Layer 3, spelled out. Narrower than the two above it — this is only about the statements
+`noggit.exe` sends.
 
 - **No `CREATE DATABASE` statement exists in the source.** Verified by grepping the whole of
   `src/` for `CREATE|DROP (DATABASE|SCHEMA)` and `CREATE TABLE`: the only non-comment hit is
