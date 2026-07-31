@@ -189,9 +189,11 @@ if ($Test) {
         @{ c = 'mysqlimport noggit_dev_world data.txt';                                       block = $false; why = 'import into dev schema' }
         @{ c = 'mysqlimport world data.txt';                                                  block = $true;  why = 'import into live schema' }
         @{ c = 'mysql characters -e "TRUNCATE TABLE guild;"';                                 block = $true;  why = 'truncate live characters' }
+        # The drive letters below are arbitrary fixtures -- Test-DeleteViolation matches any
+        # [A-Za-z]: root. Do not substitute a letter that exists on the machine you run this on.
         @{ c = 'rm -rf /';                                                                    block = $true;  why = 'delete root' }
         @{ c = 'rm -rf C:\';                                                                  block = $true;  why = 'delete drive root' }
-        @{ c = 'Remove-Item -Recurse -Force H:\';                                             block = $true;  why = 'delete drive root ps' }
+        @{ c = 'Remove-Item -Recurse -Force D:\';                                             block = $true;  why = 'delete drive root ps' }
         @{ c = 'rm -rf build/CMakeFiles';                                                     block = $false; why = 'scoped build clean' }
         @{ c = 'cmake --build . --config RelWithDebInfo';                                     block = $false; why = 'ordinary build' }
         @{ c = 'git commit -m "add schema doc"';                                              block = $false; why = 'ordinary git' }

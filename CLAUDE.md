@@ -52,13 +52,19 @@ It is **not** a database layer. It is five free functions persisting one `UIDs`
 
 ## Build
 
-Full prerequisites, gotchas and dev-DB setup are in `docs/setup.md`. Three things bite in order:
+Full prerequisites, gotchas and dev-DB setup are in `docs/setup.md`. Four things bite in order:
 
 1. **CMake 4.x needs `"-DCMAKE_POLICY_VERSION_MINIMUM=3.5"`, quoted.** Unquoted the `.5` is
    stripped and every subproject fails with a message blaming the subproject.
 2. **Qt must be ≥ 5.10**, 5.15.2 recommended. `NodeEditor` requires 5.10; below that
    `Qt5::OpenGL` is never defined and the failure appears at *generate*, not configure.
 3. **Submodules first** — `cmake/` is itself a submodule.
+4. **Never build `INSTALL`, and do not set `CMAKE_INSTALL_PREFIX`.** `cmake/win32_pack.cmake`
+   (pulled in by `includePlatform("pack")`, `CMakeLists.txt:503`) installs `bin/shaders`,
+   `bin/fonts`, `bin/noggit_template.conf` and four DLLs from a top-level `bin/` that is neither
+   tracked (`git ls-files bin/` is empty) nor generated. The target dies with
+   `file INSTALL cannot find "…/bin/shaders"`. Three of those DLLs are not even linked any more.
+   Run the editor out of `build/bin/<config>/`.
 
 ```bash
 git submodule update --init --recursive
@@ -67,7 +73,7 @@ git submodule update --init --recursive
 Configure (Qt path must match one compiler version only):
 
 ```bash
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" -DCMAKE_PREFIX_PATH="<Qt>/msvc2019_64" -DCMAKE_INSTALL_PREFIX="<install>"
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" -DCMAKE_PREFIX_PATH="<Qt>/msvc2019_64"
 ```
 
 Add for the DB build:
@@ -76,13 +82,16 @@ Add for the DB build:
 -DUSE_SQL=ON -DMYSQL_LIBRARY="<...>/libmysql.lib" -DMYSQLCPPCONN_INCLUDE="<...>/include/jdbc" -DMYSQLCPPCONN_LIBRARY="<...>/mysqlcppconn.lib"
 ```
 
-Then `cmake --build . --config RelWithDebInfo --target ALL_BUILD`, then `--target INSTALL`.
+Then `cmake --build . --config RelWithDebInfo --target ALL_BUILD`. The exe lands in
+`build/bin/<config>/` and is run from there. There is no install step.
 
-Run `windeployqt` once against the built exe — it resolves the Qt DLLs *and* the platform plugin,
-which CMake's own copy step does not, and without which the binary exits silently. The only thing
-it cannot know about is the connector DLL. Measured runtime dependencies are listed in
-`docs/setup.md`; two widely repeated instructions are wrong for this configuration and were
-checked with `dumpbin /DEPENDENTS`: **there is no `lua51.dll`** (sol2 links Lua 5.4 statically) and
+`windeployqt` already runs as a POST_BUILD step (`cmake/windeployqt.cmake`), so the Qt DLLs and the
+platform plugin are placed automatically; `definitions/`, `noggit-definitions/` and `themes/` are
+copied by POST_BUILD steps too. Only `listfile.csv` needs a manual
+`cp dist/listfile/listfile.csv build/bin/<config>/`, plus the connector DLL for `USE_SQL` builds,
+which `windeployqt` cannot know about. Measured runtime dependencies are listed in `docs/setup.md`;
+two widely repeated instructions are wrong for this configuration and were checked with
+`dumpbin /DEPENDENTS`: **there is no `lua51.dll`** (sol2 links Lua 5.4 statically) and
 **`Qt5OpenGL.dll` is never imported** (NodeEditor needs the module at configure time only).
 
 ## Coding guidelines

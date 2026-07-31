@@ -62,11 +62,11 @@ Worked example, no human involved:
 
 ```powershell
 $env:NOGGIT_BRIDGE_PORT = "27055"
-Start-Process noggit.exe -ArgumentList '--project','H:\ProjectsNogRed','--map','0','--goto','-9500,70,58'
+Start-Process noggit.exe -ArgumentList '--project','C:\path\to\your-project','--map','0','--goto','-9500,70,58'
 Start-Sleep 25
 . tools/dev-bridge/noggit-bridge.ps1
 Send-Noggit "loadspawns"          # OK 5 spawn(s) across 1 tile(s)
-Send-Noggit "screenshot H:\tmp\shot.png"
+Send-Noggit "screenshot C:\path\to\shot.png"
 ```
 
 ## Known limitation: screenshot framing
@@ -116,7 +116,7 @@ Send-Noggit "goto -9500 70 58"        # the fixture creatures, in server coordin
 Start-Sleep -Seconds 3                # let the tiles stream in
 Send-Noggit "status"                  # confirm tile_loaded=yes before loading
 Send-Noggit "loadspawns"
-Send-Noggit "screenshot H:\tmp\fixtures.png"
+Send-Noggit "screenshot C:\path\to\fixtures.png"
 ```
 
 ## Notes

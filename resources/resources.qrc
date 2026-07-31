@@ -4,11 +4,17 @@
         <file>DefaultStyle.json</file>
         <file>convert.png</file>
     </qresource>
+    <!-- font_awesome.otf (Font Awesome 5 Pro), segoeui.ttf and segoeuisb.ttf (Microsoft
+         Segoe UI) were removed from this fork: neither licence permits redistributing the
+         font file, and the Font Awesome Pro licence explicitly forbids committing it to a
+         public repository. Font Awesome is now resolved at runtime from a "fonts" folder
+         next to the executable or from an installed system family, with a text or
+         standard-icon fallback; see
+         src/noggit/ui/FontAwesome.cpp. Segoe UI is resolved by family name via
+         Noggit::Ui::UiFonts. Only noggit_font.ttf, which is Noggit's own icon font, is
+         still shipped here. -->
     <qresource prefix="/fonts">
-        <file>font_awesome.otf</file>
         <file>noggit_font.ttf</file>
-        <file>segoeui.ttf</file>
-        <file>segoeuisb.ttf</file>
     </qresource>
     <qresource prefix="/">
         <file alias="icon">../media/noggit_icon.png</file>

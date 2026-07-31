@@ -38,7 +38,11 @@
       "Bash(git push:*)",
       "Bash(docker:*)",
       "PowerShell(docker:*)",
-      "Bash(git submodule:*)"
+      "Bash(git submodule:*)",
+      "Edit(.claude/hooks/**)",
+      "Write(.claude/hooks/**)",
+      "Edit(.claude/settings.json)",
+      "Write(.claude/settings.json)"
     ]
   },
   "hooks": {

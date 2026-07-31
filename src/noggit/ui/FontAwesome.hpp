@@ -1,16 +1,27 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
-#pragma once
+#ifndef NOGGIT_UI_FONTAWESOME_HPP
+#define NOGGIT_UI_FONTAWESOME_HPP
 
 #include <QWidget>
+#include <QtCore/QString>
+#include <QtGui/QFont>
 #include <QtGui/QIcon>
 #include <QtGui/QIconEngine>
+
+#include <map>
 
 
 namespace Noggit
 {
   namespace Ui
   {
+    // Private Use Area codepoints of the Font Awesome 5 glyph set. These are numbers, not
+    // font data: no Font Awesome file is shipped with this repository (see FontAwesome.cpp
+    // for what a user must install to get the icons back). Part of this list is Pro-only and
+    // has no Font Awesome Free equivalent, so even with Free installed some of these
+    // codepoints resolve to nothing -- FontAwesomeIconEngine falls back to a standard Qt
+    // icon or a short text label in that case, and every button stays identifiable.
     struct FontAwesome
     {
       enum Icons
@@ -974,6 +985,35 @@ namespace Noggit
       };
     };
 
+    // Resolves the Font Awesome glyph font at runtime. The font file is deliberately NOT
+    // part of this repository, so it may legitimately be missing; isAvailable() is then
+    // false and callers must degrade instead of failing.
+    class FontAwesomeFont
+    {
+    public:
+      // Family name of the glyph font that was found, empty QString if none was.
+      static QString family();
+      static bool isAvailable();
+
+      // Fallback for a codepoint when no glyph font is present.
+      // fallbackIcon() returns a null QIcon when no sensible standard icon exists;
+      // fallbackLabel() always returns a short, non-empty text label.
+      static QIcon fallbackIcon (char32_t codepoint);
+      static QString fallbackLabel (char32_t codepoint);
+    };
+
+    // Interface font resolved BY FAMILY NAME from the system font database. "Segoe UI" ships
+    // with Windows and must not be redistributed (its name table permits use only as part of
+    // a licensed Microsoft product), so the file is not in this repository; on a machine
+    // without it the first installed family of the fallback list is used, and failing that
+    // Qt's own general system font.
+    class UiFonts
+    {
+    public:
+      static QString interfaceFamily();
+      static QFont interfaceFont (int pixel_size);
+    };
+
     class FontAwesomeButtonStyle : public QWidget
     {
     public:
@@ -999,6 +1039,10 @@ namespace Noggit
       QPixmap pixmap(QSize const& size, QIcon::Mode mode, QIcon::State state) override;
 
 
+    protected:
+      // Drawn instead of the glyph when no Font Awesome font is installed.
+      void paintFallback(QPainter* painter, QRect const& rect, QIcon::Mode mode, QIcon::State state);
+
     private:
       const QString _text;
 
@@ -1008,3 +1052,5 @@ namespace Noggit
 
   }
 }
+
+#endif // NOGGIT_UI_FONTAWESOME_HPP

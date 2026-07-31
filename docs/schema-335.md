@@ -5,26 +5,27 @@
 | Provenance | Value |
 |---|---|
 | Measured | 2026-07-30 |
-| Server | MySQL 8.4.8, local |
-| Schema | `world` |
+| Server | MySQL 8.4 |
+| Schema | `world` (the stock TrinityCore name) |
 | `version.db_version` | `TDB 335.25101` (`cache_id` 25101) |
-| `version.core_revision` | `b517205be11b+` (ElunaTrinityWotlk `master` = 3.3.5 line) |
-| Core source cross-check | TrinityCore 3.3.5 checkout @ `b517205` (ElunaTrinityWotlk) |
-| Table count | 190 |
+| Core source cross-check | a TrinityCore 3.3.5a (WotLK-line) source checkout |
 
 Re-measure with `/schema-check` before trusting any of this. Column *order* matters for
 positional `INSERT`, so it is preserved verbatim throughout.
 
-> [!warning] This `world` is not pristine
-> It carries four custom tables (`custom_affix_pool`, `custom_passive_tree`,
-> `custom_passive_class_starts`, `custom_passive_connections`). They are a talent/affix
-> system and touch nothing in scope here. `playercreateinfo_spell_custom` and
-> `spell_custom_attr` *are* stock TrinityCore names despite reading as custom.
+> [!warning] The measured `world` is not a pristine TDB install
+> It carries a small number of non-stock tables. None of them are spawn, template, scripting
+> or waypoint tables, none are in scope for this fork, and none are documented here — every
+> table described below is stock TrinityCore. What this does mean is that the table *list* and
+> table *count* of the measured database are not a statement about stock TDB 335.25101; only
+> the column-level facts below are.
 >
-> A second, heavily customised world database on the same server was compared
-> column-by-column against this one across every `creature*` / `gameobject*` / `waypoint*` /
-> `smart_scripts` table: **zero drift**. Custom content tends to add tables and rows, not
-> reshape the spawn tables — useful to know, but re-verify rather than assume it.
+> So treat this document as one measurement, not as the definition of the schema. Where it
+> disagrees with a published reference, the resolution is to re-measure your own target with
+> `/schema-check` and trust `information_schema`, not either document.
+>
+> One genuine trap: `playercreateinfo_spell_custom` and `spell_custom_attr` read as
+> customisations but *are* stock TrinityCore table names.
 
 ## Corrections to the source brief
 

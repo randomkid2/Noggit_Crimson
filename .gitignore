@@ -49,6 +49,12 @@
 !/tools/**
 !/tests/
 !/tests/**
+# scripts/ holds 23 tracked Lua/TypeScript files inherited from upstream, but was never
+# un-ignored -- they survive only because gitignore does not apply to already-tracked files.
+# Without this, a NEW file added under scripts/ is silently invisible to `git add`, which is
+# exactly the failure documented at the top of this file.
+!/scripts/
+!/scripts/**
 
 # Re-ignore generated, machine-specific and secret-bearing files. These come after the
 # whitelist above because the last matching pattern wins.
@@ -72,3 +78,43 @@
 /docs/environment.md
 # Emitted changesets and their timestamped backups.
 /out/changesets/**
+
+# --- Hard re-ignores. Last matching pattern wins, so these override every `!` above. ---
+#
+# The whitelists above are broad (`!/src/**`, `!/bin/**`, `!/tests/**`), so an in-source build
+# or a stray asset lands in a directory git is already looking inside. These two blocks close
+# that. No currently tracked file matches any pattern here -- verified with `git ls-files`.
+#
+# 1. Build and editor artefacts. `/bin/**` in particular un-ignores a directory whose name
+#    invites build output; nothing is tracked there today.
+*.obj
+*.o
+*.lib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.tlog
+*.user
+*.suo
+*.aps
+#
+# 2. WoW client data. NONE MAY EVER ENTER THIS REPOSITORY -- see ATTRIBUTION.md, "Blizzard
+#    content". This is a copyright control, not tidiness: a single committed .blp is
+#    redistribution of Blizzard assets and is permanent once pushed. Deliberately covers the
+#    whole tree including tests/ and src/, so a fixture cannot be added without noticing.
+*.mpq
+*.MPQ
+*.dbc
+*.db2
+*.m2
+*.wmo
+*.adt
+*.wdt
+*.wdl
+*.blp
+*.skin
+*.anim
+*.mdx
+*.mdl

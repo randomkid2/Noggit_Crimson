@@ -842,8 +842,15 @@ std::string MapView::saveDatabaseChanges(bool apply_to_dev, bool interactive)
       auto config (Noggit::Database::DatabaseSettings::readConnectionConfig());
       config.schema = Noggit::Database::DatabaseSettings::readWritableSchema();
 
+      // readWritableSchema() again, NOT config.schema. Passing config.schema would compare the
+      // value against the line that just assigned it -- a guard that cannot fail, leaving the
+      // whole protection resting on the assignment above rather than on the check. The other two
+      // call sites in this file already pass it directly; this one did not.
       Noggit::Database::WorldDatabaseConnection write_connection
-        (config, Noggit::Database::AccessMode::DEV_WRITE, config.schema);
+        ( config
+        , Noggit::Database::AccessMode::DEV_WRITE
+        , Noggit::Database::DatabaseSettings::readWritableSchema()
+        );
 
       std::size_t const statements (write_connection.executeScript(sql));
 

@@ -78,6 +78,15 @@ when. Changes made in this fork:
 | 2026-07-31 | `src/noggit/MapView.{h,cpp}`, `src/noggit/ui/tools/ViewportGizmo/ViewportGizmo.{hpp,cpp}`, `src/noggit/database/SpawnSceneCache.{hpp,cpp}` — axis-drag translate/rotate gizmo for database spawns. A spawn's `ModelInstance` is deliberately **not** passed to `handleTransformGizmo`: that compiles, since `ModelInstance` is a `SceneObject`, but it calls `updateTilesEntry(..., model_update::add)`, which reaches `adt->add_model()` and would register a server-side spawn into `MapTile::object_instances` — the ADT MDDF save path this fork keeps DB spawns structurally out of. It would also key undo on `uid`, which is 0 for every spawn, and write `pos`/`dir` without touching the source row, so the spawn would move on screen while the changeset stayed empty. A separate `handleDetachedGizmo` seam avoids all three; rotation routes through `SpawnSceneCache::rotateTo` so the gameobject `rotation0..3` handling is not bypassed. |
 | 2026-07-31 | `src/noggit/MapView.{h,cpp}` — `loadDatabaseSpawnsForTiles` takes an explicit tile list, and `loadDatabaseSpawns` became a thin wrapper over it. The panel had reimplemented the connection setup, schema introspection, unsaved-changes warning, count threshold and the OpenGL `makeCurrent` + `scoped_setter` guard; a second copy of that is what made a multi-tile load fail a camera-tile check it had no reason to care about. Callers pass `::TileIndex` in ADT `(x, z)` order and the transposition to the server's `(x, y)` happens inside, so a caller cannot get the two frames the wrong way round. |
 | 2026-07-31 | `src/noggit/MapView.cpp` — dev-bridge `mccvcheck`, which round-trips a vertex-colour edit on a chunk with no MCCV block and reports `hasMCCV` and `header_flags.flags.has_mccv` at each step. It exists because the defect it checks for is invisible on screen: a chunk with no MCCV block already reads as neutral white, so restoring the colour array is a no-op and an undo that leaves the flags set looks perfect. Measured against the running editor over tile 31,49: `before=0,0 after_edit=1,1 after_undo=0,0 after_redo=1,1`. The command restores the world before returning. |
+| 2026-07-31 | `src/noggit/application/ApplicationEntry.cpp`, `src/noggit/ui/windows/noggitWindow/NoggitWindow.{hpp,cpp}` — `--project`, `--map` and `--goto` open a project and enter a map with no window interaction, so the dev bridge can drive a real session instead of one assembled in a test. Every addition sits inside `#ifdef NOGGIT_DEV_BRIDGE_ENABLED` and is absent from a default build, for one reason: `openMapUnattended` calls `enterMapAt` with `uid_fix_mode::none` rather than `check_uid_then_enter_map`, which may raise the UID fix window — a modal, and a modal is a hang when there is no human present. That makes it fine for looking at a tile and wrong for editing one, since a session that skipped the UID check and then saved could reuse unique IDs; the header carries that warning and the session logs it on entry. `--goto` takes TrinityCore server coordinates and converts them through `SpawnPlacement::positionFor`, the same tested seam the bridge's own `goto` uses, rather than by hand. The project-open path mirrors `NoggitProjectSelectionWindow` minus the window and is kept in step with it by hand, which the comment says out loud. |
+| 2026-07-31 | Added `src/noggit/AssetScan.{hpp,cpp}` and `tests/AssetScanTests.cpp`, plus the Assist ▸ `Report missing assets...` entry in `src/noggit/MapView.cpp` — every model, world model and texture the loaded tiles reference, and which of those the client data chain cannot produce. The module's split runs *through* the header rather than between two of them: everything with an out-of-line definition depends on nothing but the STL, while the world walk is a set of templates purely so `World.h`, `MapTile.h`, `Model.h`, `WMO.h` and `ClientData.hpp` stay out of it — that is what lets the aggregation half link into the standalone test target with no client install, no Qt and no build-system conditionals. Probes are memoised per distinct asset because `ClientData::exists` walks every open archive on a miss and a map resolves a few hundred distinct `.blp` names across tens of thousands of references; without it the scan presents as a hang. Paths are lower-cased by an explicit ASCII range test rather than `::tolower`, which has undefined behaviour for the bytes ≥ 0x80 that ADT texture lists and DBC string tables really carry — `ClientData::normalizeFilenameInternal` has exactly that bug and this does not reproduce it. Terrain textures are read through a plain 16×16 chunk loop rather than `World::for_all_chunks_on_tile`, which calls `mapIndex.setChanged` on entry and would put unsaved-change prompts in front of a user who only asked a question. `Missing` and `Unreadable` are kept apart because the fix differs — ship the file versus replace the corrupt one — even though both render as nothing in game. |
+| 2026-07-31 | Added `src/noggit/UidCollisionLog.{hpp,cpp}` and `tests/UidCollisionLogTests.cpp`; `src/noggit/world_model_instances_storage.{hpp,cpp}` record each repair and `src/noggit/World.h` gains a narrow `uidCollisionLog()` accessor, reachable from Assist ▸ `UID collision report...`. Noggit already renumbers duplicate unique IDs in memory as instances load, and that repair is deliberately untouched — `newGUID()` is still called exactly once per collision and its result is still what the instance is stored under, because the renumbered uid is what the tile is then saved with and changing it would move real object placements. What was missing is the evidence: the whole collision set collapsed into one `_uid_duplicates_found` bool that `MapView.cpp:4670` turns into a single modal naming nothing, so a mapper hit by a `uid.ini` desync is told that "a" uid was in use and cannot learn which objects were affected, in which tile, or how many. The record is taken before the uid is overwritten and before the instance is moved, both of which destroy what it is about. The log holds its own mutex so a reader on the UI thread never waits on the storage lock, which instance loading holds for the whole of an add; it caps at 4096 records and keeps the *first*, since the earliest collisions identify where the desync came from and later ones repeat it; and it is deliberately not emptied by the storage's `clear()`, whose only route is `MapIndex::fixUIDs` — the operation a user runs *because of* these collisions, so wiping the evidence there would destroy it at the moment they went looking for it. The header is STL-only, which is what admits the recorder to the standalone test target and why the tile is kept as plain indices rather than a `TileIndex`; an out-of-grid position is recorded as "no tile" rather than clamped to one it does not belong to. `World.h` exposes the log rather than the storage because widening access to reach it would hand every caller the instance maps as well. |
+| 2026-07-31 | `src/noggit/scripting/scripting_tool.{hpp,cpp}`, `src/noggit/tools/ScriptingTool.cpp` — **supersedes the `ScriptingTool::onTick` left-mouse gate recorded in the scripted-placement row above.** Gating `onTick` the way every terrain brush does broke the scripting brush outright: `sendBrushEvent` drives an edge detector comparing the previous button state against the current one, so returning early whenever the button was up meant the "up" state was never observed — `on_left_click` fired once per session, and `on_left_release` and every right-button callback never fired at all. `onTick` now calls it unconditionally and `sendBrushEvent` self-gates instead: idle with nothing pending it dispatches nothing, allocates no event object and opens no undo action, and it opens its own action with the `eLMB`/`eRMB` modality only when a callback is about to run, so a stroke is still one undo step rather than one per frame. The action moved into `sendBrushEvent` because the release edge lands on the tick *after* `MapView` closed the caller's LMB-modal action, so there is provably none open for it and a world edit with no action running dereferences a null `NOGGIT_CUR_ACTION`; `beginAction` returns the running action untouched when there is one (`ActionManager.cpp:64-65`), so a caller that opens its own keeps ownership and none of this fires. An action opened on a tick with no button held is closed immediately — it carries no modality controller, `endActionOnModalityMismatch` returns early on `eNONE`, and it could therefore never be closed at all, leaving `undo()` to assert with it still running. The per-tick contract is stated in the header, and the fallback for a caller that ignores it disarms itself the moment it observes one idle tick. |
+| 2026-07-31 | `src/mysql/mysql.{h,cpp}` — removed the `CREATE DATABASE IF NOT EXISTS` that upstream ran on **every** `connect()`, and bound the whole seam to the nominated writable schema. As shipped, enabling UID storage and pointing Noggit at a production world database would have it create a schema and a table there before doing anything else: the project's central safety claim falsified by the application itself, in inherited code rather than in anything this fork wrote. Two changes, in this order. The `CREATE DATABASE` is gone outright, so a schema that does not exist is now a reported connection failure instead of something conjured into being. And nothing opens a connection at all unless `project/mysql/db` is exactly `project/mysql/dev_schema`, which puts the surviving `CREATE TABLE`, the `INSERT` and the `UPDATE` beyond reach of any other schema. The policy is deliberately not reimplemented here — the schema comes from `Database::DatabaseSettings` and the enforcement from `WorldDatabaseConnection`'s `DEV_WRITE` guard, the same path the fork's own database layer is already bound by, because a second parallel policy is a second thing to get wrong; the explicit check ahead of it is redundant on purpose, firing before a socket is opened and phrased in terms of UID storage rather than changesets. `testConnection` now opens `READ_ONLY`: a button whose entire job is to test reachability must not be the thing that writes to a server, and it correctly still reports success against a live database that UID storage itself will refuse. This also supersedes the `<driver.h>` include fix recorded above, by removing the connector headers from the file entirely — every statement goes through `WorldDatabaseConnection` now. Upstream's connect-per-call remains, unrestructured and documented: it is tolerable only because these five functions run a handful of times per session, and it is exactly why the fork's per-tile spawn queries never extended this seam. `mysql.h` also gained an include guard in place of `#pragma once`, per the repo's own rule. |
+| 2026-07-31 | `docs/schema-335.md` — removed infrastructure detail from the provenance block ahead of publication. The precise server build and its locality, the measured database's table count, the core revision hash and the name of the particular TrinityCore fork it was cross-checked against, and the enumeration of one operator's four custom tables all described a private machine rather than the 3.3.5 schema; the note comparing it against "a second, heavily customised world database on the same server" disclosed a database inventory outright. The column-level facts are untouched — they are the schema ground truth this document exists for, and they remain measured from `information_schema` rather than quoted from anywhere. What replaces the removed material states plainly the limitation those details had been carrying implicitly: the measured `world` is not a pristine TDB install, so its table *list* and *count* say nothing about stock TDB 335.25101 and only the column facts do. The `playercreateinfo_spell_custom` / `spell_custom_attr` trap is kept, being a fact about stock TrinityCore rather than about anyone's server. |
+| 2026-07-31 | Removed `resources/font_awesome.otf`, `resources/segoeui.ttf` and `resources/segoeuisb.ttf`, and rebuilt `src/noggit/ui/FontAwesome.{hpp,cpp}` and `resources/resources.qrc` around their absence. None of the three could lawfully be published from this repository. `font_awesome.otf` is Font Awesome 5 **Pro** Regular 5.14.0 — a paid product whose licence forbids redistributing the font file and specifically forbids committing it to a public repository — and the two Segoe UI faces are Microsoft's, whose name table permits use only as part of a licensed Microsoft product. All three were inherited from upstream, which does not make publishing them someone else's act. `noggit_font.ttf` stays, being Noggit's own icon font. Font Awesome is now resolved at runtime from `<install dir>/fonts` (and the working directory) under any of the usual Free or Pro file names, or from an installed system family preferring the solid face; Segoe UI is resolved by family name through the new `Noggit::Ui::UiFonts` instead of being loaded from a bundled file. With none of them present the application still runs: `FontAwesomeIconEngine` paints a standard Qt icon where one fits the meaning and a short text label otherwise, so every button stays identifiable. That degradation is real and visible, and is documented in the file rather than papered over — Font Awesome Free is SIL OFL 1.1 and may be installed freely, but part of the codepoint list in `FontAwesome::Icons` is Pro-only and stays blank even with Free installed. Nothing in this path downloads a font. `FontAwesome.hpp` also gained an include guard in place of `#pragma once`, per the repo's own rule. |
+| 2026-07-31 | `.gitignore` — this repository ignores everything (`/**`) and whitelists back explicitly, and the inherited whitelist un-ignored directory *contents* (`!/src/**`) but never the directories themselves. `/**` matches the bare `src` entry too, so git prunes the directory and never looks inside it; the tracked files there survive only because gitignore does not apply to already-tracked files, which means a **new** file under any whitelisted directory is silently invisible to `git add`. That bit this fork the first time a new source file failed to stage, and it was still latent for `scripts/` (23 Lua/TypeScript files inherited from upstream, tracked but never un-ignored). Both are fixed by un-ignoring each directory alongside its contents. Added whitelist entries for `docs/`, `tools/`, `tests/` and `.claude/`, then re-ignored — last matching pattern wins — the generated, machine-specific and secret-bearing files listed under "Not published" below. Ahead of publication two hard re-ignore blocks were added on top: build and editor artefacts, because the broad `!/bin/**` and `!/src/**` whitelists mean an in-source build lands somewhere git is already looking; and every WoW client data extension (`*.mpq`, `*.dbc`, `*.m2`, `*.wmo`, `*.adt`, `*.blp`, …) across the whole tree *including* `tests/` and `src/`, so a fixture cannot be added without noticing. That second block is a copyright control rather than tidiness: one committed `.blp` is redistribution of Blizzard assets, and it is permanent once pushed. |
+| 2026-07-31 | `README.md` — rewritten as this fork's front page ahead of publication: what it adds over upstream, the never-writes-to-a-live-database constraint stated before anything else, requirements, quick start, an honest status-and-limitations section, and credit to upstream at the top rather than the bottom. Upstream's original text is **kept verbatim** rather than replaced, demoted under a `# Upstream documentation` heading that retains its LICENSE, BUILDING, SUBMODULES and CODING GUIDELINES sections unaltered. That is deliberate on both counts: the coding guidelines are still the rules this repository holds itself to, and the build instructions are still the ones the upstream project publishes, so dropping either would leave the fork's own documentation as the only surviving record of them and quietly attribute upstream's work to this fork. The new material says plainly that anyone who only wants a map editor should use upstream instead. |
 
 Keep this table current. When application code lands under `src/`, every new file needs the
 project's GPL header, matching the 337 existing files that carry it:
@@ -104,34 +113,122 @@ Regenerate with `git shortlog -sn 6f0776d4`. Before publishing, check upstream f
 
 ## Bundled third-party code
 
-Everything under `src/external/` is third-party and carries its own terms. `src/External` is
-explicitly exempt from this project's coding rules per the README.
+Everything under `src/external/` is third-party and carries its own terms, and so are
+`include/utf8.h` and `include/win/`. `src/External` is explicitly exempt from this project's
+coding rules per the README.
 
-| Component | Licence | Notes |
+**Scope and method of this audit.** Every entry below was determined *from the files present in
+this working tree* — a `LICENSE`/`COPYING` file, or a licence grant in the component's own
+sources — and cites the path that proves it. Nothing here was inferred from a library's
+reputation or looked up in an upstream repository. Where the tree does not state the terms, the
+row says **UNRESOLVED** rather than guessing. Audited 2026-07-31 against the tree as it stands;
+re-run it whenever a submodule pointer or a vendored copy moves.
+
+"GPL-3.0 compatible" means the component may be combined and redistributed as part of a GPL-3.0
+work. Permissive terms (MIT, BSD, zlib, libpng, Boost) are. LGPL-2.1 is, via LGPL-2.1 §3, which
+permits relicensing a copy under GPL v2 *or any later version*. LGPL-3.0 is, being GPLv3 with
+added permissions. GPL-3.0-or-later is. **GPL-2.0-only would not be** — nothing found in this
+tree carries GPL-2.0-only terms.
+
+### Vendored under `src/external/`
+
+| Component | Location in tree | Licence | Evidence in tree | GPL-3.0 compatible |
+|---|---|---|---|---|
+| framelesshelper | `src/external/framelesshelper` | MIT | `framelesshelper/LICENSE` | Yes |
+| imguizmo | `src/external/imguizmo` | MIT | `imguizmo/LICENSE` | Yes |
+| rapidfuzz-cpp | `src/external/rapidfuzz-cpp` | MIT | `rapidfuzz-cpp/LICENSE` | Yes |
+| tsl (robin-map/robin-set) | `src/external/tsl` | MIT | Full MIT grant heading all four headers, e.g. `tsl/robin_map.h:1-23` | Yes |
+| Dear ImGui | `src/external/qtimgui/imgui` | MIT | `qtimgui/imgui/LICENSE.txt` | Yes |
+| NodeEditor | `src/external/NodeEditor` | BSD-3-Clause | `NodeEditor/LICENSE` | Yes — requires Qt5 ≥ 5.10 |
+| tracy | `src/external/tracy` | BSD-3-Clause | `tracy/LICENSE` (states 3-clause BSD on its face) | Yes |
+| libnoise | `src/external/libnoise` | LGPL-2.1 | `libnoise/LICENSE.md` | Yes (LGPL-2.1 §3) |
+| QtAdvancedDockingSystem | `src/external/QtAdvancedDockingSystem` | LGPL-2.1 | `QtAdvancedDockingSystem/LICENSE`, `gnu-lgpl-v2.1.md` | Yes (LGPL-2.1 §3) |
+| qt-color-widgets | `src/external/qt-color-widgets` | LGPL-3.0-or-later | `qt-color-widgets/COPYING`, plus a per-file grant in every source, e.g. `src/abstract_widget_list.cpp:1-22` | Yes |
+| qtgradienteditor | `src/external/qtgradienteditor` | LGPL-2.1 with the Nokia Qt LGPL Exception 1.1 | Per-file Qt licence block, e.g. `qtgradienteditor/qtgradienteditor.cpp:1-41` | Yes (LGPL-2.1 §3) — see caveat below |
+| **glm** | `src/external/glm` (v0.9.9.8, per `glm/detail/setup.hpp:11`) | **UNRESOLVED** | None. No `LICENSE`/`COPYING`/`copying.txt`/`manual.md`; no licence grant in any header. The only copyright notice in the whole directory is a Sun Microsystems permission notice in `glm/ext/scalar_ulp.inl:1-6`, which covers that one file. | **Unresolved** |
+| **imguipiemenu** | `src/external/imguipiemenu` | **UNRESOLVED** | None. Two files (`PieMenu.hpp`, `PieMenu.cpp`), no licence file, no header, no attributed author. | **Unresolved** |
+| **qtimgui** (the Qt wrapper itself, not the bundled Dear ImGui) | `src/external/qtimgui/{QtImGui,ImGuiRenderer}.{h,cpp}` | **UNRESOLVED** | None. `LICENSE.txt` exists only under `qtimgui/imgui/`; the wrapper sources carry no grant. | **Unresolved** |
+| **PNG2BLP** (the top-level converter, not its bundled libraries) | `src/external/PNG2BLP/*.{h,cpp}` | **UNRESOLVED** | None. No licence file, no header on any of the ten top-level sources. | **Unresolved** |
+
+### Third-party libraries nested inside PNG2BLP
+
+`src/external/PNG2BLP` vendors five further libraries. These were not previously recorded at
+all, and one of them is copyleft.
+
+| Component | Location in tree | Licence | Evidence in tree | GPL-3.0 compatible |
+|---|---|---|---|---|
+| zlib | `PNG2BLP/zlib` (v1.2.11) | zlib | `zlib/zlib.h:1-21` | Yes |
+| libpng | `PNG2BLP/libpng` | libpng licence | `libpng/LICENSE` | Yes |
+| png++ | `PNG2BLP/pngpp` | BSD-3-Clause | `pngpp/COPYING`, `pngpp/AUTHORS` | Yes |
+| libtxc_dxtn | `PNG2BLP/libtxc_dxtn` | MIT | `libtxc_dxtn/txc_dxtn.h:1-23` | Yes |
+| **libimagequant** | `PNG2BLP/libimagequant` (v2.12.2) | **GPL-3.0-or-later** | `libimagequant/blur.c:1-18` states the GPLv3-or-later grant in full. `pam.h:1-14` adds a separate permissive notice from Jef Poskanzer / Greg Roelofs for that file. | Yes — but see below |
+
+`libimagequant` being GPLv3-or-later is fine for this project (the whole work is GPL-3.0 already)
+and it is *not* a blocker, but it is worth stating plainly: the built binary is unambiguously
+copyleft, and the previous summary — which implied the bundle was permissive and LGPL — was
+wrong about that.
+
+### Third-party outside `src/external/`
+
+| Component | Location in tree | Licence | Evidence in tree | GPL-3.0 compatible |
+|---|---|---|---|---|
+| UTF8-CPP (Nemanja Trifunovic) | `include/utf8.h` | Boost Software License 1.0 | `include/utf8.h:1-30` | Yes |
+| **StackWalker** (Jochen Kalmbach) | `include/win/StackWalker.{h,cpp}` — compiled via `error_handling.cpp` | **UNRESOLVED** | None. No licence text in either file; the header records only a 2005 CodeProject release history. | **Unresolved** |
+
+### Git submodules
+
+These are referenced by commit, not copied into this repository, but a user who clones with
+`--recursive` receives them and the built binary links them.
+
+| Component | Location in tree | Licence | Evidence in tree | GPL-3.0 compatible |
+|---|---|---|---|---|
+| **blizzard-archive-library** | `src/external/blizzard-archive-library` (submodule) | **UNRESOLVED** | None. No `LICENSE`/`COPYING`; no grant in any source. `README.md` is a stale copy of the sibling library's, so even the identity of the project is unstated. | **Unresolved** |
+| **blizzard-database-library** | `src/external/blizzard-database-library` (submodule) | **UNRESOLVED** for the library as a whole | None at top level. One nested component *is* stated: ByteStream (Pablo Albiol) is LGPL-3.0-or-later per `include/external/ByteStream.h:1-18` and `src/external/ByteStream.cpp:1-18`. That covers those two files only. | **Unresolved** |
+| build-dependencies (`cmake/`) | `cmake` (submodule) | **UNRESOLVED** | Build scripts only; no licence file. Not linked into the binary. | **Unresolved** (low risk — build tooling) |
+| `dist/definitions`, `dist/listfile`, `dist/themes` | submodules | **UNRESOLVED** | Data, not code. No licence file. | **Unresolved** (data, not linked) |
+
+### Fetched at build time — not distributed by this repository
+
+`FetchContent` pulls these during configure. Publishing this repository's *source* does not
+distribute them; shipping a **built binary** does, and their obligations attach at that point.
+None of them is present in this tree, so none can be audited from it.
+
+| Component | Fetched from | Licence |
 |---|---|---|
-| framelesshelper | MIT | |
-| imguizmo | MIT | |
-| rapidfuzz-cpp | MIT | |
-| NodeEditor | BSD | Requires Qt5 ≥ 5.10 |
-| tracy | BSD | |
-| libnoise | LGPL | GPL-3.0 compatible |
-| qt-color-widgets | LGPL | GPL-3.0 compatible |
-| QtAdvancedDockingSystem | LGPL | GPL-3.0 compatible |
-| StormLib | (fetched) | Ladislav Zezula |
-| CascLib | (fetched) | Ladislav Zezula |
-| nlohmann/json | (fetched) | MIT; declares `cmake_minimum_required` below 3.5 |
+| StormLib (Ladislav Zezula) | `gitlab.com/prophecy-rp/dependencies.git` (`cmake/FindStormLib.cmake`) | Not determinable from this tree |
+| CascLib (Ladislav Zezula) | `gitlab.com/prophecy-rp/dependencies.git` (`cmake/FindCascLib.cmake`) | Not determinable from this tree |
+| Lua 5.x | `gitlab.com/prophecy-rp/dependencies.git` (`cmake/FindLua.cmake`) | Not determinable from this tree |
+| sol2 | `github.com/tswow/sol2` (`cmake/FindSol2.cmake`) | Not determinable from this tree |
+| FastNoise2 | `github.com/tswow/FastNoise2` (`cmake/FindFastNoise2.cmake`) | Not determinable from this tree |
+| lodepng | `github.com/lvandeve/lodepng` (`cmake/Findlodepng.cmake`) | Not determinable from this tree |
+| nlohmann/json | `github.com/ArthurSonzogni/nlohmann_json_cmake_fetchcontent` (`cmake/FindJson.cmake`) | Not determinable from this tree; declares `cmake_minimum_required` below 3.5 |
+| Qt5 | supplied by the user | Not distributed here |
 
-> [!warning] Action required before publishing
-> These bundled components have **no licence file at their top level**, so their terms cannot be
-> confirmed from the tree as it stands:
+> [!warning] Unresolved before publishing
+> Seven components carry **no licence statement anywhere in this tree**, so their terms are
+> genuinely unknown here — not "probably MIT":
 >
-> `blizzard-archive-library`, `blizzard-database-library`, `glm`, `imguipiemenu`, `PNG2BLP`,
-> `qtgradienteditor`, `qtimgui`, `tsl`
+> `glm`, `imguipiemenu`, `qtimgui` (wrapper), `PNG2BLP` (top level), `StackWalker`,
+> `blizzard-archive-library`, `blizzard-database-library`.
 >
-> Most are well-known permissive libraries (glm is MIT/Happy Bunny, tsl/robin-map is MIT,
-> qtimgui is MIT), but "probably MIT" is not a licence audit. Resolve each from its upstream
-> repository and record it above before release. This is inherited from upstream, not
-> introduced here — which does not make it someone else's problem once you publish.
+> All seven are compiled into `noggit.exe`. Every one is inherited from upstream rather than
+> introduced by this fork, which does not make it someone else's problem once you publish.
+> Each must be resolved against its own upstream and its licence text committed alongside it.
+> Until then the safe reading is that this repository redistributes code whose terms it cannot
+> evidence.
+>
+> Two further gaps are obligations rather than unknowns — the terms are stated, but the licence
+> texts they point the reader at were not vendored:
+> `libimagequant`'s sources say "See COPYRIGHT file for license" and no `COPYRIGHT` file exists;
+> `qtgradienteditor`'s Qt block points at `LICENSE.LGPL` and `LGPL_EXCEPTION.txt`, neither of
+> which is present. Copy both in.
+>
+> One wording caveat on `qtgradienteditor`: its 2009 Nokia header opens with "No Commercial
+> Usage / This file contains pre-release code and may not be distributed." That sentence belongs
+> to the Technology Preview option of Qt's three-way licence block, and the same block offers
+> LGPL-2.1 as an explicit alternative ("Alternatively, this file may be used under the terms of
+> the GNU Lesser General Public License version 2.1"). This project relies on the LGPL-2.1
+> option. Anyone reading only the first lines will think otherwise, so do not delete this note.
 
 ## AtlasForge — independent reimplementation, no shared code
 
