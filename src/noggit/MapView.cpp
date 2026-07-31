@@ -1379,10 +1379,132 @@ std::string MapView::handleBridgeCommand(std::string const& line)
     return "OK" + _db_spawn_scene->describe();
   }
 
+  // Answers "is this menu entry actually reachable in the running application", which nothing
+  // else here can. Compile and link evidence proves a QAction was constructed; it does not prove
+  // it was added to a menu the user can open, and the difference between those two is a feature
+  // that exists only in the source tree.
+  if (command == "menus")
+  {
+    std::ostringstream out;
+    out << "OK";
+
+    // MapView is a Viewport, not a QMainWindow -- the menu bar it populates belongs to the main
+    // window (see the addMenu calls in createGUI), so it has to be reached through that.
+    for (QMenu* menu : _main_window->_menuBar->findChildren<QMenu*>())
+    {
+      for (QAction* action : menu->actions())
+      {
+        if (action->isSeparator() || action->text().isEmpty())
+        {
+          continue;
+        }
+
+        // '&' is the accelerator marker, not part of what the user reads.
+        QString label (action->text());
+        label.remove(QLatin1Char('&'));
+
+        out << ' ' << menu->title().remove(QLatin1Char('&')).toStdString()
+            << '/' << label.toStdString()
+            << (action->isEnabled() ? "" : "[disabled]");
+      }
+    }
+
+    return out.str();
+  }
+
+  // The tool list is indexed by editing_mode value (see the _tools lookups in this file), so a
+  // tool registered at a position that does not equal its own enumerator silently hands every
+  // later tool the wrong slot. That invariant is invisible in the source -- it lives in the
+  // agreement between two files -- so it is worth being able to read it back from the process
+  // that actually built the list.
+  if (command == "tools")
+  {
+    std::ostringstream out;
+    out << "OK count=" << _tools.size();
+
+    for (std::size_t i (0); i < _tools.size(); ++i)
+    {
+      std::size_t const mode (static_cast<std::size_t>(_tools[i]->editingMode()));
+
+      out << ' ' << i << ':' << _tools[i]->name()
+          << (mode == i ? "" : "[MISMATCH mode=" + std::to_string(mode) + "]");
+    }
+
+    return out.str();
+  }
+
+  // Triggers a menu entry by a case-insensitive substring of its label. "The action exists" and
+  // "activating it does not crash" are different claims, and only the second one is what a user
+  // finds out by clicking. Refuses an ambiguous substring rather than picking one, because
+  // silently firing the wrong menu entry in an editor full of unsaved terrain is the worst
+  // possible way to be wrong.
+  if (command == "trigger")
+  {
+    if (argv.size() < 2)
+    {
+      return "ERR trigger needs a substring of the menu entry to activate";
+    }
+
+    // Rejoined because the tokeniser splits on whitespace and menu labels have spaces in them.
+    std::string wanted_text;
+
+    for (std::size_t i (1); i < argv.size(); ++i)
+    {
+      wanted_text += (i > 1 ? " " : "") + argv[i];
+    }
+
+    QString const wanted (QString::fromStdString(wanted_text).toLower());
+    std::vector<QAction*> matches;
+
+    for (QMenu* menu : _main_window->_menuBar->findChildren<QMenu*>())
+    {
+      for (QAction* action : menu->actions())
+      {
+        if (action->isSeparator() || action->text().isEmpty())
+        {
+          continue;
+        }
+
+        if (QString(action->text()).remove(QLatin1Char('&')).toLower().contains(wanted))
+        {
+          matches.push_back(action);
+        }
+      }
+    }
+
+    if (matches.empty())
+    {
+      return "ERR no menu entry matching \"" + wanted_text + "\"";
+    }
+
+    if (matches.size() > 1)
+    {
+      std::string names;
+
+      for (QAction* action : matches)
+      {
+        names += " \"" + QString(action->text()).remove(QLatin1Char('&')).toStdString() + "\"";
+      }
+
+      return "ERR ambiguous, " + std::to_string(matches.size()) + " entries match:" + names;
+    }
+
+    if (!matches[0]->isEnabled())
+    {
+      return "ERR entry is disabled";
+    }
+
+    matches[0]->trigger();
+
+    return "OK triggered \"" + QString(matches[0]->text()).remove(QLatin1Char('&')).toStdString()
+         + "\"";
+  }
+
   if (command == "help")
   {
     return "OK ping | status | camera <x> <y> <z> | goto <sx> <sy> <sz> | look <yaw> <pitch> | "
-           "loadspawns [all [force]] | dbspawns on|off | screenshot <path> | help";
+           "loadspawns [all [force]] | dbspawns on|off | screenshot <path> | menus | tools | "
+           "trigger <substring> | help";
   }
 
   return "ERR unknown command \"" + command + "\" (try help)";
