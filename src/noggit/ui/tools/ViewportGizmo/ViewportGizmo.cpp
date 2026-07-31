@@ -17,10 +17,42 @@
 
 using namespace Noggit::Ui::Tools::ViewportGizmo;
 
+namespace
+{
+  // The delta matrix ImGuizmo::Manipulate fills, decomposed the way every consumer here needs it.
+  //
+  // Shared rather than copied because the conjugate is not obvious: without it every rotation
+  // comes back with the opposite sign, and a second hand-written copy is exactly where that gets
+  // lost.
+  void decomposeGizmoDelta( glm::mat4x4 const& delta_matrix
+                          , glm::vec3& scale
+                          , glm::quat& orientation
+                          , glm::vec3& translation
+                          )
+  {
+    glm::vec3 skew_;
+    glm::vec4 perspective_;
+
+    glm::decompose(delta_matrix, scale, orientation, translation, skew_, perspective_);
+
+    orientation = glm::conjugate(orientation);
+  }
+}
+
 ViewportGizmo::ViewportGizmo(Noggit::Ui::Tools::ViewportGizmo::GizmoContext gizmo_context, World* world)
 : _gizmo_context(gizmo_context)
 , _world(world)
 {
+}
+
+bool ViewportGizmo::drawsForSelection(std::vector<selection_type> const& selection)
+{
+  std::size_t const n_selected = selection.size();
+
+  // A single non-object entry -- in practice the MapChunk doSelection puts under the cursor every
+  // frame -- gives the gizmo nothing to transform. Two or more entries take the multiselection
+  // pivot path, which draws regardless of what the entries are.
+  return !(!n_selected || (n_selected == 1 && selection[0].index() != eEntry_Object));
 }
 
 void ViewportGizmo::handleTransformGizmo(MapView* map_view
@@ -41,7 +73,9 @@ void ViewportGizmo::handleTransformGizmo(MapView* map_view
 
   int n_selected = static_cast<int>(selection.size());
 
-  if (!n_selected || (n_selected == 1 && selection[0].index() != eEntry_Object))
+  // The one place this question is answered. Callers deciding whether the object gizmo owns the
+  // frame ask the same function, so no second gizmo can ever be drawn into a frame this one claims.
+  if (!drawsForSelection(selection))
     return;
 
   if (n_selected == 1)
@@ -55,16 +89,7 @@ void ViewportGizmo::handleTransformGizmo(MapView* map_view
 
   SceneObject* obj_instance;
 
-  ImGuizmo::SetID(_gizmo_context);
-
-  ImGuizmo::SetDrawlist();
-
-  ImGuizmo::SetOrthographic(false);
-  ImGuizmo::SetScaleGizmoAxisLock(true);
-  ImGuizmo::BeginFrame();
-
-  ImGuiIO& io = ImGui::GetIO();
-  ImGuizmo::SetRect(0, 0, io.DisplaySize.x, io.DisplaySize.y);
+  beginGizmoFrame();
 
   glm::mat4x4 delta_matrix = glm::mat4x4(1.0f);
   glm::mat4x4 object_matrix = glm::mat4x4(1.0f);
@@ -100,23 +125,11 @@ void ViewportGizmo::handleTransformGizmo(MapView* map_view
     return;
   }
 
-  glm::mat4 glm_transform_mat = delta_matrix;
-
   glm::vec3 new_scale;
   glm::quat new_orientation;
   glm::vec3 new_translation;
-  glm::vec3 new_skew_;
-  glm::vec4 new_perspective_;
 
-  glm::decompose(glm_transform_mat,
-      new_scale,
-      new_orientation,
-      new_translation,
-      new_skew_,
-      new_perspective_
-  );
-
-  new_orientation = glm::conjugate(new_orientation);
+  decomposeGizmoDelta(delta_matrix, new_scale, new_orientation, new_translation);
 
   // if nothing was changed, just return early
   switch (_gizmo_operation)
@@ -345,6 +358,82 @@ void ViewportGizmo::handleTransformGizmo(MapView* map_view
     _world->update_selected_model_groups();
 
   _world->update_selection_pivot();
+}
+
+void ViewportGizmo::ViewportGizmo::beginGizmoFrame()
+{
+  ImGuizmo::SetID(_gizmo_context);
+
+  ImGuizmo::SetDrawlist();
+
+  ImGuizmo::SetOrthographic(false);
+  ImGuizmo::SetScaleGizmoAxisLock(true);
+  ImGuizmo::BeginFrame();
+
+  ImGuiIO& io = ImGui::GetIO();
+  ImGuizmo::SetRect(0, 0, io.DisplaySize.x, io.DisplaySize.y);
+}
+
+Noggit::Ui::Tools::ViewportGizmo::ViewportGizmo::GizmoDelta
+  ViewportGizmo::ViewportGizmo::handleDetachedGizmo( glm::vec3 const& position
+                                                   , glm::mat4x4 const& model_view
+                                                   , glm::mat4x4 const& projection
+                                                   )
+{
+  GizmoDelta result;
+
+  // A caller with nowhere to put a scale must not be handed a scale handle. Substituted rather
+  // than refused so the gizmo stays usable when the shared toolbar happens to be on SCALE -- the
+  // arrows instead of boxes are the visible answer to "why did nothing scale".
+  ImGuizmo::OPERATION const operation
+    ( _gizmo_operation == ImGuizmo::TRANSLATE || _gizmo_operation == ImGuizmo::ROTATE
+        ? _gizmo_operation
+        : ImGuizmo::TRANSLATE
+    );
+
+  // Copied because ImGuizmo takes non-const float*, exactly as handleTransformGizmo does.
+  auto model_view_trs = model_view;
+  auto projection_trs = projection;
+
+  beginGizmoFrame();
+
+  glm::mat4x4 delta_matrix = glm::mat4x4(1.0f);
+  glm::mat4x4 object_matrix = glm::translate(glm::mat4x4(1.f), position);
+
+  ImGuizmo::Manipulate( glm::value_ptr(model_view_trs)
+                      , glm::value_ptr(projection_trs)
+                      , operation
+                      , _gizmo_mode
+                      , glm::value_ptr(object_matrix)
+                      , glm::value_ptr(delta_matrix)
+                      , nullptr
+                      );
+
+  if (!isUsing())
+  {
+    return result;
+  }
+
+  glm::vec3 new_scale;
+  glm::quat new_orientation;
+  glm::vec3 new_translation;
+
+  decomposeGizmoDelta(delta_matrix, new_scale, new_orientation, new_translation);
+
+  result.active = true;
+
+  if (operation == ImGuizmo::TRANSLATE)
+  {
+    result.translation = new_translation;
+  }
+  else
+  {
+    // The same extraction the single-object ROTATE branch performs, kept identical on purpose.
+    auto const rot_euler = glm::degrees(glm::eulerAngles(new_orientation).operator*=(-1.f));
+    result.yaw_degrees = rot_euler.y;
+  }
+
+  return result;
 }
 
 void ViewportGizmo::ViewportGizmo::setCurrentGizmoOperation(ImGuizmo::OPERATION operation)

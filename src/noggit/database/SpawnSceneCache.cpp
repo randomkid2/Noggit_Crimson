@@ -360,6 +360,30 @@ bool SpawnSceneCache::positionOf(SpawnRef const& spawn, glm::vec3& position) con
   return false;
 }
 
+bool SpawnSceneCache::orientationOf(SpawnRef const& spawn, double& orientation) const
+{
+  for (auto const& tile : _tiles)
+  {
+    for (auto const& entry : tile.second.entries)
+    {
+      // Kind as well as guid, for the same reason moveTo and rotateTo match on both: a bare guid
+      // names a row in either table.
+      if (entry.ref() != spawn)
+      {
+        continue;
+      }
+
+      orientation = entry.kind == SpawnKind::CREATURE
+                      ? entry.creature.orientation
+                      : entry.gameobject.orientation;
+
+      return true;
+    }
+  }
+
+  return false;
+}
+
 std::vector<SpawnRef> SpawnSceneCache::refsWithGuid(std::uint32_t guid) const
 {
   std::vector<SpawnRef> matches;

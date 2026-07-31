@@ -5,6 +5,7 @@
 
 #include <QtWidgets/QWidget>
 
+#include <cstddef>
 #include <cstdint>
 
 class MapView;
@@ -14,6 +15,7 @@ class QLabel;
 class QListWidget;
 class QPushButton;
 class QSpinBox;
+class QTimer;
 
 namespace Noggit::Database
 {
@@ -26,6 +28,8 @@ namespace Noggit::Database
 
 namespace Noggit::Ui
 {
+  class SpawnTilePicker;
+
   // The editing surface for TrinityCore world-database spawns.
   //
   // Everything it drives already existed and was proven before this panel was written --
@@ -66,9 +70,48 @@ namespace Noggit::Ui
       void selectSpawn(Noggit::Database::SpawnRef const& spawn);
 
     private:
+      // How many tiles may be loaded in one go.
+      //
+      // The bound exists because the cost of a load is not the query, it is that every resolved
+      // spawn builds a ModelInstance and queues an asynchronous M2 load, and the whole loop runs
+      // synchronously on the GUI thread. Fifty populated tiles is tens of thousands of spawns and
+      // presents as a hang followed by a very large resident set; see the tile status label, which
+      // shows the count against this limit at all times rather than only complaining at the end.
+      //
+      // 64 -- an 8x8 block -- rather than something smaller because the spawn count, not the tile
+      // count, is what actually hurts, and that is guarded separately by the pre-flight estimate.
+      static constexpr std::size_t MAX_SELECTED_TILES = 64;
+
+      // How often the drawable/not-drawable markers are recomputed while the panel is visible.
+      //
+      // They depend on which ADTs are streamed in, and that changes as the camera flies without
+      // anything telling this panel. A marker that says "on screen" about a tile the world unloaded
+      // two seconds ago is the same lie the three-state overlay exists to stop telling, so it is
+      // refreshed on a timer rather than only when the user presses something. The work is 4096
+      // cache probes plus 4096 array lookups -- it is off the render thread and does not rebuild
+      // the list widget.
+      static constexpr int LOAD_STATE_POLL_MS = 1500;
+
       void onLoad(bool all_tiles);
       void onSave();
       void onDiscard();
+
+      // Loads database spawns for exactly the tiles picked on the grid.
+      void onLoadSelectedTiles();
+
+      // Counts spawns per tile for the whole map in two queries, for the picker's overlay.
+      void onScanMapForSpawns();
+
+      // Keeps the tile status label and the load button in step with the grid.
+      void updateTileStatus();
+
+      // Repaints the picker's "currently loaded" markers from the scene cache, splitting them into
+      // drawable and not-drawable, and caches the two counts for the status line.
+      void updateLoadedTileOverlay();
+
+      // How many of the picked tiles the world has NOT streamed in, i.e. how many would load into
+      // the cache and draw nothing. Zero when there is no world.
+      std::size_t pickedTilesNotStreamed() const;
 
       // Applies the spin box to the selection, but only when it actually differs from what the
       // spawn already stores.
@@ -92,6 +135,24 @@ namespace Noggit::Ui
       void onSelectionChanged();
 
       MapView* _map_view;
+
+      // The tile grid. Owns its own selection buffer; see SpawnTilePicker on why it is a second
+      // widget rather than MapView's minimap.
+      SpawnTilePicker* _tile_picker;
+      QLabel* _tile_status;
+      QPushButton* _load_selected;
+      QPushButton* _scan_button;
+
+      // Drives updateLoadedTileOverlay while the panel is visible; see LOAD_STATE_POLL_MS.
+      QTimer* _load_state_poll;
+
+      // Tiles in the spawn cache as of the last updateLoadedTileOverlay, split by whether the
+      // renderer can reach them.
+      //
+      // Cached rather than recomputed in updateTileStatus: both numbers fall out of the walk the
+      // overlay already does, and updateTileStatus runs on every mouse move of a drag-paint.
+      std::size_t _loaded_tiles_drawn = 0;
+      std::size_t _loaded_tiles_not_drawn = 0;
 
       QListWidget* _spawn_list;
       QCheckBox* _move_mode;

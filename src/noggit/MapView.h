@@ -7,6 +7,7 @@
 #include <noggit/Camera.hpp>
 #include <noggit/Selection.h>
 #include <noggit/StringHash.hpp>
+#include <noggit/TileIndex.hpp>
 #include <noggit/tool_enums.hpp>
 #include <noggit/ui/tools/ViewportGizmo/ViewportGizmo.hpp>
 #include <noggit/ui/tools/ViewportManager/ViewportManager.hpp>
@@ -18,6 +19,7 @@
 
 #include <array>
 #include <forward_list>
+#include <vector>
 
 
 class DBCFile;
@@ -198,6 +200,28 @@ public:
   // than silently allowed, because that threshold exists for exactly the case a script hits.
   std::string loadDatabaseSpawns(bool all_loaded_tiles, bool interactive = true, bool force = false);
 
+  // Loads database spawns for an explicit set of ADT tiles, replacing whatever the overlay holds.
+  //
+  // The whole of loadDatabaseSpawns below the tile-set decision, callable with a tile set nobody
+  // derived from the camera: the connection, the schema introspection, the unsaved-changes
+  // warning, the pre-flight COUNT and its threshold, the lazy construction of the scene cache and
+  // -- the one that terminates the process when it is left out -- the makeCurrent() plus
+  // OpenGL::context::scoped_setter around clear() and setTile(). loadDatabaseSpawns is now a thin
+  // wrapper that builds a tile list and calls this, so there is exactly one copy of all of it.
+  //
+  // `tiles` are ::TileIndex, i.e. (x, z) in ADT-filename order, the frame every Noggit caller
+  // already has. The transposition to the database layer's (x, y) happens inside, through
+  // fromAdtFileIndex. Never hand this a Noggit::Database::TileIndex converted by hand.
+  //
+  // Deliberately does NOT require the camera to be over a loaded tile, or those tiles to be
+  // streamed in at all: a spawn overlay is read from the database by coordinate and has no
+  // dependency on ADT geometry being resident. That gate belongs to the camera-relative path only.
+  //
+  // Same `OK `/`ERR ` line and same meaning for `interactive` and `force` as loadDatabaseSpawns.
+  std::string loadDatabaseSpawnsForTiles(std::vector<::TileIndex> const& tiles
+                                        , bool interactive = true
+                                        , bool force = false);
+
   // Emits every moved spawn as a reviewable .sql changeset, and optionally applies it.
   //
   // "Save to database" cannot mean writing to the connected server, and that is a rule rather
@@ -211,6 +235,15 @@ public:
 
 private:
 
+  // The one exit shape the database spawn actions report through.
+  //
+  // A dialog only when a human asked: `interactive` false is the dev bridge, and a script left
+  // waiting on a modal nobody will click is a hang. Either way the same line comes back, prefixed
+  // `OK ` or `ERR `, so the menu, the panel and the bridge cannot describe an outcome differently.
+  std::string reportDatabaseSpawnOutcome(std::string const& message
+                                        , bool is_error
+                                        , bool interactive);
+
   // Built lazily by loadDatabaseSpawns, so a session that never asks pays nothing and a build
   // with no database configured never constructs either. Held by pointer and forward-declared to
   // keep the database headers out of MapView.h.
@@ -218,6 +251,59 @@ private:
 
   // Owned by its dock. Null until the dock is built, which is why every use is guarded.
   Noggit::Ui::DatabaseSpawnPanel* _db_spawn_panel = nullptr;
+
+  // Does the object transform gizmo have something to draw for World's current selection?
+  //
+  // Not `_world->has_selection()`, which is the trap: draw_map calls doSelection(true) on every
+  // frame the selection is empty and _locked_cursor_mode is off, and that stores the MapChunk under
+  // the cursor. One mouse movement over terrain therefore satisfies has_selection() forever, and
+  // nothing clears it per frame -- so anything gated on it is unreachable in normal use while the
+  // object gizmo it was meant to defer to is not drawn at all (handleTransformGizmo returns early
+  // for a lone non-object entry).
+  //
+  // Answered by ViewportGizmo::drawsForSelection rather than re-derived here, so this and the
+  // gizmo cannot disagree about which frames the object gizmo owns.
+  //
+  // Says nothing about _gizmo_on -- it is about the selection. Use gizmoIsDrawn for "is a gizmo
+  // on screen right now".
+  [[nodiscard]]
+  bool objectGizmoHasTarget() const;
+
+  // Is any gizmo -- object or spawn -- actually drawing handles this frame?
+  //
+  // The term every "the gizmo gets this click" guard needs and one of them was missing.
+  // ImGuizmo::IsOver() recomputes hover from gContext.mMVP and mScreenSquareMin/Max, which only
+  // ComputeContext inside Manipulate ever writes. On a frame where no Manipulate runs those are
+  // stale from the last object manipulated, so IsOver() keeps answering true for a screen region
+  // whose gizmo is long gone -- swallowing clicks that land in it. Asking whether a gizmo is drawn
+  // at all is what makes the stale geometry unreachable.
+  [[nodiscard]]
+  bool gizmoIsDrawn() const;
+
+  // The spawn the axis gizmo should be attached to this frame, or an invalid ref for none.
+  //
+  // How the spawn gizmo and the object editor's gizmo are kept apart: this returns nothing while
+  // the object gizmo has a target, so at most one of the two is ever drawn in a frame. They share an
+  // ImGuizmo ID (there is only one gContext and IsUsing() ignores the ID anyway), and mutual
+  // exclusion is what makes that safe -- two gizmos live in the same frame would both respond to
+  // the same drag.
+  //
+  // Returns a value, never a pointer. loadDatabaseSpawns clears the cache and destroys every
+  // SpawnSceneEntry in it, so anything held across frames has to be a SpawnRef.
+  [[nodiscard]]
+  Noggit::Database::SpawnRef spawnGizmoTarget() const;
+
+  // Draws the spawn gizmo and applies one frame of drag through SpawnSceneCache.
+  //
+  // Only valid inside a begun ImGui frame -- see paintGL, which is the only caller.
+  void handleSpawnGizmo(Noggit::Database::SpawnRef const& spawn);
+
+  // Set while a spawn gizmo drag is in progress.
+  //
+  // The panel is rebuilt once on release rather than on every frame of the drag: refresh() clears
+  // and repopulates the QListWidget, which moves the row out from under the cursor and churns the
+  // selection through currentRowChanged sixty times a second.
+  bool _spawn_gizmo_dragging = false;
 
   // Null unless started with NOGGIT_BRIDGE_PORT set. See DevBridge.hpp for why it is gated twice.
   //

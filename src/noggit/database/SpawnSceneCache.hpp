@@ -242,6 +242,19 @@ namespace Noggit::Database
       // wrong -- which is a surprisingly effective way to conclude that nothing rendered.
       bool positionOf(SpawnRef const& spawn, glm::vec3& position) const;
 
+      // Server-frame facing of one loaded spawn, in radians. False when it is not loaded.
+      //
+      // The counterpart of positionOf, and it exists for the same reason. rotateTo takes an
+      // absolute orientation while a gizmo produces a per-frame delta, so the caller has to be
+      // able to read the current value back. The alternative -- a caller accumulating its own
+      // running total across a drag -- drifts away from the row the moment anything else touches
+      // it, and reads the ModelInstance's dir.y instead, which is the display copy and carries
+      // YAW_OFFSET_DEGREES baked in.
+      //
+      // Reads the stored row, not the instance, because the row is the authority: it is what
+      // reaches the changeset.
+      bool orientationOf(SpawnRef const& spawn, double& orientation) const;
+
       // Every loaded spawn carrying this guid, in tile then load order.
       //
       // For the one caller that genuinely starts from a bare number -- the dev bridge, whose

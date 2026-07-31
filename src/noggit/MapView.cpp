@@ -429,7 +429,103 @@ QWidgetAction* MapView::createTextSeparator(const QString& text)
   return separator;
 }
 
+std::string MapView::reportDatabaseSpawnOutcome
+  (std::string const& message, bool is_error, bool interactive)
+{
+  if (interactive)
+  {
+    if (is_error)
+    {
+      QMessageBox::critical(this, "Database spawns", QString::fromStdString(message));
+    }
+    else
+    {
+      QMessageBox::information(this, "Database spawns", QString::fromStdString(message));
+    }
+  }
+
+  return (is_error ? std::string("ERR ") : std::string("OK ")) + message;
+}
+
 std::string MapView::loadDatabaseSpawns(bool all_loaded_tiles, bool interactive, bool force)
+{
+#ifdef USE_MYSQL_UID_STORAGE
+  // Decides a tile set, and nothing else. Everything that loads -- connection, introspection,
+  // unsaved-changes warning, pre-flight COUNT, the OpenGL context guard -- is in
+  // loadDatabaseSpawnsForTiles, which the tile picker calls with a set of its own. Two copies of
+  // that sequence would drift, and the half that drifts is the context guard, whose absence
+  // terminates the process instead of failing.
+  //
+  // The feature check stays here rather than being left to the callee: with the database turned
+  // off, "the tile under the camera is not loaded" is a confusing first thing to be told.
+  if (!Noggit::Database::DatabaseSettings::isEnabled())
+  {
+    return reportDatabaseSpawnOutcome
+      ( "The database feature is not enabled. Turn it on and set the connection details in "
+        "Settings first."
+      , true
+      , interactive
+      );
+  }
+
+  std::vector<::TileIndex> tiles;
+
+  if (all_loaded_tiles)
+  {
+    for (MapTile* tile : _world->mapIndex.loaded_tiles())
+    {
+      if (tile)
+      {
+        tiles.push_back(tile->index);
+      }
+    }
+
+    if (tiles.empty())
+    {
+      return reportDatabaseSpawnOutcome("No tiles are loaded.", true, interactive);
+    }
+  }
+  else
+  {
+    ::TileIndex const current (_camera.position);
+
+    // Only this path needs it, and that is the whole reason the requirement is expressed here: it
+    // reads the camera's tile index, so the camera has to be over a tile. Nothing about querying
+    // spawns by coordinate needs ADT geometry resident, and loadDatabaseSpawnsForTiles imposes no
+    // such gate on the sets it is handed.
+    if (!_world->mapIndex.tileLoaded(current))
+    {
+      return reportDatabaseSpawnOutcome
+        ( "The tile under the camera is not loaded yet. Wait for it to finish streaming, or load "
+          "all loaded tiles instead."
+        , true
+        , interactive
+        );
+    }
+
+    tiles.push_back(current);
+  }
+
+  return loadDatabaseSpawnsForTiles(tiles, interactive, force);
+#else
+  (void)all_loaded_tiles;
+  (void)force;
+
+  if (interactive)
+  {
+    QMessageBox::information
+      ( this
+      , "Database spawns"
+      , "This build has no database support. Reconfigure with -DUSE_SQL=ON."
+      );
+  }
+
+  return "ERR this build has no database support (reconfigure with -DUSE_SQL=ON)";
+#endif
+}
+
+std::string MapView::loadDatabaseSpawnsForTiles
+  (std::vector<::TileIndex> const& tiles, bool interactive, bool force)
 {
 #ifdef USE_MYSQL_UID_STORAGE
   // Above this many spawns the load is worth confirming rather than simply starting. The cost is
@@ -437,30 +533,23 @@ std::string MapView::loadDatabaseSpawns(bool all_loaded_tiles, bool interactive,
   // load, so a dense set of city tiles can queue thousands and present as a hang.
   constexpr std::size_t SPAWN_COUNT_CONFIRM_THRESHOLD = 2000;
 
-  // Every exit reports through here, so the menu and the dev bridge cannot drift into describing
-  // the same outcome differently. A dialog is shown only when a human asked; a script driving this
-  // over the bridge must never be left waiting on a modal nobody will click.
+  // Every exit reports through here, so the menu, the panel and the dev bridge cannot drift into
+  // describing the same outcome differently. A dialog is shown only when a human asked; a script
+  // driving this over the bridge must never be left waiting on a modal nobody will click.
   auto const report = [this, interactive] (std::string const& message, bool is_error)
   {
-    if (interactive)
-    {
-      if (is_error)
-      {
-        QMessageBox::critical(this, "Database spawns", QString::fromStdString(message));
-      }
-      else
-      {
-        QMessageBox::information(this, "Database spawns", QString::fromStdString(message));
-      }
-    }
-
-    return (is_error ? std::string("ERR ") : std::string("OK ")) + message;
+    return reportDatabaseSpawnOutcome(message, is_error, interactive);
   };
 
   if (!Noggit::Database::DatabaseSettings::isEnabled())
   {
     return report("The database feature is not enabled. Turn it on and set the connection "
                   "details in Settings first.", true);
+  }
+
+  if (tiles.empty())
+  {
+    return report("No tiles were given to load.", true);
   }
 
   // Loading rebuilds the scene from scratch, which throws away every unsaved move and rotation.
@@ -515,14 +604,12 @@ std::string MapView::loadDatabaseSpawns(bool all_loaded_tiles, bool interactive,
 
     auto const map_id (static_cast<std::uint16_t>(_world->getMapID()));
 
-    // Decide the tile set BEFORE touching the cache, so a cancelled confirmation leaves the
-    // existing overlay exactly as it was rather than cleared.
+    // The frame change, in one place, BEFORE the cache is touched -- so a cancelled confirmation
+    // leaves the existing overlay exactly as it was rather than cleared.
     //
     // fromAdtFileIndex, never field-by-field. Noggit's index is (x, z) in ADT filename order and
     // the database layer's is transposed; assigning one to the other reads a tile about 9.6 km
     // from the one on screen, with no error to show for it.
-    std::vector<Noggit::Database::TileIndex> targets;
-
     auto const to_db_tile = [] (::TileIndex const& adt)
     {
       return Noggit::Database::fromAdtFileIndex
@@ -531,76 +618,56 @@ std::string MapView::loadDatabaseSpawns(bool all_loaded_tiles, bool interactive,
         );
     };
 
-    if (all_loaded_tiles)
-    {
-      for (MapTile* tile : _world->mapIndex.loaded_tiles())
-      {
-        if (tile)
-        {
-          targets.push_back(to_db_tile(tile->index));
-        }
-      }
-    }
-    else
-    {
-      ::TileIndex const current (_camera.position);
+    std::vector<Noggit::Database::TileIndex> targets;
+    targets.reserve(tiles.size());
 
-      if (!_world->mapIndex.tileLoaded(current))
-      {
-        return report("The tile under the camera is not loaded yet. Wait for it to finish "
-                      "streaming, or load all loaded tiles instead.", true);
-      }
-
-      targets.push_back(to_db_tile(current));
+    for (auto const& adt_tile : tiles)
+    {
+      targets.push_back(to_db_tile(adt_tile));
     }
 
-    if (targets.empty())
+    // Pre-flight count, for every tile set rather than only a multi-tile one. What the threshold
+    // is about is how many ModelInstances are about to queue an asynchronous model load, which
+    // does not depend on how the tile list was chosen -- and one dense city tile can exceed it on
+    // its own. Two COUNT queries per tile with no joins and no rows fetched, which is cheap next
+    // to the load it is describing.
+    std::size_t expected = 0;
+
+    for (auto const& tile : targets)
     {
-      return report("No tiles are loaded.", true);
+      expected += Noggit::Database::SpawnQuery::countTile(connection, schema, map_id, tile);
     }
 
-    // Pre-flight count, for the multi-tile path only. Two COUNT queries per tile with no joins
-    // and no rows fetched, which is cheap next to the load it is describing.
-    if (all_loaded_tiles)
+    if (expected > SPAWN_COUNT_CONFIRM_THRESHOLD && !force)
     {
-      std::size_t expected = 0;
-
-      for (auto const& tile : targets)
+      if (!interactive)
       {
-        expected += Noggit::Database::SpawnQuery::countTile(connection, schema, map_id, tile);
+        // Refused rather than silently loaded. A script asking for a large tile set against a
+        // populated world database is exactly the case this threshold exists for, and it has no
+        // human to warn -- so it has to say no and explain how to insist.
+        return report(std::to_string(expected) + " spawns across " + std::to_string(targets.size())
+                      + " tile(s) exceeds the confirmation threshold. Repeat with force to load "
+                        "them anyway.", true);
       }
 
-      if (expected > SPAWN_COUNT_CONFIRM_THRESHOLD && !force)
+      auto const answer
+        ( QMessageBox::question
+          ( this
+          , "Database spawns"
+          , QString("%1 spawns across %2 tile(s).\n\nEach one queues a model load, so "
+                    "this may take a while and use a lot of memory. Continue?")
+              .arg(expected).arg(targets.size())
+          , QMessageBox::Yes | QMessageBox::No
+          , QMessageBox::No
+          )
+        );
+
+      if (answer != QMessageBox::Yes)
       {
-        if (!interactive)
-        {
-          // Refused rather than silently loaded. A script asking for "all tiles" against a
-          // populated world database is exactly the case this threshold exists for, and it has no
-          // human to warn -- so it has to say no and explain how to insist.
-          return report(std::to_string(expected) + " spawns across " + std::to_string(targets.size())
-                        + " tile(s) exceeds the confirmation threshold. Repeat with force to load "
-                          "them anyway.", true);
-        }
+        Log << "Database spawn load cancelled by the user: " << expected << " spawn(s) across "
+            << targets.size() << " tile(s)." << std::endl;
 
-        auto const answer
-          ( QMessageBox::question
-            ( this
-            , "Database spawns"
-            , QString("%1 spawns across %2 loaded tile(s).\n\nEach one queues a model load, so "
-                      "this may take a while and use a lot of memory. Continue?")
-                .arg(expected).arg(targets.size())
-            , QMessageBox::Yes | QMessageBox::No
-            , QMessageBox::No
-            )
-          );
-
-        if (answer != QMessageBox::Yes)
-        {
-          Log << "Database spawn load cancelled by the user: " << expected << " spawn(s) across "
-              << targets.size() << " tile(s)." << std::endl;
-
-          return "OK cancelled";
-        }
+        return "OK cancelled";
       }
     }
 
@@ -642,10 +709,11 @@ std::string MapView::loadDatabaseSpawns(bool all_loaded_tiles, bool interactive,
     // Turned on for the user: having loaded spawns on request and then not shown them would read
     // as the load having failed.
     _draw_db_spawns.set(true);
+    markSpawnOverlayDirty();
 
     std::string const summary (_db_spawn_scene->summary());
     Log << "Database spawns loaded from schema \"" << connection.schema() << "\" over "
-        << tiles_read << " loaded tile(s): " << summary << std::endl;
+        << tiles_read << " tile(s): " << summary << std::endl;
 
     _main_window->statusBar()->showMessage
       (QString::fromStdString("Database spawns: " + summary), 5000);
@@ -661,7 +729,7 @@ std::string MapView::loadDatabaseSpawns(bool all_loaded_tiles, bool interactive,
     return report(std::string("Could not load spawns. ") + e.what(), true);
   }
 #else
-  (void)all_loaded_tiles;
+  (void)tiles;
   (void)force;
 
   if (interactive)
@@ -904,6 +972,125 @@ bool MapView::focusOnSpawn(Noggit::Database::SpawnRef const& spawn, float distan
   _needs_redraw = true;
 
   return true;
+}
+
+bool MapView::objectGizmoHasTarget() const
+{
+  return Noggit::Ui::Tools::ViewportGizmo::ViewportGizmo::drawsForSelection
+    (_world->current_selection());
+}
+
+bool MapView::gizmoIsDrawn() const
+{
+  if (!_gizmo_on.get())
+  {
+    return false;
+  }
+
+  // The two branches of the gizmo block in paintGL, in the same order and on the same conditions.
+  // spawnGizmoTarget() already yields to objectGizmoHasTarget(), so this is not "either could
+  // draw" -- it is "one of them does".
+  return objectGizmoHasTarget() || spawnGizmoTarget().valid();
+}
+
+Noggit::Database::SpawnRef MapView::spawnGizmoTarget() const
+{
+  // Same three preconditions the shift-click pick uses (MapView::mousePressEvent), so the gizmo
+  // cannot appear for someone who has the overlay off or the panel closed.
+  if (!_db_spawn_scene || !_db_spawn_panel || !_draw_db_spawns.get())
+  {
+    return {};
+  }
+
+  // The object editor wins when it has a target. Only one gizmo is ever drawn, which is what keeps
+  // the two from fighting over a drag -- see the note on this declaration.
+  //
+  // Not has_selection(): draw_map auto-selects the chunk under the cursor every frame the selection
+  // is empty, so has_selection() is permanently true after one mouse movement over terrain and this
+  // returned nothing except when the camera was pointed at the sky. A chunk is not a competing
+  // gizmo target, and objectGizmoHasTarget() is the object gizmo's own answer to that.
+  if (objectGizmoHasTarget())
+  {
+    return {};
+  }
+
+  Noggit::Database::SpawnRef const selected (_db_spawn_scene->selected());
+
+  if (!selected.valid())
+  {
+    return {};
+  }
+
+  // Loaded-ness is checked here rather than trusted, because setSelected takes any ref and a
+  // reload empties the cache without clearing it. positionOf is the cheapest question that
+  // answers "is this still there", and it is the same value the gizmo is about to be drawn at.
+  glm::vec3 position (0.0f, 0.0f, 0.0f);
+
+  return _db_spawn_scene->positionOf(selected, position) ? selected : Noggit::Database::SpawnRef{};
+}
+
+void MapView::handleSpawnGizmo(Noggit::Database::SpawnRef const& spawn)
+{
+  glm::vec3 position (0.0f, 0.0f, 0.0f);
+
+  if (!_db_spawn_scene || !_db_spawn_scene->positionOf(spawn, position))
+  {
+    return;
+  }
+
+  _transform_gizmo.setCurrentGizmoOperation(_gizmo_operation);
+  _transform_gizmo.setCurrentGizmoMode(_gizmo_mode);
+
+  auto const delta
+    (_transform_gizmo.handleDetachedGizmo(position, _model_view, _projection));
+
+  if (!delta.active)
+  {
+    return;
+  }
+
+  _spawn_gizmo_dragging = true;
+
+  bool changed = false;
+
+  if (_gizmo_operation == ImGuizmo::ROTATE)
+  {
+    if (delta.yaw_degrees != 0.0f)
+    {
+      // dir.y = degrees(orientation) + YAW_OFFSET_DEGREES (SpawnPlacement.hpp:84), so the offset
+      // cancels in a difference and a Noggit yaw delta is a server orientation delta of the same
+      // sign and magnitude. Only the delta is derived here; every absolute conversion still goes
+      // through SpawnPlacement, inside rotateTo.
+      double current = 0.0;
+
+      if (_db_spawn_scene->orientationOf(spawn, current))
+      {
+        // rotateTo, never the instance's dir directly: for a gameobject it also rewrites
+        // rotation0..3, and the core reads `orientation` while the client renders the quaternion.
+        // Writing one without the other produces a spawn that faces differently in game than here.
+        changed = _db_spawn_scene->rotateTo
+          (spawn, current + glm::radians(static_cast<double>(delta.yaw_degrees)));
+      }
+    }
+  }
+  else
+  {
+    if (delta.translation.x != 0.0f || delta.translation.y != 0.0f || delta.translation.z != 0.0f)
+    {
+      // The gizmo reports a delta; moveTo takes an absolute. Added to the position just read back
+      // rather than to a running total kept here, so nothing accumulates rounding across a drag.
+      // moveTo converts to server coordinates through SpawnPlacement::serverPositionFor and marks
+      // the entry dirty, which is what puts it in the changeset.
+      changed = _db_spawn_scene->moveTo(spawn, position + delta.translation);
+    }
+  }
+
+  if (changed)
+  {
+    // Not _db_spawn_panel->refresh() here: that rebuilds the list widget, and doing it every frame
+    // of a drag churns the selection. It happens once, on release, in mouseReleaseEvent.
+    _needs_redraw = true;
+  }
 }
 
 std::map<std::string, std::size_t> MapView::terrainTexturesInScope(bool all_loaded_tiles) const
@@ -1498,6 +1685,75 @@ std::string MapView::handleBridgeCommand(std::string const& line)
 
     return "OK triggered \"" + QString(matches[0]->text()).remove(QLatin1Char('&')).toStdString()
          + "\"";
+  }
+
+  // Round-trips a vertex-colour edit on a chunk that has no MCCV block and reports the two flags
+  // at each step. It exists because the defect it checks for is INVISIBLE: a chunk with no MCCV
+  // block already reads as neutral white, so restoring the colour array on undo is a no-op and
+  // the picture looks correct while has_mccv stays set -- and MapChunk::save then writes an MCCV
+  // block into an ADT that never had one. Nothing on screen can tell you whether this works.
+  //
+  // Leaves the world as it found it: the edit is undone before returning, and the last line of
+  // the reply is the state the chunk is actually left in.
+  if (command == "mccvcheck")
+  {
+    ::TileIndex const tile (_camera.position);
+
+    if (!_world->mapIndex.tileLoaded(tile))
+    {
+      return "ERR camera tile is not loaded";
+    }
+
+    MapTile* map_tile (_world->mapIndex.getTile(tile));
+    MapChunk* victim (nullptr);
+
+    for (unsigned int z (0); z < 16 && !victim; ++z)
+    {
+      for (unsigned int x (0); x < 16; ++x)
+      {
+        MapChunk* chunk (map_tile->getChunk(x, z));
+
+        if (chunk && !chunk->hasColors())
+        {
+          victim = chunk;
+          break;
+        }
+      }
+    }
+
+    if (!victim)
+    {
+      return "ERR every chunk in this tile already has vertex colours; "
+             "the defect only shows on a chunk that has none";
+    }
+
+    auto const state = [victim] (char const* label)
+    {
+      return std::string(label) + "=runtime:"
+           + (victim->hasColors() ? "1" : "0") + ",header:"
+           + (victim->header_flags.flags.has_mccv ? "1" : "0");
+    };
+
+    std::ostringstream out;
+    out << "OK " << state("before");
+
+    NOGGIT_ACTION_MGR->beginAction(this, Noggit::ActionFlags::eCHUNKS_VERTEX_COLOR);
+    NOGGIT_CUR_ACTION->registerChunkVertexColorChange(victim);
+    victim->initMCCV();
+    NOGGIT_ACTION_MGR->endAction();
+
+    out << ' ' << state("after_edit");
+
+    NOGGIT_ACTION_MGR->undo();
+    out << ' ' << state("after_undo");
+
+    NOGGIT_ACTION_MGR->redo();
+    out << ' ' << state("after_redo");
+
+    NOGGIT_ACTION_MGR->undo();
+    out << ' ' << state("left_as");
+
+    return out.str();
   }
 
   if (command == "help")
@@ -4302,7 +4558,23 @@ void MapView::paintGL()
 
   _last_update = now;
 
-  if (_gizmo_on.get() && _world->has_selection())
+  // Two mutually exclusive gizmo consumers, never both in one frame.
+  //
+  // The object editor keeps precedence and its branch below is unchanged. The spawn branch exists
+  // because a database spawn is not in _world->current_selection() -- it is not a SceneObject in
+  // the ADT scene graph at all -- so under the original condition no ImGui frame was begun when
+  // only a spawn was selected, and anything drawn would have gone nowhere.
+  //
+  // spawnGizmoTarget() already returns nothing while the object gizmo has a target; the explicit
+  // split here is what guarantees the object path is entered on exactly the frames
+  // handleTransformGizmo would have drawn on -- objectGizmoHasTarget() is that function's own
+  // early-return condition, not a second opinion about it.
+  Noggit::Database::SpawnRef const gizmo_spawn (spawnGizmoTarget());
+
+  bool const object_gizmo_frame = _gizmo_on.get() && objectGizmoHasTarget();
+  bool const spawn_gizmo_frame = _gizmo_on.get() && !object_gizmo_frame && gizmo_spawn.valid();
+
+  if (object_gizmo_frame || spawn_gizmo_frame)
   {
     ImGui::SetCurrentContext(_imgui_context);
     QtImGui::newFrame();
@@ -4313,6 +4585,8 @@ void MapView::paintGL()
     ImGui::Begin("Gizmo", &is_open, ImGuiWindowFlags_::ImGuiWindowFlags_NoTitleBar
                                                 | ImGuiWindowFlags_::ImGuiWindowFlags_NoBackground);
 
+    if (object_gizmo_frame)
+    {
     // auto mv = model_view();
     // auto proj = projection();
 
@@ -4328,7 +4602,15 @@ void MapView::paintGL()
     _transform_gizmo.handleTransformGizmo(this, _world->current_selection(), _model_view, _projection);
 
     // _world->update_selection_pivot();
+    // Left inside the object branch on purpose. Tools that draw their own ImGuizmo -- AreaTriggerTool
+    // is the one that does -- have only ever run on frames where World had a selection, and letting
+    // them run on a spawn-only frame would put a second gizmo in it.
     activeTool()->renderImGui(_gizmo_mode, _gizmo_operation);
+    }
+    else
+    {
+      handleSpawnGizmo(gizmo_spawn);
+    }
 
     ImGui::End();
 
@@ -4847,7 +5129,11 @@ selection_result MapView::intersect_result(bool terrain_only)
 
 void MapView::doSelection (bool selectTerrainOnly, bool mouseMove)
 {
-  if (_world->get_selected_model_count() && _gizmo_on.get() && (_transform_gizmo.isUsing() || _transform_gizmo.isOver()))
+  // Clicking a gizmo handle must not also be a selection click. gizmoIsDrawn() covers both the
+  // object gizmo and the spawn gizmo -- get_selected_model_count() is 0 when only a database spawn
+  // is selected -- and, being false when no gizmo is on screen, is also what stops a stale
+  // ImGuizmo::IsOver() from blocking selection in the region a dismissed gizmo used to occupy.
+  if (gizmoIsDrawn() && (_transform_gizmo.isUsing() || _transform_gizmo.isOver()))
     return;
 
   selection_result results(intersect_result(selectTerrainOnly));
@@ -5478,8 +5764,21 @@ void MapView::mousePressEvent(QMouseEvent* event)
   // Only when the overlay is on and the spawn panel is open, so this cannot steal clicks from
   // anyone not using it. Shift is the modifier because a plain click still has to reach the
   // terrain tools -- selecting a creature must not stop you painting the ground under it.
+  // The gizmo gets the click first when the cursor is on a handle. Without this a shift-click that
+  // starts a drag also re-picks whatever is behind the handle, and the drag ends up moving a
+  // different spawn than the one that was grabbed. Same guard as doSelection, including the term
+  // this originally lacked: gizmoIsDrawn().
+  //
+  // Without it the guard was true whenever the cursor happened to fall in the screen rectangle of
+  // the last gizmo that was manipulated, because IsOver() answers from geometry only Manipulate
+  // refreshes and nothing invalidates when the gizmo stops being drawn. That silently swallowed
+  // both the spawn pick below and the move-mode placement after it -- the click reached neither
+  // branch nor a visible gizmo, and fell through to the active tool.
+  bool const gizmo_has_the_click
+    (gizmoIsDrawn() && (_transform_gizmo.isUsing() || _transform_gizmo.isOver()));
+
   if (event->button() == Qt::LeftButton && _mod_shift_down && _db_spawn_scene
-   && _db_spawn_panel && _draw_db_spawns.get())
+   && _db_spawn_panel && _draw_db_spawns.get() && !gizmo_has_the_click)
   {
     Noggit::Database::SpawnRef const picked (pickDatabaseSpawn());
 
@@ -5498,7 +5797,8 @@ void MapView::mousePressEvent(QMouseEvent* event)
   // also act on the same click -- raising ground where the user meant to put a creature. Move
   // mode is off by default and is a deliberate toggle, so this cannot surprise anyone who is not
   // using it.
-  if (event->button() == Qt::LeftButton && _db_spawn_panel && _db_spawn_panel->moveMode())
+  if (event->button() == Qt::LeftButton && _db_spawn_panel && _db_spawn_panel->moveMode()
+   && !gizmo_has_the_click)
   {
     Noggit::Database::SpawnRef const spawn (_db_spawn_panel->selectedSpawn());
 
@@ -5592,6 +5892,24 @@ void MapView::mouseReleaseEvent (QMouseEvent* event)
       .mouse_position = event->pos(),
       .mod_ctrl_down = _mod_ctrl_down,
   });
+
+  // End of a spawn gizmo drag: rebuild the panel once, now that the cursor is no longer on a row.
+  //
+  // Done here rather than in the frame that applied the move because refresh() clears and
+  // repopulates the QListWidget and drives currentRowChanged through it; running that sixty times
+  // a second scrolls the list out from under the pointer. Deferring it also means the "* " dirty
+  // marker and the facing spin box are updated exactly once per drag.
+  if (event->button() == Qt::LeftButton && _spawn_gizmo_dragging)
+  {
+    _spawn_gizmo_dragging = false;
+
+    if (_db_spawn_panel)
+    {
+      _db_spawn_panel->refresh();
+    }
+
+    _needs_redraw = true;
+  }
 
   switch (event->button())
   {
