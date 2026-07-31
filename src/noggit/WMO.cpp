@@ -13,11 +13,238 @@
 #include <noggit/wmo_liquid.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <iomanip>
 #include <map>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
+
+namespace
+{
+  // Only WotLK root/group files are supported. Anything else is rejected, not
+  // adapted: see the comment on the parse helpers below.
+  constexpr std::uint32_t WMO_VERSION_WOTLK = 17;
+
+  // Derived from getSize()/getPos() rather than calling a helper on ClientFile, deliberately.
+  // ClientFile lives in the blizzard-archive-library SUBMODULE, which points at a third-party
+  // upstream this project cannot push to. Adding a method there would compile locally and then
+  // fail for everyone who clones, because their submodule checkout would not have it. Both
+  // accessors used here are long-standing public API.
+  //
+  // Clamped rather than allowed to wrap: seek() accepts a past-end offset, so getPos() can exceed
+  // getSize(), and an unsigned subtraction there would produce an enormous "remaining" that makes
+  // every size check below pass.
+  std::size_t bytesLeft(BlizzardArchive::ClientFile const& f)
+  {
+    std::size_t const size (f.getSize());
+    std::size_t const pos (f.getPos());
+
+    return pos >= size ? 0 : size - pos;
+  }
+
+  // WMO parsing here is a fixed chunk *sequence*, not a fourcc-driven dispatch.
+  // The offset of every chunk depends on the previous one being exactly the
+  // chunk we expected and exactly as long as it claims, so a file from a later
+  // expansion -- which adds, removes and reorders chunks -- desynchronises the
+  // whole parse. Sizes are then read from the wrong offsets and fed straight to
+  // resize() and to pointers aliased over the file buffer.
+  //
+  // Upstream guarded all of this with assert() only, and NDEBUG is defined in
+  // the RelWithDebInfo configuration this project ships, so in the built binary
+  // those guards did not exist at all. The helpers below turn the same
+  // expectations into real runtime checks and report failure exactly the way
+  // Model::finishLoading() already does (Model.cpp:64-69): log with the file
+  // name and the reason, then throw. AsyncLoader::process() catches it
+  // (AsyncLoader.cpp:108-121) and marks the object failed, so the user gets a
+  // listed-but-unloadable entry instead of an out-of-bounds read.
+
+  std::string fourccToString(std::uint32_t fourcc)
+  {
+    // fourccs are compared against multi-character literals, which put the
+    // first character of the on-disk magic in the high byte. Print them back in
+    // that order. A desynchronised parse hands us arbitrary bytes, so anything
+    // unprintable is substituted rather than dumped into the log.
+    std::string out;
+
+    for (int shift : {24, 16, 8, 0})
+    {
+      char const c (static_cast<char>((fourcc >> shift) & 0xFF));
+      out += (c >= 0x20 && c < 0x7F) ? c : '?';
+    }
+
+    return out;
+  }
+
+  [[noreturn]] void throwWmoParseError(std::string const& filename, std::string const& reason)
+  {
+    LogError << "Error loading WMO \"" << filename << "\". " << reason << std::endl;
+    throw std::runtime_error("Error loading WMO \"" + filename + "\". " + reason);
+  }
+
+  // Reads the 8 byte header of a chunk the sequence requires to be here, checks
+  // it is that chunk, and checks its declared payload actually fits in what is
+  // left of the file. Returns the payload size.
+  std::uint32_t readChunkHeader( BlizzardArchive::ClientFile& f
+                               , std::string const& filename
+                               , std::uint32_t expected
+                               )
+  {
+    std::size_t const chunk_start (f.getPos());
+
+    std::uint32_t fourcc (0);
+    std::uint32_t size (0);
+
+    if (f.read(&fourcc, 4) != 4 || f.read(&size, 4) != 4)
+    {
+      throwWmoParseError ( filename
+                         , "File ends before the " + fourccToString(expected)
+                           + " chunk header expected at offset " + std::to_string(chunk_start) + "."
+                         );
+    }
+
+    if (fourcc != expected)
+    {
+      throwWmoParseError ( filename
+                         , "Expected chunk " + fourccToString(expected) + " at offset "
+                           + std::to_string(chunk_start) + " but found " + fourccToString(fourcc)
+                           + ". The file is corrupt, or it is not a WotLK (v17) WMO."
+                         );
+    }
+
+    // A chunk claiming more bytes than the file holds means the parse has
+    // desynchronised or the file is truncated. Either way every offset from
+    // here on is meaningless and the payload must not be aliased.
+    if (size > bytesLeft(f))
+    {
+      throwWmoParseError ( filename
+                         , "Chunk " + fourccToString(expected) + " at offset "
+                           + std::to_string(chunk_start) + " claims " + std::to_string(size)
+                           + " bytes but only " + std::to_string(bytesLeft(f))
+                           + " remain in the file."
+                         );
+    }
+
+    return size;
+  }
+
+  // The group file's trailing chunks are gated on group header flags rather
+  // than always being present, and upstream deliberately tolerates a missing
+  // one by rewinding the 8 header bytes and trying the next flag. That
+  // tolerance is kept. A chunk that *is* present but claims more bytes than the
+  // file holds is unambiguously corrupt, and aliasing its payload is exactly
+  // the out-of-bounds read being removed here, so that still hard-fails.
+  bool readOptionalChunkHeader( BlizzardArchive::ClientFile& f
+                              , std::string const& filename
+                              , std::uint32_t expected
+                              , std::uint32_t* size
+                              )
+  {
+    std::size_t const chunk_start (f.getPos());
+
+    std::uint32_t fourcc (0);
+    *size = 0;
+
+    if (f.read(&fourcc, 4) != 4 || f.read(size, 4) != 4 || fourcc != expected)
+    {
+      LogError << "Broken header in WMO \"" << filename << "\": expected optional chunk "
+               << fourccToString(expected) << " at offset " << chunk_start
+               << ". Trying to continue reading." << std::endl;
+
+      // Rewind to the saved position rather than getPos() - 8: after a short
+      // read getPos() stops at the end of the buffer, so the old arithmetic
+      // would have landed somewhere else entirely.
+      f.seek(chunk_start);
+      *size = 0;
+      return false;
+    }
+
+    if (*size > bytesLeft(f))
+    {
+      throwWmoParseError ( filename
+                         , "Chunk " + fourccToString(expected) + " at offset "
+                           + std::to_string(chunk_start) + " claims " + std::to_string(*size)
+                           + " bytes but only " + std::to_string(bytesLeft(f))
+                           + " remain in the file."
+                         );
+    }
+
+    return true;
+  }
+
+  // MVER is the first chunk of both the root and every group file. Rejecting a
+  // non-v17 file here is the point of the exercise: later expansion formats are
+  // not supported and must not be parsed on a best-effort basis.
+  void checkWmoVersion(BlizzardArchive::ClientFile& f, std::string const& filename)
+  {
+    readChunkHeader(f, filename, 'MVER');
+
+    std::uint32_t version (0);
+
+    if (f.read(&version, 4) != 4)
+    {
+      throwWmoParseError(filename, "File ends inside the MVER chunk.");
+    }
+
+    if (version != WMO_VERSION_WOTLK)
+    {
+      throwWmoParseError ( filename
+                         , "Wrong WMO version " + std::to_string(version) + ", expected "
+                           + std::to_string(WMO_VERSION_WOTLK)
+                           + " (WotLK 3.3.5a). WMOs from other expansions are not supported."
+                         );
+    }
+  }
+
+  // Every array chunk in a group file is read as `size` raw bytes into a vector
+  // that was sized `size / sizeof(element)`. Integer division truncates, so a
+  // payload that is not a whole number of elements makes that read write
+  // `size % sizeof(element)` bytes past the end of the vector's storage -- e.g.
+  // a MONR of 13 bytes resizes to one 12 byte normal and then reads 13. The
+  // element size is not a free parameter of the format (MOVI is uint16 indices,
+  // MOVT and MONR are 12 byte vectors, MOBA is a 24 byte batch record), so a
+  // remainder means the chunk is malformed and every offset after it is
+  // suspect. Reject rather than truncate, for the same reason readChunkHeader
+  // rejects an oversized chunk.
+  std::uint32_t elementCount( std::string const& filename
+                            , std::uint32_t fourcc
+                            , std::uint32_t size
+                            , std::size_t element_size
+                            )
+  {
+    if (size % element_size)
+    {
+      throwWmoParseError ( filename
+                         , "Chunk " + fourccToString(fourcc) + " is " + std::to_string(size)
+                           + " bytes, which is not a whole number of "
+                           + std::to_string(element_size) + " byte elements."
+                         );
+    }
+
+    return size / static_cast<std::uint32_t>(element_size);
+  }
+
+  // Reads a chunk payload that is a run of NUL terminated strings into a buffer
+  // with a guaranteed terminator, so that an offset taken from elsewhere in the
+  // file can be bounds checked before being turned into a std::string. Aliasing
+  // the file buffer directly (what upstream did) cannot be made safe: there is
+  // no guarantee the last byte of the chunk is a NUL.
+  std::vector<char> readStringBlock(BlizzardArchive::ClientFile& f, std::uint32_t size)
+  {
+    std::vector<char> block (static_cast<std::size_t>(size) + 1, '\0');
+    f.read(block.data(), size);
+    return block;
+  }
+
+  // Offsets into a string block come from unrelated chunks, so they have to be
+  // range checked before use. The trailing NUL added by readStringBlock() is
+  // not a valid start offset, hence the strict comparison against size() - 1.
+  bool stringBlockOffsetValid(std::vector<char> const& block, std::size_t offset)
+  {
+    return block.size() > 1 && offset < block.size() - 1;
+  }
+}
 
 
 WMO::WMO(BlizzardArchive::Listfile::FileKey const& file_key, Noggit::NoggitRenderContext context)
@@ -33,36 +260,34 @@ WMO::~WMO()
 
 void WMO::finishLoading ()
 {
-  BlizzardArchive::ClientFile f(_file_key.filepath(), Noggit::Application::NoggitApplication::instance()->clientData());
+  std::string const fname (_file_key.filepath());
+
+  BlizzardArchive::ClientFile f(fname, Noggit::Application::NoggitApplication::instance()->clientData());
   if (f.isEof()) {
-    LogError << "Error loading WMO \"" << _file_key.stringRepr() << "\"." << std::endl;
-    return;
+    // Throw rather than return: returning left `finished` false forever, so
+    // every wait_until_loaded() on this WMO blocked instead of seeing a failure.
+    throwWmoParseError(fname, "The file is empty or could not be read.");
   }
 
-  uint32_t fourcc;
   uint32_t size;
 
   float ff[3];
 
-  char const* ddnames = nullptr;
-  char const* groupnames = nullptr;
-
   // - MVER ----------------------------------------------
 
-  uint32_t version;
-
-  f.read (&fourcc, 4);
-  f.seekRelative (4);
-  f.read (&version, 4);
-
-  assert (fourcc == 'MVER' && version == 17);
+  checkWmoVersion(f, fname);
 
   // - MOHD ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.seekRelative (4);
+  uint32_t const mohd_size (readChunkHeader(f, fname, 'MOHD'));
 
-  assert (fourcc == 'MOHD');
+  // The fields below are read one by one and total 0x40 bytes regardless of
+  // what MOHD declares, so the declared size has to cover them.
+  if (mohd_size < 0x40)
+  {
+    throwWmoParseError(fname, "MOHD chunk is only " + std::to_string(mohd_size)
+                              + " bytes, expected at least 64.");
+  }
 
   CArgb ambient_color;
   unsigned int nTextures, nGroups, nP, nLights, nModels, nDoodads, nDoodadSets;
@@ -91,20 +316,15 @@ void WMO::finishLoading ()
 
   // - MOTX ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
+  size = readChunkHeader(f, fname, 'MOTX');
 
-  assert (fourcc == 'MOTX');
-
-  std::vector<char> texbuf (size);
-  f.read (texbuf.data(), texbuf.size());
+  // Texture names are addressed by byte offset from MOMT, so the block needs a
+  // guaranteed terminator and the offsets need range checking (see below).
+  std::vector<char> const texbuf (readStringBlock(f, size));
 
   // - MOMT ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
-
-  assert (fourcc == 'MOMT');
+  size = readChunkHeader(f, fname, 'MOMT');
 
   std::size_t const num_materials (size / 0x40);
   materials.resize (num_materials);
@@ -116,8 +336,15 @@ void WMO::finishLoading ()
   auto load_texture
     ( [&] (std::uint32_t ofs)
       {
+        // The offset comes from the material, not from MOTX, so it can point
+        // anywhere. Out of range is treated like the empty-name case upstream
+        // already handled, rather than being fatal: a single bad material
+        // reference does not mean the chunk sequence has desynchronised.
         char const* texture
-          (texbuf[ofs] ? &texbuf[ofs] : "textures/shanecube.blp");
+          ( stringBlockOffsetValid(texbuf, ofs) && texbuf[ofs]
+            ? &texbuf[ofs]
+            : "textures/shanecube.blp"
+          );
 
         auto const mapping
           (texture_offset_to_inmem_index.emplace(ofs, static_cast<std::uint32_t>(textures.size())));
@@ -146,21 +373,23 @@ void WMO::finishLoading ()
 
   // - MOGN ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
+  size = readChunkHeader(f, fname, 'MOGN');
 
-  assert (fourcc == 'MOGN');
-
-  groupnames = reinterpret_cast<char const*> (f.getPointer ());
-
-  f.seekRelative (size);
+  // Copied out rather than aliased: WMOGroup's name offset is not guaranteed to
+  // land on a NUL terminated string inside the chunk.
+  std::vector<char> const groupnames (readStringBlock(f, size));
 
   // - MOGI ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
+  size = readChunkHeader(f, fname, 'MOGI');
 
-  assert (fourcc == 'MOGI');
+  // Each MOGI entry is 0x20 bytes and the count comes from MOHD, so a group
+  // count that outruns the chunk means the two disagree - read no further.
+  if (static_cast<std::size_t>(nGroups) * 0x20 > size)
+  {
+    throwWmoParseError(fname, "MOHD declares " + std::to_string(nGroups)
+                              + " groups but MOGI only holds " + std::to_string(size / 0x20) + ".");
+  }
 
   groups.reserve(nGroups);
   for (unsigned int i (0); i < nGroups; ++i) {
@@ -169,14 +398,15 @@ void WMO::finishLoading ()
 
   // - MOSB ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
+  size = readChunkHeader(f, fname, 'MOSB');
 
-  assert (fourcc == 'MOSB');
+  // Read (not aliased) for the same terminator reason as MOGN; this also
+  // advances past the chunk, which the trailing seekRelative used to do.
+  std::vector<char> const skybox_name (readStringBlock(f, size));
 
   if (size > 4)
   {
-    std::string path = BlizzardArchive::ClientData::normalizeFilenameInternal(std::string (reinterpret_cast<char const*>(f.getPointer ())));
+    std::string path = BlizzardArchive::ClientData::normalizeFilenameInternal(std::string (skybox_name.data()));
     auto from = std::string("mdx");
     auto to = std::string("m2");
     size_t start_pos = 0;
@@ -194,14 +424,9 @@ void WMO::finishLoading ()
     }
   }
 
-  f.seekRelative (size);
-
   // - MOPV ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read(&size, 4);
-
-  assert (fourcc == 'MOPV');
+  size = readChunkHeader(f, fname, 'MOPV');
 
   f.seekRelative (size);
 
@@ -217,46 +442,39 @@ void WMO::finishLoading ()
 
   // - MOPT ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
-
-  assert (fourcc == 'MOPT');
+  size = readChunkHeader(f, fname, 'MOPT');
 
   f.seekRelative (size);
 
   // - MOPR ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
-
-  assert(fourcc == 'MOPR');
+  size = readChunkHeader(f, fname, 'MOPR');
 
   f.seekRelative (size);
 
   // - MOVV ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
-
-  assert (fourcc == 'MOVV');
+  size = readChunkHeader(f, fname, 'MOVV');
 
   f.seekRelative (size);
 
   // - MOVB ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
-
-  assert (fourcc == 'MOVB');
+  size = readChunkHeader(f, fname, 'MOVB');
 
   f.seekRelative (size);
 
   // - MOLT ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.seekRelative (4);
+  size = readChunkHeader(f, fname, 'MOLT');
 
-  assert (fourcc == 'MOLT');
+  // WMOLight::init reads 0x30 bytes per light; the count is MOHD's, so the two
+  // have to agree or the parse has desynchronised.
+  if (static_cast<std::size_t>(nLights) * 0x30 > size)
+  {
+    throwWmoParseError(fname, "MOHD declares " + std::to_string(nLights)
+                              + " lights but MOLT only holds " + std::to_string(size / 0x30) + ".");
+  }
 
   lights.reserve(nLights);
   for (size_t i (0); i < nLights; ++i) {
@@ -267,10 +485,13 @@ void WMO::finishLoading ()
 
   // - MODS ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.seekRelative (4);
+  size = readChunkHeader(f, fname, 'MODS');
 
-  assert (fourcc == 'MODS');
+  if (static_cast<std::size_t>(nDoodadSets) * 32 > size)
+  {
+    throwWmoParseError(fname, "MOHD declares " + std::to_string(nDoodadSets)
+                              + " doodad sets but MODS only holds " + std::to_string(size / 32) + ".");
+  }
 
   doodadsets.reserve(nDoodadSets);
   for (size_t i (0); i < nDoodadSets; ++i) {
@@ -281,23 +502,14 @@ void WMO::finishLoading ()
 
   // - MODN ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
+  size = readChunkHeader(f, fname, 'MODN');
 
-  assert (fourcc == 'MODN');
-
-  if (size)
-  {
-    ddnames = reinterpret_cast<char const*> (f.getPointer ());
-    f.seekRelative (size);
-  }
+  // Doodad file names, addressed by the 24 bit offset in each MODD entry.
+  std::vector<char> const ddnames (readStringBlock(f, size));
 
   // - MODD ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
-
-  assert (fourcc == 'MODD');
+  size = readChunkHeader(f, fname, 'MODD');
 
   modelis.reserve(size / 0x28);
   for (size_t i (0); i < size / 0x28; ++i)
@@ -315,7 +527,17 @@ void WMO::finishLoading ()
     size_t after_entry (f.getPos() + 0x28);
     f.read (&x, sizeof (x));
 
-    modelis.emplace_back(ddnames + x.name_offset, &f, _context);
+    // Upstream did `ddnames + x.name_offset` with ddnames possibly null (empty
+    // MODN) and the offset never checked, so a desynchronised or malformed file
+    // handed ModelInstance a pointer into unrelated memory to strlen.
+    if (!stringBlockOffsetValid(ddnames, x.name_offset))
+    {
+      throwWmoParseError(fname, "MODD entry " + std::to_string(i) + " references doodad name offset "
+                                + std::to_string(x.name_offset) + ", outside the "
+                                + std::to_string(ddnames.size() - 1) + " byte MODN chunk.");
+    }
+
+    modelis.emplace_back(ddnames.data() + x.name_offset, &f, _context);
     model_nearest_light_vector.emplace_back();
 
     f.seek (after_entry);
@@ -323,10 +545,7 @@ void WMO::finishLoading ()
 
   // - MFOG ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
-
-  assert (fourcc == 'MFOG');
+  size = readChunkHeader(f, fname, 'MFOG');
 
   int nfogs = size / 0x30;
   fogs.reserve(nfogs);
@@ -411,7 +630,10 @@ std::map<uint32_t, std::vector<wmo_doodad_instance>> WMO::doodads_per_group(uint
   {
     for (uint16_t ref : groups[i].doodad_ref())
     {
-      if (ref >= start && ref < end)
+      // `end` comes from the doodad set's own start/size fields, which are not
+      // validated against MODD, so the range check alone does not keep `ref`
+      // inside modelis.
+      if (ref >= start && ref < end && ref < modelis.size())
       {
         doodads[i].push_back(modelis[ref]);
       }
@@ -504,7 +726,7 @@ void WMOLight::setupOnce(GLint, glm::vec3, glm::vec3)
 
 
 
-WMOGroup::WMOGroup(WMO *_wmo, BlizzardArchive::ClientFile* f, int _num, char const* names)
+WMOGroup::WMOGroup(WMO *_wmo, BlizzardArchive::ClientFile* f, int _num, std::vector<char> const& names)
   : wmo(_wmo)
   , num(_num)
   , _renderer(this)
@@ -521,8 +743,11 @@ WMOGroup::WMOGroup(WMO *_wmo, BlizzardArchive::ClientFile* f, int _num, char con
   f->read(&nameOfs, 4);
 
   //! \todo  get proper name from group header and/or dbc?
-  if (nameOfs > 0) {
-    name = std::string(names + nameOfs);
+  // The offset is a MOGN offset stored in MOGI, so it is only trustworthy if it
+  // actually lands inside MOGN. Upstream added it to a raw pointer unchecked and
+  // let std::string run off the end of the file buffer looking for a NUL.
+  if (nameOfs > 0 && stringBlockOffsetValid(names, static_cast<std::size_t>(nameOfs))) {
+    name = std::string(names.data() + nameOfs);
   }
   else name = "(no name)";
 }
@@ -581,75 +806,80 @@ void WMOGroup::load()
 
   BlizzardArchive::ClientFile f(fname, Noggit::Application::NoggitApplication::instance()->clientData());
   if (f.isEof()) {
-    LogError << "Error loading WMO \"" << fname << "\"." << std::endl;
-    return;
+    // Throwing propagates out of WMO::finishLoading() and fails the whole WMO,
+    // which is correct: a group file we cannot read leaves this group with no
+    // geometry and no initialised render batches.
+    throwWmoParseError(fname, "The group file is empty or could not be read.");
   }
 
-  uint32_t fourcc;
   uint32_t size;
 
   // - MVER ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.seekRelative (4);
-
-  uint32_t version;
-
-  f.read (&version, 4);
-
-  assert (fourcc == 'MVER' && version == 17);
+  checkWmoVersion(f, fname);
 
   // - MOGP ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.seekRelative (4);
+  uint32_t const mogp_size (readChunkHeader(f, fname, 'MOGP'));
 
-  assert (fourcc == 'MOGP');
+  // MOGP is a container: its payload is the group header followed by every
+  // chunk read below, so it has to be at least header sized.
+  if (mogp_size < sizeof (wmo_group_header))
+  {
+    throwWmoParseError(fname, "MOGP chunk is only " + std::to_string(mogp_size)
+                              + " bytes, expected at least " + std::to_string(sizeof (wmo_group_header)) + ".");
+  }
 
   f.read (&header, sizeof (wmo_group_header));
 
-  unsigned fog_index = header.fogs[0];
-
-  // downport hack
-  if (fog_index >= wmo->fogs.size())
+  // The root WMO may legitimately carry no MFOG entries at all, in which case
+  // the "downport hack" below indexed fogs[0] on an empty vector.
+  if (wmo->fogs.empty())
   {
-      fog_index = 0;
+    fog = -1;
   }
-  WMOFog &wf = wmo->fogs[fog_index];
+  else
+  {
+    unsigned fog_index = header.fogs[0];
 
-  if (wf.r2 <= 0) fog = -1; // default outdoor fog..?
-  else fog = header.fogs[0];
+    // downport hack
+    if (fog_index >= wmo->fogs.size())
+    {
+        fog_index = 0;
+    }
+    WMOFog &wf = wmo->fogs[fog_index];
+
+    if (wf.r2 <= 0) fog = -1; // default outdoor fog..?
+    else fog = header.fogs[0];
+  }
 
   BoundingBoxMin = ::glm::vec3 (header.box1[0], header.box1[2], -header.box1[1]);
   BoundingBoxMax = ::glm::vec3 (header.box2[0], header.box2[2], -header.box2[1]);
 
   // - MOPY ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
-
-  assert (fourcc == 'MOPY');
+  size = readChunkHeader(f, fname, 'MOPY');
   f.seekRelative (size);
 
   // - MOVI ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
+  size = readChunkHeader(f, fname, 'MOVI');
 
-  assert (fourcc == 'MOVI');
-
-  _indices.resize (size / sizeof (uint16_t));
+  _indices.resize (elementCount (fname, 'MOVI', size, sizeof (uint16_t)));
 
   f.read (_indices.data (), size);
 
   // - MOVT ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
+  size = readChunkHeader(f, fname, 'MOVT');
 
-  assert (fourcc == 'MOVT');
+  // Validated before the alias below is formed, so that `vertices` is only ever
+  // built over a payload that really is a whole number of vertices.
+  std::uint32_t const vertex_count (elementCount (fname, 'MOVT', size, sizeof (::glm::vec3)));
 
   // let's hope it's padded to 12 bytes, not 16...
+  // readChunkHeader has already established that `size` bytes really are left
+  // in the file, so the aliased read below stays inside the buffer.
   ::glm::vec3 const* vertices = reinterpret_cast< ::glm::vec3 const*>(f.getPointer ());
 
   VertexBoxMin = ::glm::vec3 (std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
@@ -657,7 +887,7 @@ void WMOGroup::load()
 
   rad = 0;
 
-  _vertices.resize(size / sizeof (::glm::vec3));
+  _vertices.resize(vertex_count);
 
   for (size_t i = 0; i < _vertices.size(); ++i)
   {
@@ -680,12 +910,9 @@ void WMOGroup::load()
 
   // - MONR ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
+  size = readChunkHeader(f, fname, 'MONR');
 
-  assert (fourcc == 'MONR');
-
-  _normals.resize (size / sizeof (::glm::vec3));
+  _normals.resize (elementCount (fname, 'MONR', size, sizeof (::glm::vec3)));
 
   f.read (_normals.data(), size);
 
@@ -696,91 +923,105 @@ void WMOGroup::load()
 
   // - MOTV ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
+  size = readChunkHeader(f, fname, 'MOTV');
 
-  assert (fourcc == 'MOTV');
-
-  _texcoords.resize (size / sizeof (glm::vec2));
+  _texcoords.resize (elementCount (fname, 'MOTV', size, sizeof (glm::vec2)));
 
   f.read (_texcoords.data (), size);
 
   // - MOBA ----------------------------------------------
 
-  f.read (&fourcc, 4);
-  f.read (&size, 4);
+  size = readChunkHeader(f, fname, 'MOBA');
 
-  assert (fourcc == 'MOBA');
-
-  _batches.resize (size / sizeof (wmo_batch));
+  _batches.resize (elementCount (fname, 'MOBA', size, sizeof (wmo_batch)));
   f.read (_batches.data (), size);
+
+  // MOVI indexes MOVT. Nothing downstream re-checks this, and intersect() runs
+  // _vertices[_indices[i]] on every click, so a file whose index buffer outruns
+  // its vertex buffer would read out of bounds long after loading.
+  for (uint16_t const index : _indices)
+  {
+    if (index >= _vertices.size())
+    {
+      throwWmoParseError(fname, "MOVI references vertex " + std::to_string(index)
+                                + " but MOVT only holds " + std::to_string(_vertices.size()) + ".");
+    }
+  }
+
+  // intersect() walks _indices[batch.index_start .. index_start + index_count).
+  for (wmo_batch const& batch : _batches)
+  {
+    // index_count is a triangle *list* count. intersect() steps i by 3 from
+    // index_start and dereferences _indices[i], [i+1] and [i+2], and
+    // WMOGroupRender feeds index_count straight to a GL_TRIANGLES draw call, so
+    // a count that is not a multiple of 3 has no valid reading -- the format has
+    // no partial triangle. Left unchecked, the final iteration reads up to two
+    // elements past the batch, and past the end of _indices entirely whenever
+    // this is the last batch (the bound check below only proves the batch itself
+    // fits).
+    //
+    // Rejected at load rather than by bounding intersect()'s loop, for three
+    // reasons: this is one check over a short vector once per group file,
+    // whereas the loop runs per triangle per batch on every click in the
+    // viewport; bounding the loop would leave the file loaded, so the renderer
+    // would still issue draw calls from a batch table already proved
+    // inconsistent; and a malformed batch table means the group's geometry is
+    // not trustworthy in the first place, which is a load failure, not a
+    // picking edge case.
+    if (batch.index_count % 3)
+    {
+      throwWmoParseError(fname, "MOBA batch declares " + std::to_string(batch.index_count)
+                                + " indices, which is not a whole number of triangles.");
+    }
+
+    if (static_cast<std::size_t>(batch.index_start) + batch.index_count > _indices.size())
+    {
+      throwWmoParseError(fname, "MOBA batch covers indices " + std::to_string(batch.index_start)
+                                + ".." + std::to_string(static_cast<std::size_t>(batch.index_start) + batch.index_count)
+                                + " but MOVI only holds " + std::to_string(_indices.size()) + ".");
+    }
+  }
+
+  // Both fix_vertex_color_alpha() and load_mocv() index
+  // _batches[transparency_batches_count - 1].
+  if (header.transparency_batches_count > _batches.size())
+  {
+    throwWmoParseError(fname, "Group header declares " + std::to_string(header.transparency_batches_count)
+                              + " transparency batches but MOBA only holds "
+                              + std::to_string(_batches.size()) + ".");
+  }
 
   _renderer.initRenderBatches();
 
   // - MOLR ----------------------------------------------
   if (header.flags.has_light)
   {
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
-
-    if (fourcc != 'MOLR')
-    {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
+    if (readOptionalChunkHeader (f, fname, 'MOLR', &size))
     {
       f.seekRelative (size);
     }
-
   }
   // - MODR ----------------------------------------------
   if (header.flags.has_doodads)
   {
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
-
-    if (fourcc != 'MODR')
+    if (readOptionalChunkHeader (f, fname, 'MODR', &size))
     {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
-    {
-      _doodad_ref.resize (size / sizeof (int16_t));
+      _doodad_ref.resize (elementCount (fname, 'MODR', size, sizeof (int16_t)));
       f.read (_doodad_ref.data (), size);
     }
-
   }
   // - MOBN ----------------------------------------------
   if (header.flags.has_bsp_tree)
   {
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
-
-    if (fourcc != 'MOBN')
-    {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
+    if (readOptionalChunkHeader (f, fname, 'MOBN', &size))
     {
       f.seekRelative(size);
     }
-
   }
   // - MOBR ----------------------------------------------
   if (header.flags.has_bsp_tree)
   {
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
-
-    if (fourcc != 'MOBR')
-    {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
+    if (readOptionalChunkHeader (f, fname, 'MOBR', &size))
     {
       f.seekRelative (size);
       // std::vector<uint16_t> bsp_indices;
@@ -789,98 +1030,83 @@ void WMOGroup::load()
       // _bsp_indices = bsp_indices;
     }
   }
-  
+
   if (header.flags.flag_0x400)
   {
     // - MPBV ----------------------------------------------
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
-
-    if (fourcc != 'MPBV')
-    {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
+    if (readOptionalChunkHeader (f, fname, 'MPBV', &size))
     {
       f.seekRelative (size);
     }
 
     // - MPBP ----------------------------------------------
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
-
-    if (fourcc != 'MPBP')
-    {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
+    if (readOptionalChunkHeader (f, fname, 'MPBP', &size))
     {
       f.seekRelative (size);
     }
 
     // - MPBI ----------------------------------------------
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
-
-    if (fourcc != 'MPBI')
-    {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
+    if (readOptionalChunkHeader (f, fname, 'MPBI', &size))
     {
       f.seekRelative (size);
     }
 
     // - MPBG ----------------------------------------------
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
-
-    if (fourcc != 'MPBG')
+    if (readOptionalChunkHeader (f, fname, 'MPBG', &size))
     {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
-    {
-
       f.seekRelative (size);
     }
   }
   // - MOCV ----------------------------------------------
   if (header.flags.has_vertex_color)
   {
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
+    if (readOptionalChunkHeader (f, fname, 'MOCV', &size))
+    {
+      // load_mocv() aliases the payload as uint32_t colours, so it is checked
+      // here on the same terms as every other array chunk before being handed
+      // a size it would otherwise divide and trust.
+      elementCount (fname, 'MOCV', size, sizeof (std::uint32_t));
 
-    if (fourcc != 'MOCV')
-    {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
-    {
       load_mocv(f, size);
     }
-
   }
   // - MLIQ ----------------------------------------------
   if (header.flags.has_water)
   {
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
-
-    if (fourcc != 'MLIQ')
-    {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
+    if (readOptionalChunkHeader (f, fname, 'MLIQ', &size))
     {
       WMOLiquidHeader hlq;
+
+      if (size < 0x1E)
+      {
+        throwWmoParseError(fname, "MLIQ chunk is only " + std::to_string(size)
+                                  + " bytes, expected at least 30 for its header.");
+      }
+
       f.read(&hlq, 0x1E);
+
+      // wmo_liquid::initGeometry aliases the file buffer for
+      // (A + 1) * (B + 1) vertices followed by A * B tiles, all taken from this
+      // header, and never checks them against the chunk. Negative or oversized
+      // counts walked straight off the end of the file.
+      if (hlq.A < 0 || hlq.B < 0)
+      {
+        throwWmoParseError(fname, "MLIQ declares a negative liquid tile count ("
+                                  + std::to_string(hlq.A) + "x" + std::to_string(hlq.B) + ").");
+      }
+
+      std::size_t const liquid_bytes
+        ( 0x1E
+        + static_cast<std::size_t>(hlq.A + 1) * static_cast<std::size_t>(hlq.B + 1) * sizeof (WmoLiquidVertex)
+        + static_cast<std::size_t>(hlq.A) * static_cast<std::size_t>(hlq.B) * sizeof (SMOLTile)
+        );
+
+      if (liquid_bytes > size)
+      {
+        throwWmoParseError(fname, "MLIQ declares a " + std::to_string(hlq.A) + "x" + std::to_string(hlq.B)
+                                  + " liquid grid needing " + std::to_string(liquid_bytes)
+                                  + " bytes but the chunk is only " + std::to_string(size) + ".");
+      }
 
       lq = std::make_unique<wmo_liquid> ( &f
           , hlq
@@ -893,72 +1119,37 @@ void WMOGroup::load()
       // creating the wmo liquid doesn't move the position
       f.seekRelative(size - 0x1E);
     }
-
   }
   if (header.flags.has_mori_morb)
   {
     // - MORI ----------------------------------------------
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
-
-    if (fourcc != 'MORI')
-    {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
+    if (readOptionalChunkHeader (f, fname, 'MORI', &size))
     {
       f.seekRelative (size);
     }
 
     // - MORB ----------------------------------------------
-    f.read(&fourcc, 4);
-    f.read(&size, 4);
-
-    if (fourcc != 'MORB')
-    {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
+    if (readOptionalChunkHeader (f, fname, 'MORB', &size))
     {
       f.seekRelative (size);
     }
-
   }
 
   // - MOTV ----------------------------------------------
   if (header.flags.has_two_motv)
   {
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
-
-    if (fourcc != 'MOTV')
+    if (readOptionalChunkHeader (f, fname, 'MOTV', &size))
     {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
-    {
-      _texcoords_2.resize(size / sizeof(glm::vec2));
+      _texcoords_2.resize(elementCount (fname, 'MOTV', size, sizeof (glm::vec2)));
       f.read(_texcoords_2.data(), size);
     }
-
   }
   // - MOCV ----------------------------------------------
   if (header.flags.use_mocv2_for_texture_blending)
   {
-    f.read (&fourcc, 4);
-    f.read (&size, 4);
-
-    if (fourcc != 'MOCV')
+    if (readOptionalChunkHeader (f, fname, 'MOCV', &size))
     {
-      LogError << "Broken header in WMO \"" << fname << "\". Trying to continue reading." << std::endl;
-      f.seek (f.getPos() - 8);
-    }
-    else
-    {
-      std::vector<CImVector> mocv_2(size / sizeof(CImVector));
+      std::vector<CImVector> mocv_2(elementCount (fname, 'MOCV', size, sizeof (CImVector)));
       f.read(mocv_2.data(), size);
 
       for (int i = 0; i < mocv_2.size(); ++i)
@@ -968,6 +1159,13 @@ void WMOGroup::load()
         // the second mocv is used for texture blending only
         if (header.flags.has_vertex_color)
         {
+          // The first MOCV chunk sizes _vertex_colors, and nothing guarantees
+          // the second one is no longer than the first.
+          if (i >= _vertex_colors.size())
+          {
+            break;
+          }
+
           _vertex_colors[i].w = alpha;
         }
         else // no vertex coloring, only texture blending with the alpha
@@ -976,7 +1174,6 @@ void WMOGroup::load()
         }
       }
     }
-
   }
 
   //dl_light = 0;

@@ -826,13 +826,21 @@ TEST_CASE("a reserved device name or a trailing space is refused, not resolved"
   //
   // Separately, Windows strips trailing spaces and dots from the final component, so ".. " --
   // not equal to ".." and holding no separator -- resolved to the archive root's PARENT.
-  std::filesystem::path const root
-    (std::filesystem::temp_directory_path() / "noggit_archive_devicename_test");
+  //
+  // Built under TempDirectory like every other case here rather than on a fixed name in the
+  // system temp directory. The fixed name was shared by every concurrent process, and this case
+  // opened by remove_all-ing it, so two of the suite runs tests/CMakeLists.txt registers could
+  // delete each other's fixture mid-test. TempDirectory also removes the tree from its
+  // destructor, which the explicit remove_all at the foot of the case did not do whenever a
+  // REQUIRE above it threw -- leaving the directory behind for the next run to trip over.
+  TempDirectory const temp;
+
+  // Still a subdirectory of the fixture: the ".. " case below is about a name resolving to the
+  // root's PARENT, and that parent has to be somewhere this test owns.
+  std::filesystem::path const root (temp.child("archive"));
 
   std::error_code ec;
-  std::filesystem::remove_all(root, ec);
-  std::filesystem::create_directories(root, ec);
-  REQUIRE_FALSE(ec);
+  REQUIRE(std::filesystem::create_directory(root, ec));
 
   ChangesetArchive archive (root);
   archive.store("-- payload\n", "tile", 1785600000);
@@ -853,8 +861,6 @@ TEST_CASE("a reserved device name or a trailing space is refused, not resolved"
   std::vector<ArchiveEntry> const entries (archive.list());
   REQUIRE(entries.size() == 1);
   CHECK(archive.load(entries.front().file_name) == "-- payload\n");
-
-  std::filesystem::remove_all(root, ec);
 }
 
 TEST_CASE("store refuses rather than truncating a name another writer already claimed"
@@ -863,15 +869,12 @@ TEST_CASE("store refuses rather than truncating a name another writer already cl
   // store() used to pick a name with exists() and then open it with std::ios::trunc, so a
   // concurrent creator's changeset was silently destroyed in the window between the two. The
   // claim is now an exclusive create, which fails instead of truncating.
-  std::filesystem::path const root
-    (std::filesystem::temp_directory_path() / "noggit_archive_exclusive_test");
-
-  std::error_code ec;
-  std::filesystem::remove_all(root, ec);
-  std::filesystem::create_directories(root, ec);
-  REQUIRE_FALSE(ec);
-
-  ChangesetArchive archive (root);
+  //
+  // Under TempDirectory for the reason given in the device-name case above: the fixed name this
+  // used to build in the system temp directory collided between concurrent runs of the suite, and
+  // its cleanup was skipped whenever a REQUIRE threw first.
+  TempDirectory const temp;
+  ChangesetArchive archive (temp.path());
 
   std::filesystem::path const first (archive.store("-- first\n", "tile", 1785600000));
   REQUIRE(std::filesystem::exists(first));
@@ -885,8 +888,6 @@ TEST_CASE("store refuses rather than truncating a name another writer already cl
   std::string surviving ((std::istreambuf_iterator<char>(check))
                         , std::istreambuf_iterator<char>());
   CHECK(surviving == "-- first\n");
-
-  std::filesystem::remove_all(root, ec);
 }
 
 TEST_CASE("a backup whose name the narrow encoding cannot spell stays usable"

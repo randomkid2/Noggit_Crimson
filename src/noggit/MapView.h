@@ -18,6 +18,7 @@
 #include <QtCore/QTimer>
 
 #include <array>
+#include <cstdint>
 #include <forward_list>
 #include <vector>
 
@@ -45,7 +46,10 @@ namespace Noggit
 
   namespace Database
   {
+    class SchemaModel;
     class SpawnSceneCache;
+    class WorldDatabaseConnection;
+    struct ConnectionConfig;
     struct SpawnRef;
   }
 
@@ -233,6 +237,37 @@ public:
   // Returns the same `OK `/`ERR ` line shape as loadDatabaseSpawns, for the same reason.
   std::string saveDatabaseChanges(bool apply_to_dev, bool interactive = true);
 
+  // Places a new creature or gameobject at `position`, in Noggit's frame.
+  //
+  // `entry` names a row of creature_template / gameobject_template. That row is what supplies
+  // the display id, and a display id is the only thing that makes the spawn visible, so this
+  // opens a READ_ONLY connection and looks the template up rather than trusting the number. An
+  // entry that does not exist, or one whose template names no model, is refused with the reason
+  // -- a spawn that cannot be drawn cannot be picked, dragged or checked either, and would exist
+  // only as a line in a changeset the user had no way to review.
+  //
+  // Nothing is written anywhere. The spawn joins the scene cache as a pending creation and
+  // becomes SQL only when the user saves, with its guid allocated on the server at apply time --
+  // see ChangesetBuilder::addNewCreature.
+  //
+  // Same `OK `/`ERR ` line and same meaning for `interactive` as loadDatabaseSpawns.
+  std::string createDatabaseSpawn( bool creature
+                                 , std::uint32_t entry
+                                 , glm::vec3 const& position
+                                 , bool interactive = true
+                                 );
+
+  // Marks a loaded spawn for deletion. It leaves the viewport immediately; the DELETE reaches a
+  // file only when the user saves, and only for a guid the database actually issued.
+  std::string deleteDatabaseSpawn(Noggit::Database::SpawnRef const& spawn
+                                 , bool interactive = true);
+
+  // Undoes every unsaved spawn change: moves, placements and deletions.
+  //
+  // Here rather than in the panel because it destroys model references, and that needs a current
+  // OpenGL context -- see SpawnSceneCache::discardPending. The panel owns no context.
+  std::string discardDatabaseSpawnChanges();
+
 private:
 
   // The one exit shape the database spawn actions report through.
@@ -244,10 +279,59 @@ private:
                                         , bool is_error
                                         , bool interactive);
 
+  // The introspected schema for `connection`, read once and then reused.
+  //
+  // Every database action here needs a SchemaModel, because HARD RULE 3 forbids hardcoding a
+  // column name or ordinal: what the schema is asked is not "is this TrinityCore" but "does this
+  // table have this column, and where". Building one means SELECTing every row of
+  // information_schema.columns for the whole schema -- roughly a hundred thousand rows against a
+  // populated TDB world database -- and it was being rebuilt per call.
+  //
+  // For loading and saving that is once per deliberate action and nobody notices. For
+  // createDatabaseSpawn it is once per CLICK, reached synchronously from mousePressEvent, so
+  // every attempt to place a spawn opened a connection and re-read the entire schema on the GUI
+  // thread before anything appeared. That is what this cache is for.
+  //
+  // What is cached is the INTROSPECTED RESULT, never an assumed layout -- the difference matters.
+  // The answer to "does creature have wander_distance" is still measured; it is measured once.
+  //
+  // `config` is the settings the connection was opened with, and it is what the cache is keyed
+  // on: point Settings at a different server, port, user or schema and the fingerprint changes,
+  // so the next call re-reads rather than answering questions about the schema it used to be
+  // looking at. `refresh` forces a re-read regardless, which the load action passes -- it is the
+  // "go and look at the database" action, it is not on any hot path, and it is how a schema that
+  // changed under a running editor (a TDB update applied in another window) gets picked up
+  // without a restart.
+  //
+  // The reference is valid until the next call with a different fingerprint or with `refresh`.
+  // Callers use it within one method against one connection, so it cannot be invalidated
+  // underneath them; do not store it in a member.
+  //
+  // Guarded, unlike the cache members below, because WorldDatabaseConnection.cpp and
+  // SchemaIntrospector.cpp are excluded from the build entirely when Connector/C++ is absent
+  // (see the LIST(FILTER ...) in CMakeLists.txt). The model itself is pure and always compiles;
+  // only reading one off a server needs the connector.
+#ifdef USE_MYSQL_UID_STORAGE
+  Noggit::Database::SchemaModel const& databaseSchemaFor
+    ( Noggit::Database::WorldDatabaseConnection const& connection
+    , Noggit::Database::ConnectionConfig const& config
+    , bool refresh = false
+    );
+#endif
+
   // Built lazily by loadDatabaseSpawns, so a session that never asks pays nothing and a build
   // with no database configured never constructs either. Held by pointer and forward-declared to
   // keep the database headers out of MapView.h.
   std::unique_ptr<Noggit::Database::SpawnSceneCache> _db_spawn_scene;
+
+  // The cached schema model and what it was read from. Null until the first database action.
+  //
+  // Held by pointer for the same reason _db_spawn_scene is: it keeps SchemaModel.hpp out of this
+  // header. The fingerprint is host, port, user and schema joined -- everything that decides
+  // WHICH schema was measured. The password is deliberately not part of it: changing it cannot
+  // change what the columns are.
+  std::unique_ptr<Noggit::Database::SchemaModel> _db_schema;
+  std::string _db_schema_fingerprint;
 
   // Owned by its dock. Null until the dock is built, which is why every use is guarded.
   Noggit::Ui::DatabaseSpawnPanel* _db_spawn_panel = nullptr;

@@ -11,6 +11,7 @@
 class MapView;
 
 class QCheckBox;
+class QComboBox;
 class QLabel;
 class QListWidget;
 class QPushButton;
@@ -54,6 +55,18 @@ namespace Noggit::Ui
       // here" rather than whatever the active tool would normally do.
       bool moveMode() const;
 
+      // True while a click should CREATE a spawn rather than move one.
+      //
+      // Kept mutually exclusive with moveMode in the panel rather than resolved by whichever
+      // branch MapView happens to test first: two armed modes would make one click do something
+      // that depends on the order of two `if` statements in a file the user cannot see.
+      bool placeMode() const;
+
+      // What placeMode would create: the kind, and the creature_template / gameobject_template
+      // entry id.
+      bool placeCreature() const;
+      std::uint32_t placeEntry() const;
+
       // The highlighted spawn. Its guid is 0 when nothing is selected.
       //
       // Kind and guid, not a bare guid: creature.guid and gameobject.guid are separate primary
@@ -95,6 +108,19 @@ namespace Noggit::Ui
       void onLoad(bool all_tiles);
       void onSave();
       void onDiscard();
+
+      // Places a spawn at the camera's ground position, for a user who would rather press a
+      // button than aim a click. Goes through exactly the same MapView entry point as place mode.
+      void onPlaceAtCamera();
+
+      // Marks the selected spawn for deletion. Asks first when the spawn came from the database,
+      // because that one emits a DELETE somebody will apply; a spawn the user placed a moment ago
+      // does not, and a confirmation for it would be noise.
+      void onDelete();
+
+      // Keeps move mode and place mode from being armed at once, and keeps the Delete button in
+      // step with the selection.
+      void updateSpawnActions();
 
       // Loads database spawns for exactly the tiles picked on the grid.
       void onLoadSelectedTiles();
@@ -155,6 +181,13 @@ namespace Noggit::Ui
       std::size_t _loaded_tiles_not_drawn = 0;
 
       QListWidget* _spawn_list;
+
+      // --- creating -------------------------------------------------------------------------
+      QComboBox* _place_kind;
+      QSpinBox* _place_entry;
+      QCheckBox* _place_mode;
+      QPushButton* _delete_button;
+
       QCheckBox* _move_mode;
       QSpinBox* _orientation;
       QCheckBox* _apply_to_dev;

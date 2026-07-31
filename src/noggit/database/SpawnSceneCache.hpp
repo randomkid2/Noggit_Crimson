@@ -97,8 +97,24 @@ namespace Noggit::Database
     CreatureSpawn creature;
     GameObjectSpawn gameobject;
 
-    // Set once the user moves it. Only dirty entries reach the changeset.
+    // Set once the user moves it. Only dirty entries reach the changeset as EDITS.
     bool dirty = false;
+
+    // True for a spawn the user placed, which no row of the database backs.
+    //
+    // > [!warning] `guid` is provisional for these, and must never reach SQL
+    // > A created spawn needs an identity immediately -- to be selected, listed, dragged and
+    // > deleted again -- but the database issues guids, and it will not issue this one until the
+    // > changeset is applied. So the cache hands out a number above anything a real sequence has
+    // > reached and this flag says it is not real. ChangesetBuilder::addNewCreature ignores the
+    // > guid entirely and allocates from MAX(guid) at apply time.
+    // >
+    // > Two consequences that are easy to get wrong, and both silently destroy data:
+    // >   - a created spawn is emitted as a CREATION even after it has been moved, never as an
+    // >     edit, or the INSERT would carry the provisional guid and overwrite a real row;
+    // >   - deleting one emits NO DELETE, because there is no row behind that number and the
+    // >     sequence may since have reached it -- the DELETE would remove somebody else's spawn.
+    bool is_new = false;
 
     // Replaceable-texture skins for this spawn's display id -- see ResolvedModel::skins. Carried
     // per entry rather than looked up at draw time so the render path touches no DBC.
@@ -158,6 +174,23 @@ namespace Noggit::Database
     SpawnSkipCounts skipped;
   };
 
+  // What came of a request to place a spawn.
+  //
+  // A reason rather than a bare false, because there are four distinct ways placing a spawn can
+  // fail -- no template row, a template with displayId 0, a gameobject type that carries no model,
+  // and a display id whose DBC chain resolves to nothing -- and they need four different answers
+  // from the user. "Could not create it" sends them to look at the wrong thing.
+  struct SpawnCreation
+  {
+    // Invalid (guid 0) when nothing was created.
+    SpawnRef spawn;
+
+    // Empty on success.
+    std::string failure_reason;
+
+    bool created() const { return spawn.valid(); }
+  };
+
   // Per-tile store of drawable spawns, keyed in ADT filename order.
   //
   // Populated by an explicit user action, never during tile streaming, and read during draw. The
@@ -194,6 +227,49 @@ namespace Noggit::Database
       // 9.6 km away -- see TileCoordinates.hpp on toAdtFileIndex.
       void setTile(TileSpawns const& spawns);
 
+      // Places a spawn the database has never seen, and returns how to name it.
+      //
+      // The caller supplies everything a row of `creature` holds plus the joined template info --
+      // display id, type, name -- because resolving an entry id to a template is a database
+      // question and this class holds no connection. MapView::createDatabaseSpawn does that half.
+      //
+      // The guid the caller passes is ignored: one is assigned here, from a range no real
+      // sequence reaches, and SpawnSceneEntry::is_new marks it as provisional. See that flag --
+      // getting this wrong overwrites a real row rather than erroring.
+      //
+      // Refuses a spawn whose model does not resolve, and says why. A spawn with no instance
+      // cannot be picked, focused, dragged or seen: it would exist only as a line in a list and
+      // as a row in a changeset the user had no way to check, which is worse than being told the
+      // entry cannot be placed.
+      //
+      // > [!warning] An OpenGL context must be current, for the same reason setTile needs one.
+      SpawnCreation addCreature(CreatureSpawn const& spawn);
+      SpawnCreation addGameObject(GameObjectSpawn const& spawn);
+
+      // Deletes a spawn, taking it out of the scene so it stops being drawn.
+      //
+      // What that means depends on where the spawn came from, and the two cases are genuinely
+      // different rather than an implementation detail:
+      //
+      //   - A spawn the DATABASE issued is MOVED aside into a tombstone list. It becomes a DELETE
+      //     in the changeset, and discardPending() can put it back exactly as it was rather than
+      //     rebuilding it and re-queueing its asynchronous model load.
+      //   - A spawn the USER placed is DESTROYED. No row backs it, so there is nothing to delete
+      //     and nothing to restore -- discardPending() drops created spawns regardless. Keeping
+      //     one as a tombstone made it invisible to every list at once: pendingCount() went to
+      //     zero, the panel said "No changes." and disabled Save and Discard, and the spawn's
+      //     model stayed loaded with no way left to reach it.
+      //
+      // Either way a spawn placed and deleted again before saving produces NO SQL: not an INSERT
+      // followed by a DELETE, nothing at all.
+      //
+      // > [!warning] An OpenGL context must be current
+      // > Destroying a created spawn releases its model reference, and the last reference to a
+      // > Model destroys OpenGL vertex arrays from a destructor that throws when no context is
+      // > bound -- which terminates the process. This did not need a context while every deletion
+      // > was a move; it does now.
+      bool remove(SpawnRef const& spawn);
+
       // Drops the DBC resolution cache but keeps the built scenes. Needed after the DBCs are
       // reopened for a different client install, which invalidates every resolved path.
       void clearResolverCache() { _resolver.clearCache(); }
@@ -228,13 +304,71 @@ namespace Noggit::Database
       // Every loaded entry, in tile then load order. For listing them in the UI.
       std::vector<SpawnSceneEntry const*> allEntries() const;
 
-      // Every entry the user has moved, in load order.
+      // Every entry the user has moved, in load order -- EDITS only.
+      //
+      // A created spawn is excluded even after it has been dragged, and that exclusion is
+      // load-bearing rather than tidy. Such an entry is dirty and new at once; emitting it as an
+      // edit would write its provisional guid into an INSERT keyed off @CGUID, which is a real
+      // guid in the target database belonging to a spawn the user has never seen. It is emitted
+      // once, as a creation, carrying whatever position it was dragged to.
       std::vector<SpawnSceneEntry const*> dirtyEntries() const;
+
+      // Every spawn the user placed and has not saved yet, in creation order.
+      std::vector<SpawnSceneEntry const*> newEntries() const;
+
+      // Guids of the spawns the user deleted, for the DELETE statements.
+      //
+      // Only rows the database issued. A spawn that was created and then deleted in the same
+      // session is simply gone -- remove() destroyed it -- so there is nothing to delete, and
+      // naming its provisional guid would remove whatever the sequence has since put there.
+      std::vector<SpawnRef> removedSpawns() const;
 
       std::size_t dirtyCount() const;
 
+      // Everything unsaved: edits, creations and deletions. What the Save button is gated on and
+      // what "loading discards N changes" has to count, since dirtyCount() alone silently loses
+      // a session's worth of placements and deletions without warning.
+      std::size_t pendingCount() const;
+
       // Forgets all edits, leaving the loaded scene alone. For "discard changes".
+      //
+      // Edits only -- it does not undo a creation or a deletion. discardPending() is what the UI
+      // wants; this stays because the save path clears edit flags through clearPending(), and
+      // because a caller that means "forget the moves" should not silently also resurrect deleted
+      // spawns.
       void clearDirty();
+
+      // Undoes every unsaved change: edit flags cleared, deleted spawns put back where they were,
+      // created spawns dropped.
+      //
+      // The only undo this subsystem has. Database spawns do not participate in ActionManager --
+      // nothing in src/noggit/database registers an action, and Ctrl+Z therefore does not reach
+      // a spawn move, a placement or a deletion. Half-wiring one operation into ActionManager
+      // would be worse than none: an undo stack that silently skips two of the three spawn
+      // operations undoes the wrong thing when a user presses Ctrl+Z twice.
+      //
+      // > [!warning] An OpenGL context must be current: dropping a created spawn releases its
+      // > model reference, and OpenGL::Scoped's destructor throws when none is bound.
+      //
+      // Returns how many created spawns were dropped, so the caller can say so.
+      std::size_t discardPending();
+
+      // Accepts every unsaved change, after the changeset carrying them has been written.
+      //
+      // Edit flags are cleared, deleted entries are destroyed for good, and created entries are
+      // DROPPED from the scene rather than kept.
+      //
+      // Dropping them is the uncomfortable part and it is the only safe option. Their guids are
+      // still provisional -- the file has been written, not necessarily applied, and even when it
+      // has been the editor was not told which guids the server chose. Keeping them would leave
+      // entries the user can drag whose next save either re-creates them (a duplicate spawn) or
+      // writes their fictional guid into an UPDATE (a real spawn overwritten). Reloading the tile
+      // is how they come back, with the guids the database issued.
+      //
+      // > [!warning] An OpenGL context must be current, for the same reason as discardPending.
+      //
+      // Returns how many created spawns were dropped.
+      std::size_t clearPending();
 
       // Noggit-frame position of one loaded spawn. False when it is not loaded.
       //
@@ -284,6 +418,33 @@ namespace Noggit::Database
       std::string describe() const;
 
     private:
+      // Resolves one spawn into a drawable entry: display id, DBC chain, model path, instance,
+      // skins. Shared by setTile and the two add* methods, because a spawn placed by the user has
+      // to become exactly the same kind of entry as one read from the database -- if the two
+      // built entries differently, a created spawn would render, pick or scale differently from
+      // the identical row after a reload, and nothing would say so.
+      //
+      // `skipped` is bumped on the reason it failed, for the tile summary. `failure_reason` gets
+      // the sentence, for a user who asked about this one spawn.
+      bool buildEntry( CreatureSpawn const& creature
+                     , SpawnSceneEntry& out
+                     , SpawnSkipCounts& skipped
+                     , std::string& failure_reason
+                     );
+
+      bool buildEntry( GameObjectSpawn const& object
+                     , SpawnSceneEntry& out
+                     , SpawnSkipCounts& skipped
+                     , std::string& failure_reason
+                     );
+
+      // The next unused provisional guid. Skips anything already loaded, so a session that
+      // somehow reached this range cannot be handed a number twice.
+      std::uint32_t nextProvisionalGuid();
+
+      // Puts a built entry into the tile its position falls in, and returns how to name it.
+      SpawnCreation place(SpawnSceneEntry&& entry, WorldPosition const& position);
+
       Noggit::NoggitRenderContext _context;
 
       // Owned rather than passed in per call, so the two DBC chains stay cached across tiles and
@@ -297,6 +458,26 @@ namespace Noggit::Database
       // std::map, not unordered_map: ::TileIndex already provides operator< (TileIndex.hpp:14)
       // and no std::hash specialisation, and a tile count is at most a few hundred.
       std::map<::TileIndex, TileSpawnScene> _tiles;
+
+      // Database-issued entries taken out of the scene by remove(), with the ADT tile each came
+      // from.
+      //
+      // Held rather than destroyed so discardPending() can put them back. That is the whole undo
+      // story for a deletion, and it is why the deleted spawn keeps its model reference alive
+      // meanwhile -- rebuilding one would re-queue an asynchronous load and lose the skins.
+      //
+      // Never holds a spawn with is_new set. One with no row behind it has no DELETE to emit and
+      // nothing to be restored to, so remove() destroys it instead: an entry parked here that no
+      // list reports is a spawn the user can neither see, save, nor discard.
+      std::vector<std::pair<::TileIndex, SpawnSceneEntry>> _removed;
+
+      // Next provisional guid to hand out, shared by both kinds.
+      //
+      // One counter for two key spaces on purpose. These numbers never reach SQL, so they need
+      // only be unique WITHIN the cache, and a single counter makes that true without having to
+      // reason about which sequence a SpawnRef came from. See PROVISIONAL_GUID_BASE in the .cpp
+      // for why the range was chosen.
+      std::uint32_t _next_provisional_guid;
   };
 }
 

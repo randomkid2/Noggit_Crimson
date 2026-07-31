@@ -102,10 +102,46 @@ void ChunkWater::fromFile(BlizzardArchive::ClientFile &f, size_t basePos)
     f.seek(basePos + header.ofsInformation + sizeof(MH2O_Information)* k);
     f.read(&info, sizeof(MH2O_Information));
 
+    // A layer covers a rectangle of the chunk's 8x8 subchunk grid, so
+    // xOffset + width and yOffset + height can never exceed 8. All four are
+    // uint8 fields read straight out of the file though, and nothing downstream
+    // rechecks them:
+    //
+    //  - the render mask below is ceil(width * height / 8) bytes read into a
+    //    single uint64_t. A 255x255 layer asks for 8129 bytes into an 8 byte
+    //    local, which ClientFile::read() -- which writes the whole requested
+    //    length -- turns into a stack smash.
+    //  - liquid_layer's constructor then walks z from yOffset to
+    //    yOffset + height and x from xOffset to xOffset + width, writing
+    //    _vertices[z * 9 + x] into a fixed std::array<liquid_vertex, 9 * 9>.
+    //    Out of range offsets write past that array, which is the larger of the
+    //    two overruns.
+    //
+    // Both come from the same malformed record, so the record is rejected once,
+    // here, before either is reached. Skipping the layer rather than failing the
+    // whole tile keeps a single bad MH2O entry from making a map unopenable, the
+    // way the invalid-liquid-type case above already behaves.
+    if ( static_cast<unsigned>(info.xOffset) + info.width > 8
+      || static_cast<unsigned>(info.yOffset) + info.height > 8
+       )
+    {
+      LogError << "MH2O layer " << k << " declares a " << static_cast<unsigned>(info.width)
+               << "x" << static_cast<unsigned>(info.height) << " grid at offset ("
+               << static_cast<unsigned>(info.xOffset) << ", "
+               << static_cast<unsigned>(info.yOffset)
+               << "), which does not fit the chunk's 8x8 subchunk grid. Skipping the layer."
+               << std::endl;
+      continue;
+    }
+
     //mask
     if (info.ofsInfoMask > 0 && info.height > 0)
     {
-      size_t bitmask_size = static_cast<size_t>(std::ceil(info.height * info.width / 8.0f));
+      // At most 8 * 8 bits now that the grid is known to fit, so the read can
+      // never exceed sizeof(infoMask). Integer arithmetic rather than the old
+      // std::ceil on a float: the exact value matters and 8.0f gave no benefit.
+      std::size_t const bitmask_size
+        ((static_cast<std::size_t>(info.height) * info.width + 7) / 8);
 
       f.seek(info.ofsInfoMask + basePos);
       // only read the relevant data

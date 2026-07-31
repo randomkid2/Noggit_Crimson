@@ -18,6 +18,7 @@
 // connection and introspection headers stay.
 
 #include <QtWidgets/QCheckBox>
+#include <QtWidgets/QComboBox>
 #include <QtWidgets/QGroupBox>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
@@ -243,6 +244,52 @@ DatabaseSpawnPanel::DatabaseSpawnPanel(MapView* map_view, QWidget* parent)
   _spawn_list->setToolTip("Select a spawn, then tick Move mode and click in the world to place it.");
   layout->addWidget(_spawn_list, 1);
 
+  // --- creating --------------------------------------------------------------------------
+  // Placement is deliberately entry-id driven rather than offering a browsable list. A world
+  // database holds tens of thousands of templates and the person placing one already knows which
+  // entry they want -- it is the number they looked up in the database or in a wiki. A picker
+  // over that many rows is a second project, and it would still be slower than typing 299.
+  auto create_box (new QGroupBox("Place a new spawn", this));
+  auto create_layout (new QVBoxLayout(create_box));
+
+  auto entry_row (new QHBoxLayout());
+
+  _place_kind = new QComboBox(this);
+  _place_kind->addItem("Creature");
+  _place_kind->addItem("Gameobject");
+  _place_kind->setToolTip
+    ("Which template table the entry id names. creature.guid and gameobject.guid are separate\n"
+     "sequences, so the same number means different things in the two.");
+  entry_row->addWidget(_place_kind);
+
+  entry_row->addWidget(new QLabel("Entry", this));
+
+  _place_entry = new QSpinBox(this);
+  // The full unsigned range the template's entry column can hold, minus the sign bit QSpinBox
+  // costs us. Real entries are well inside it; the range exists so a custom template with a high
+  // id can be typed rather than silently clamped to something else that does exist.
+  _place_entry->setRange(0, 2147483647);
+  _place_entry->setToolTip("creature_template.entry or gameobject_template.entry.");
+  entry_row->addWidget(_place_entry, 1);
+
+  create_layout->addLayout(entry_row);
+
+  _place_mode = new QCheckBox("Place mode - click in the world to create one", this);
+  _place_mode->setToolTip
+    ("The next left click in the viewport places a spawn at the point under the cursor.\n"
+     "Stays on, so a row of guards is a row of clicks. Nothing is written until you save.");
+  create_layout->addWidget(_place_mode);
+
+  auto place_here (new QPushButton("Place at the camera", this));
+  place_here->setToolTip
+    ("Places one at the point the camera is over, without needing to aim a click.");
+  create_layout->addWidget(place_here);
+
+  create_layout->addWidget
+    ( new QLabel("The guid is chosen by the server when the changeset is applied.", this));
+
+  layout->addWidget(create_box);
+
   // --- moving ----------------------------------------------------------------------------
   auto move_box (new QGroupBox("Selected spawn", this));
   auto move_layout (new QVBoxLayout(move_box));
@@ -267,6 +314,13 @@ DatabaseSpawnPanel::DatabaseSpawnPanel(MapView* map_view, QWidget* parent)
   _orientation->setToolTip("0 faces north (+x on the server). Wraps at 360.");
   rotation_row->addWidget(_orientation, 1);
   move_layout->addLayout(rotation_row);
+
+  _delete_button = new QPushButton("Delete this spawn", this);
+  _delete_button->setToolTip
+    ("Takes it out of the world now. A spawn that came from the database becomes a DELETE in the\n"
+     "changeset; one you placed yourself simply goes away and emits nothing. Discard puts either\n"
+     "one back.");
+  move_layout->addWidget(_delete_button);
 
   move_layout->addWidget
     ( new QLabel("Nothing is written to the database until you save.", this));
@@ -302,6 +356,33 @@ DatabaseSpawnPanel::DatabaseSpawnPanel(MapView* map_view, QWidget* parent)
   connect(_save_button, &QPushButton::clicked, this, &DatabaseSpawnPanel::onSave);
   connect(_discard_button, &QPushButton::clicked, this, &DatabaseSpawnPanel::onDiscard);
   connect(focus_button, &QPushButton::clicked, this, &DatabaseSpawnPanel::onFocus);
+
+  connect(place_here, &QPushButton::clicked, this, &DatabaseSpawnPanel::onPlaceAtCamera);
+
+  // valueChanged, not editingFinished: this only enables a checkbox, so reacting to every step
+  // costs nothing and the alternative leaves place mode greyed out until focus moves elsewhere.
+  connect(_place_entry, QOverload<int>::of(&QSpinBox::valueChanged), this
+         , [this] (int) { updateSpawnActions(); });
+  connect(_delete_button, &QPushButton::clicked, this, &DatabaseSpawnPanel::onDelete);
+
+  // Exactly one mode may be armed. Resolved here rather than left to whichever branch MapView
+  // tests first, because that ordering is invisible from the panel and a click that sometimes
+  // moves and sometimes creates is unusable.
+  connect(_place_mode, &QCheckBox::toggled, this, [this] (bool on)
+    {
+      if (on)
+      {
+        _move_mode->setChecked(false);
+      }
+    });
+
+  connect(_move_mode, &QCheckBox::toggled, this, [this] (bool on)
+    {
+      if (on)
+      {
+        _place_mode->setChecked(false);
+      }
+    });
 
   connect(_spawn_list, &QListWidget::currentRowChanged, this
          , [this] (int) { onSelectionChanged(); });
@@ -446,6 +527,8 @@ void DatabaseSpawnPanel::onSelectionChanged()
     _orientation->setValue(degrees);
   }
 
+  updateSpawnActions();
+
   _map_view->markSpawnOverlayDirty();
 }
 
@@ -486,6 +569,120 @@ bool DatabaseSpawnPanel::moveMode() const
   return _move_mode->isChecked();
 }
 
+bool DatabaseSpawnPanel::placeMode() const
+{
+  return _place_mode->isChecked();
+}
+
+bool DatabaseSpawnPanel::placeCreature() const
+{
+  return _place_kind->currentIndex() == 0;
+}
+
+std::uint32_t DatabaseSpawnPanel::placeEntry() const
+{
+  int const value (_place_entry->value());
+
+  return value <= 0 ? 0u : static_cast<std::uint32_t>(value);
+}
+
+void DatabaseSpawnPanel::onPlaceAtCamera()
+{
+  if (placeEntry() == 0)
+  {
+    QMessageBox::information
+      ( this
+      , "Database spawns"
+      , "Enter the creature_template or gameobject_template entry id to place first."
+      );
+
+    return;
+  }
+
+  // The camera's own position, not the terrain cursor: this button exists for the case where
+  // there is no useful cursor, and a spawn a few yards in the air settles onto the ground the
+  // moment the user drags it. Aiming precisely is what place mode is for.
+  _map_view->createDatabaseSpawn
+    (placeCreature(), placeEntry(), _map_view->cameraPosition(), true);
+
+  refresh();
+}
+
+void DatabaseSpawnPanel::onDelete()
+{
+  Noggit::Database::SpawnRef const spawn (selectedSpawn());
+
+  if (!spawn.valid())
+  {
+    QMessageBox::information
+      (this, "Database spawns", "Select a spawn in the list first.");
+
+    return;
+  }
+
+  auto const* cache = _map_view->databaseSpawns();
+
+  // Whether this deletion will produce SQL decides whether it is worth a confirmation. Asked of
+  // the cache rather than inferred from the guid, so there is one authority on what "was in the
+  // database" means -- see SpawnSceneEntry::is_new.
+  bool from_database = true;
+
+  if (cache)
+  {
+    for (auto const* entry : cache->allEntries())
+    {
+      if (entry->ref() == spawn)
+      {
+        from_database = !entry->is_new;
+        break;
+      }
+    }
+  }
+
+  if (from_database)
+  {
+    auto const answer
+      ( QMessageBox::question
+        ( this
+        , "Database spawns"
+        , QString("Delete %1 guid %2?\n\nThe changeset will carry a DELETE for it, and for its "
+                  "creature_addon row where it has one. Nothing is written until you save, and "
+                  "Discard puts it back.")
+            .arg(spawn.kind == Noggit::Database::SpawnKind::CREATURE ? "creature" : "gameobject")
+            .arg(spawn.guid)
+        , QMessageBox::Yes | QMessageBox::No
+        , QMessageBox::No
+        )
+      );
+
+    if (answer != QMessageBox::Yes)
+    {
+      return;
+    }
+  }
+
+  _map_view->deleteDatabaseSpawn(spawn, true);
+
+  refresh();
+}
+
+void DatabaseSpawnPanel::updateSpawnActions()
+{
+  _delete_button->setEnabled(selectedSpawn().valid());
+
+  // Place mode is unusable without an entry id, and an armed mode that answers every click with
+  // the same dialog is worse than one that cannot be armed: it swallows clicks the terrain tools
+  // would otherwise have got, once per attempt, until the user works out why.
+  bool const placeable (placeEntry() != 0);
+
+  _place_mode->setEnabled(placeable);
+
+  if (!placeable)
+  {
+    _place_mode->setChecked(false);
+  }
+}
+
 Noggit::Database::SpawnRef DatabaseSpawnPanel::selectedSpawn() const
 {
   return refOf(_spawn_list->currentItem());
@@ -502,15 +699,22 @@ void DatabaseSpawnPanel::refresh()
   _spawn_list->clear();
 
   std::size_t pending = 0;
+  std::size_t moved = 0;
+  std::size_t placed = 0;
+  std::size_t deleted = 0;
 
   if (cache)
   {
     for (auto const* entry : cache->allEntries())
     {
+      // Three states, three markers. "+" is a spawn the user placed, and it needs to be
+      // distinguishable from a moved one at a glance: its guid is the editor's invention and
+      // will not be the guid the database issues, so anybody writing that number down is writing
+      // down the wrong thing.
       QString const label
         ( QString("%1%2  %3  %4")
-            .arg(entry->dirty ? "* " : "  ")
-            .arg(entry->guid)
+            .arg(entry->is_new ? "+ " : (entry->dirty ? "* " : "  "))
+            .arg(entry->is_new ? QString("(new)") : QString::number(entry->guid))
             .arg(entry->kind == Noggit::Database::SpawnKind::CREATURE ? "creature" : "gameobject")
             .arg(entry->instance
                    ? QString::fromStdString(entry->instance->model->file_key().stringRepr())
@@ -528,15 +732,27 @@ void DatabaseSpawnPanel::refresh()
       }
     }
 
-    pending = cache->dirtyCount();
+    // pendingCount, not dirtyCount: a session that placed or deleted spawns and moved none has
+    // changes to save, and gating the Save button on moves alone silently threw them away.
+    pending = cache->pendingCount();
+
+    moved = cache->dirtyEntries().size();
+    placed = cache->newEntries().size();
+    deleted = cache->removedSpawns().size();
   }
 
+  // Broken down rather than totalled, because the three are undone and reviewed differently and
+  // "3 changes" tells the user nothing about what the changeset will contain.
   _pending->setText
-    ( pending == 0 ? QString("No changes.")
-                   : QString("%1 spawn(s) moved, not yet saved.").arg(pending));
+    ( pending == 0
+        ? QString("No changes.")
+        : QString("Unsaved: %1 moved, %2 placed, %3 deleted.").arg(moved).arg(placed).arg(deleted)
+    );
 
   _save_button->setEnabled(pending > 0);
   _discard_button->setEnabled(pending > 0);
+
+  updateSpawnActions();
 
   // In this order: the overlay walk is what produces the drawn / not-drawn counts, and the status
   // line now reports them.
@@ -914,7 +1130,9 @@ void DatabaseSpawnPanel::onDiscard()
     ( QMessageBox::question
       ( this
       , "Database Spawns"
-      , "Discard the unsaved moves? The spawns stay where they are on screen until you reload."
+      , "Discard every unsaved change?\n\nMoves are forgotten, spawns you placed are removed, and "
+        "spawns you deleted come back. The moved spawns stay where they are on screen until you "
+        "reload -- only the pending changeset is cleared."
       , QMessageBox::Yes | QMessageBox::No
       , QMessageBox::No
       )
@@ -925,10 +1143,15 @@ void DatabaseSpawnPanel::onDiscard()
     return;
   }
 
-  if (auto* cache = _map_view->databaseSpawns())
-  {
-    cache->clearDirty();
-  }
+  // Through MapView, not through the cache directly: dropping a placed spawn releases the last
+  // reference to its Model, whose destructor destroys OpenGL vertex arrays and throws when no
+  // context is bound -- a terminate rather than an error. MapView owns the context; this widget
+  // does not.
+  //
+  // This is also the only undo the database spawn system has. Nothing under src/noggit/database
+  // registers with ActionManager, so Ctrl+Z does not reach a spawn move, placement or deletion,
+  // and this button is what puts them back.
+  _map_view->discardDatabaseSpawnChanges();
 
   refresh();
 }

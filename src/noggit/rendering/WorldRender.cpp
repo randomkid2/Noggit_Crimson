@@ -1085,6 +1085,39 @@ void WorldRender::draw (glm::mat4x4 const& model_view
           {
             spawn_model->_textures[saved.first] = std::move(saved.second);
           }
+
+          // Re-point this model's box count at the batch that was just uploaded.
+          //
+          // The box pass below calls ModelRender::drawBox, which issues one instanced draw of
+          // `count` boxes against ModelRender::_transform_buffer -- the single per-model buffer
+          // that ModelRender::draw overwrites with its own instances on every call
+          // (ModelRender.cpp:235). So the recorded count is only meaningful as "the size of the
+          // LAST batch uploaded for this model this frame".
+          //
+          // ModelRender::draw records it with emplace (ModelRender.cpp:213,222), which keeps the
+          // FIRST count it is offered. Upstream that is the same thing: models_to_draw is keyed by
+          // Model*, so a model is drawn exactly once per frame and first == last. This pass breaks
+          // that invariant -- db_spawns_to_draw is keyed by (model, display id) and runs after the
+          // models_to_draw loop, so one model can be drawn several times per frame, and the count
+          // that survives belongs to a batch the transform buffer no longer holds. When it is the
+          // larger of the two, the box pass fetches instance transforms past the end of the
+          // buffer; when it is smaller, boxes are silently dropped.
+          //
+          // Only an existing entry is corrected, never created. Whether an entry is there at all
+          // is draw()'s decision about whether this model wants boxes, and manufacturing one here
+          // would outline models that asked for none.
+          //
+          // What this cannot recover: if the same model was also drawn as an ADT or WMO doodad
+          // above, that batch's transforms are already gone from the buffer, so its boxes are not
+          // drawn this frame. There is one transform buffer per model and the box pass runs once,
+          // after everything -- so the choice is between the spawn boxes and out-of-bounds reads,
+          // not between the spawn boxes and the doodad ones.
+          auto const box_entry (model_boxes_to_draw.find(spawn_model));
+
+          if (box_entry != model_boxes_to_draw.end())
+          {
+            box_entry->second = spawn_group.second.transforms.size();
+          }
         }
 
         /*

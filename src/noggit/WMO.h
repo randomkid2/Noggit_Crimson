@@ -164,7 +164,10 @@ class WMOGroup
   friend class Noggit::Rendering::WMOGroupRender;
 
 public:
-  WMOGroup(WMO *wmo, BlizzardArchive::ClientFile* f, int num, char const* names);
+  // `group_names` is the whole MOGN chunk copied out with a guaranteed trailing
+  // NUL, not a pointer aliased over the file buffer: the name offset stored in
+  // MOGI has to be bounds checked before it can be turned into a string.
+  WMOGroup(WMO *wmo, BlizzardArchive::ClientFile* f, int num, std::vector<char> const& group_names);
   WMOGroup(WMOGroup const&);
 
   void load();

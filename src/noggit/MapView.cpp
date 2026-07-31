@@ -447,6 +447,51 @@ std::string MapView::reportDatabaseSpawnOutcome
   return (is_error ? std::string("ERR ") : std::string("OK ")) + message;
 }
 
+#ifdef USE_MYSQL_UID_STORAGE
+Noggit::Database::SchemaModel const& MapView::databaseSchemaFor
+  ( Noggit::Database::WorldDatabaseConnection const& connection
+  , Noggit::Database::ConnectionConfig const& config
+  , bool refresh
+  )
+{
+  // connection.schema(), not config.schema, even though the connection was opened with that
+  // config: the connection is the authority on what it is actually pointed at, and it is what
+  // readModel is about to be handed below. Fingerprinting one and measuring the other is how a
+  // cache comes to answer for a schema nobody read.
+  std::string fingerprint (config.host);
+  fingerprint += ':';
+  fingerprint += std::to_string(config.port);
+  fingerprint += '/';
+  fingerprint += connection.schema();
+  fingerprint += '@';
+  fingerprint += config.user;
+
+  if (!refresh && _db_schema && fingerprint == _db_schema_fingerprint)
+  {
+    return *_db_schema;
+  }
+
+  // Reset first, so a throw from readModel leaves no cached model at all rather than the previous
+  // server's still answering under the new fingerprint.
+  _db_schema.reset();
+  _db_schema_fingerprint.clear();
+
+  auto model
+    ( std::make_unique<Noggit::Database::SchemaModel>
+        (Noggit::Database::SchemaIntrospector::readModel(connection, connection.schema())) );
+
+  _db_schema = std::move(model);
+  _db_schema_fingerprint = std::move(fingerprint);
+
+  Log << "Introspected schema \"" << connection.schema() << "\": "
+      << _db_schema->tableCount() << " table(s), " << _db_schema->columnCount()
+      << " column(s). Cached until the connection settings change or spawns are loaded again."
+      << std::endl;
+
+  return *_db_schema;
+}
+#endif
+
 std::string MapView::loadDatabaseSpawns(bool all_loaded_tiles, bool interactive, bool force)
 {
 #ifdef USE_MYSQL_UID_STORAGE
@@ -556,11 +601,14 @@ std::string MapView::loadDatabaseSpawnsForTiles
   // Discard already asks before doing exactly that, so loading doing it silently was the
   // inconsistency -- and the more damaging half, because Discard is a button you press on purpose
   // while Load is one you press to see more.
-  if (_db_spawn_scene && _db_spawn_scene->dirtyCount() > 0)
+  // pendingCount, not dirtyCount: placements and deletions are discarded by a reload exactly as
+  // moves are, and counting only moves meant a session that had placed twenty spawns and moved
+  // none was told there was nothing to lose.
+  if (_db_spawn_scene && _db_spawn_scene->pendingCount() > 0)
   {
     std::string const warning
-      ( std::to_string(_db_spawn_scene->dirtyCount())
-      + " spawn(s) have unsaved changes. Loading discards them." );
+      ( std::to_string(_db_spawn_scene->pendingCount())
+      + " unsaved spawn change(s) -- moves, placements and deletions. Loading discards them." );
 
     if (!interactive)
     {
@@ -593,14 +641,19 @@ std::string MapView::loadDatabaseSpawnsForTiles
     // connection would make the layer refuse to construct against anything but the dev schema --
     // which would stop the overlay working against a real world database, the main thing it is
     // for. See HARD RULE 1: reads against a live schema are fine.
+    auto const config (Noggit::Database::DatabaseSettings::readConnectionConfig());
+
     Noggit::Database::WorldDatabaseConnection connection
-      ( Noggit::Database::DatabaseSettings::readConnectionConfig()
+      ( config
       , Noggit::Database::AccessMode::READ_ONLY
       , Noggit::Database::DatabaseSettings::readWritableSchema()
       );
 
-    Noggit::Database::SchemaModel const schema
-      (Noggit::Database::SchemaIntrospector::readModel(connection, connection.schema()));
+    // refresh true: this is the deliberate "go and read the database" action, it happens once per
+    // user gesture rather than once per click, and it is therefore the natural place to pay for a
+    // fresh introspection. Everything else -- placing a spawn, saving a changeset -- reuses what
+    // this leaves cached. See databaseSchemaFor.
+    Noggit::Database::SchemaModel const& schema (databaseSchemaFor(connection, config, true));
 
     auto const map_id (static_cast<std::uint16_t>(_world->getMapID()));
 
@@ -745,6 +798,500 @@ std::string MapView::loadDatabaseSpawnsForTiles
 #endif
 }
 
+#ifdef USE_MYSQL_UID_STORAGE
+namespace
+{
+  // The template lookup behind spawn creation.
+  //
+  // Kept here rather than in SpawnQuery because it is the only query in the project that starts
+  // from an entry id instead of from a tile, and because it exists to serve one interactive
+  // action. Every table and column it names is checked against the introspected schema first --
+  // HARD RULE 3 -- and it refuses rather than degrading: a create that silently resolved to no
+  // model would place a spawn the user cannot see, which is the failure this whole path is
+  // guarding against.
+
+  constexpr char const* TABLE_CREATURE_TEMPLATE = "creature_template";
+  constexpr char const* TABLE_CREATURE_TEMPLATE_MODEL = "creature_template_model";
+  constexpr char const* TABLE_GAMEOBJECT_TEMPLATE = "gameobject_template";
+
+  constexpr char const* COLUMN_ENTRY = "entry";
+  constexpr char const* COLUMN_NAME = "name";
+  constexpr char const* COLUMN_DISPLAY_ID = "displayId";
+  constexpr char const* COLUMN_TYPE = "type";
+
+  // creature_template_model, where a core has it instead of modelid1..4.
+  constexpr char const* COLUMN_CREATURE_ID = "CreatureID";
+  constexpr char const* COLUMN_CREATURE_DISPLAY_ID = "CreatureDisplayID";
+  constexpr char const* COLUMN_IDX = "Idx";
+
+  // Four, matching SpawnQueryDetail's MODEL_CANDIDATE_COUNT and the cap modelid1..4 imposes. The
+  // count only ever has to answer "was there more than one".
+  constexpr std::size_t MODEL_CANDIDATE_COUNT = 4;
+
+  std::string quotedIdentifier(std::string const& name)
+  {
+    return "`" + name + "`";
+  }
+
+  void requireColumn
+    (Noggit::Database::SchemaModel const& schema, char const* table, char const* column)
+  {
+    if (!schema.hasColumn(table, column))
+    {
+      throw Noggit::Database::SchemaCapabilityError
+        (std::string(table) + " has no " + column + " column, so an entry id cannot be resolved"
+         " to a model on this schema.");
+    }
+  }
+
+  std::string rowField(Noggit::Database::ResultRow const& row, std::size_t index)
+  {
+    return index < row.size() ? row[index] : std::string();
+  }
+
+  std::uint32_t rowUnsigned(Noggit::Database::ResultRow const& row, std::size_t index)
+  {
+    std::string const text (rowField(row, index));
+
+    if (text.empty())
+    {
+      return 0;
+    }
+
+    try
+    {
+      unsigned long long const value (std::stoull(text));
+
+      // Saturating, not wrapping. A value too wide for the column has to stay obviously wrong
+      // rather than becoming a small number that names a different display id.
+      return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(value);
+    }
+    catch (std::exception const&)
+    {
+      return 0;
+    }
+  }
+
+  // creature_template row for one entry: name plus up to four display id candidates, in the
+  // template's own order. Resolution of the candidates into a single display id is
+  // SpawnDisplay::resolveCreatureTemplateInfo's job, exactly as it is on the read path.
+  Noggit::Database::CreatureTemplateInfo creatureTemplateFor
+    ( Noggit::Database::WorldDatabaseConnection const& connection
+    , Noggit::Database::SchemaModel const& schema
+    , std::uint32_t entry
+    )
+  {
+    if (!schema.hasTable(TABLE_CREATURE_TEMPLATE))
+    {
+      throw Noggit::Database::SchemaCapabilityError("there is no creature_template table");
+    }
+
+    requireColumn(schema, TABLE_CREATURE_TEMPLATE, COLUMN_ENTRY);
+
+    // Which columns hold the models is a schema question, and SchemaModel is the single authority
+    // on it -- the published references claim creature_template_model coexists with modelid1..4
+    // on 3.3.5, and it does not. Asking here rather than probing keeps one copy of that rule.
+    bool const from_model_table
+      ( schema.creatureModelSource()
+          == Noggit::Database::CreatureModelSource::TEMPLATE_MODEL_TABLE );
+
+    std::string select (schema.hasColumn(TABLE_CREATURE_TEMPLATE, COLUMN_NAME)
+                          ? quotedIdentifier(COLUMN_NAME)
+                          : std::string("''"));
+
+    if (!from_model_table)
+    {
+      for (std::size_t i = 1; i <= MODEL_CANDIDATE_COUNT; ++i)
+      {
+        std::string const column ("modelid" + std::to_string(i));
+
+        // A missing slot degrades to a literal 0 rather than failing the query: modelid3 and
+        // modelid4 are absent on some generations and their absence is not an error, it is a
+        // template with fewer alternatives.
+        select += ", " + (schema.hasColumn(TABLE_CREATURE_TEMPLATE, column)
+                            ? quotedIdentifier(column)
+                            : std::string("0"));
+      }
+    }
+
+    auto const rows
+      ( connection.query
+          ( "SELECT " + select + " FROM " + quotedIdentifier(TABLE_CREATURE_TEMPLATE)
+          + " WHERE " + quotedIdentifier(COLUMN_ENTRY) + " = " + std::to_string(entry)
+          + " LIMIT 1"
+          )
+      );
+
+    if (rows.empty())
+    {
+      throw std::runtime_error
+        ("there is no creature_template row with entry " + std::to_string(entry) + ".");
+    }
+
+    std::vector<std::uint32_t> candidates;
+
+    if (from_model_table)
+    {
+      requireColumn(schema, TABLE_CREATURE_TEMPLATE_MODEL, COLUMN_CREATURE_ID);
+      requireColumn(schema, TABLE_CREATURE_TEMPLATE_MODEL, COLUMN_CREATURE_DISPLAY_ID);
+
+      // ORDER BY, never a bare LIMIT: an unordered result may legitimately come back in a
+      // different order each time, and a spawn that draws a different model on each placement is
+      // unusable. Idx where the schema has it, the display id itself where it does not --
+      // arbitrary but stable beats meaningful but nondeterministic.
+      std::string const order
+        ( schema.hasColumn(TABLE_CREATURE_TEMPLATE_MODEL, COLUMN_IDX)
+            ? COLUMN_IDX
+            : COLUMN_CREATURE_DISPLAY_ID
+        );
+
+      for (auto const& row : connection.query
+             ( "SELECT " + quotedIdentifier(COLUMN_CREATURE_DISPLAY_ID)
+             + " FROM " + quotedIdentifier(TABLE_CREATURE_TEMPLATE_MODEL)
+             + " WHERE " + quotedIdentifier(COLUMN_CREATURE_ID) + " = " + std::to_string(entry)
+             + " AND " + quotedIdentifier(COLUMN_CREATURE_DISPLAY_ID) + " <> 0"
+             + " ORDER BY " + quotedIdentifier(order)
+             + " LIMIT " + std::to_string(MODEL_CANDIDATE_COUNT)
+             ))
+      {
+        candidates.push_back(rowUnsigned(row, 0));
+      }
+    }
+    else
+    {
+      for (std::size_t i = 0; i < MODEL_CANDIDATE_COUNT; ++i)
+      {
+        candidates.push_back(rowUnsigned(rows.front(), i + 1));
+      }
+    }
+
+    // 0 for the spawn's own modelid: a newly placed creature has none, so the template decides.
+    // Through the same pure rule the reader uses, so a created spawn and the identical row after
+    // a reload resolve to the same model.
+    return Noggit::Database::SpawnDisplay::resolveCreatureTemplateInfo
+      (0, candidates, rowField(rows.front(), 0));
+  }
+
+  Noggit::Database::GameObjectTemplateInfo gameObjectTemplateFor
+    ( Noggit::Database::WorldDatabaseConnection const& connection
+    , Noggit::Database::SchemaModel const& schema
+    , std::uint32_t entry
+    )
+  {
+    if (!schema.hasTable(TABLE_GAMEOBJECT_TEMPLATE))
+    {
+      throw Noggit::Database::SchemaCapabilityError("there is no gameobject_template table");
+    }
+
+    // Both required, not optional. `gameobject` has no per-spawn display column at all, so
+    // without displayId there is no model for a gameobject anywhere, and without type there is
+    // no way to tell an invisible-by-nature entry from a broken one.
+    requireColumn(schema, TABLE_GAMEOBJECT_TEMPLATE, COLUMN_ENTRY);
+    requireColumn(schema, TABLE_GAMEOBJECT_TEMPLATE, COLUMN_DISPLAY_ID);
+    requireColumn(schema, TABLE_GAMEOBJECT_TEMPLATE, COLUMN_TYPE);
+
+    std::string const name_column
+      ( schema.hasColumn(TABLE_GAMEOBJECT_TEMPLATE, COLUMN_NAME)
+          ? quotedIdentifier(COLUMN_NAME)
+          : std::string("''")
+      );
+
+    auto const rows
+      ( connection.query
+          ( "SELECT " + quotedIdentifier(COLUMN_DISPLAY_ID) + ", "
+          + quotedIdentifier(COLUMN_TYPE) + ", " + name_column
+          + " FROM " + quotedIdentifier(TABLE_GAMEOBJECT_TEMPLATE)
+          + " WHERE " + quotedIdentifier(COLUMN_ENTRY) + " = " + std::to_string(entry)
+          + " LIMIT 1"
+          )
+      );
+
+    if (rows.empty())
+    {
+      throw std::runtime_error
+        ("there is no gameobject_template row with entry " + std::to_string(entry) + ".");
+    }
+
+    Noggit::Database::GameObjectTemplateInfo info;
+    info.display_id = rowUnsigned(rows.front(), 0);
+    info.type = rowUnsigned(rows.front(), 1);
+    info.name = rowField(rows.front(), 2);
+
+    return info;
+  }
+}
+#endif
+
+std::string MapView::createDatabaseSpawn
+  (bool creature, std::uint32_t entry, glm::vec3 const& position, bool interactive)
+{
+#ifdef USE_MYSQL_UID_STORAGE
+  auto const report = [this, interactive] (std::string const& message, bool is_error)
+  {
+    return reportDatabaseSpawnOutcome(message, is_error, interactive);
+  };
+
+  if (!Noggit::Database::DatabaseSettings::isEnabled())
+  {
+    return report("The database feature is not enabled. Turn it on and set the connection "
+                  "details in Settings first.", true);
+  }
+
+  if (entry == 0)
+  {
+    return report("Enter the creature_template or gameobject_template entry id to place. 0 names"
+                  " no template row.", true);
+  }
+
+  try
+  {
+    // READ_ONLY, like every other query this class issues. Creating a spawn writes nothing to any
+    // database -- it adds a pending row to the scene cache, and only the changeset carries it out
+    // of the editor.
+    auto const config (Noggit::Database::DatabaseSettings::readConnectionConfig());
+
+    Noggit::Database::WorldDatabaseConnection connection
+      ( config
+      , Noggit::Database::AccessMode::READ_ONLY
+      , Noggit::Database::DatabaseSettings::readWritableSchema()
+      );
+
+    // Cached, NOT re-read. This runs from mousePressEvent, on the GUI thread, once per click in
+    // place mode -- and re-reading information_schema.columns for the whole schema there stalled
+    // the editor on every attempt to put a creature down. The two template lookups below are what
+    // this connection is actually for: they are indexed single-row SELECTs on an entry id.
+    Noggit::Database::SchemaModel const& schema (databaseSchemaFor(connection, config));
+
+    // Through the tested seam, never by hand. positionFor / serverPositionFor are exact inverses
+    // and this is the direction the editor is unusual for taking: everything else reads a server
+    // coordinate and displays it, while this takes a place on screen and has to name it in the
+    // frame the row will be written in.
+    Noggit::Database::NoggitPlacement placement;
+    placement.x = position.x;
+    placement.y = position.y;
+    placement.z = position.z;
+
+    Noggit::Database::WorldPosition const world
+      (Noggit::Database::SpawnPlacement::serverPositionFor(placement));
+
+    if (!_db_spawn_scene)
+    {
+      _db_spawn_scene = std::make_unique<Noggit::Database::SpawnSceneCache>(getRenderContext());
+    }
+
+    // Building the entry constructs a ModelInstance and takes a model reference, and a refused
+    // create releases one again on the way out. Both need a context bound -- see the long note in
+    // loadDatabaseSpawnsForTiles, and the warning on SpawnSceneCache::addCreature.
+    makeCurrent();
+    OpenGL::context::scoped_setter const _gl_context (::gl, context());
+
+    Noggit::Database::SpawnCreation created;
+    std::string label;
+
+    if (creature)
+    {
+      Noggit::Database::CreatureSpawn spawn;
+      spawn.id = entry;
+      spawn.map = static_cast<std::uint16_t>(_world->getMapID());
+      spawn.position = world;
+
+      // Facing north, deterministically, rather than derived from wherever the camera happens to
+      // be pointing. A placement that came out at a different angle depending on the approach
+      // would be impossible to repeat, and the facing is one spin box away.
+      spawn.orientation = 0.0;
+
+      // The core's defaults for a spawn a GM would create: idle, no wander, alive.
+      // MovementType 0 with wander_distance 0 is the pairing the core requires, and
+      // SpawnValidation enforces it on the way into the changeset.
+      spawn.movement_type = Noggit::Database::MovementType::IDLE;
+      spawn.wander_distance = 0.0;
+      spawn.cur_health = 1;
+
+      spawn.template_info = creatureTemplateFor(connection, schema, entry);
+      label = spawn.template_info.name;
+
+      created = _db_spawn_scene->addCreature(spawn);
+    }
+    else
+    {
+      Noggit::Database::GameObjectSpawn spawn;
+      spawn.id = entry;
+      spawn.map = static_cast<std::uint16_t>(_world->getMapID());
+      spawn.position = world;
+      spawn.orientation = 0.0;
+
+      // Left at the identity so the emitter derives it from `orientation`. Writing a quaternion
+      // here as well would be two statements of the same fact, and the emitter warns when they
+      // disagree precisely because they are so easy to let drift.
+      spawn.template_info = gameObjectTemplateFor(connection, schema, entry);
+      label = spawn.template_info.name;
+
+      created = _db_spawn_scene->addGameObject(spawn);
+    }
+
+    if (!created.created())
+    {
+      return report
+        ( std::string("Entry ") + std::to_string(entry) + " cannot be placed: "
+        + created.failure_reason
+        + "\n\nNothing was created. A spawn with no model cannot be selected, moved or seen, so"
+          " it would exist only as a row in the changeset."
+        , true
+        );
+    }
+
+    // Turned on for the same reason the load path turns it on: having placed something and then
+    // not shown it reads as the placement having failed.
+    _draw_db_spawns.set(true);
+    _db_spawn_scene->setSelected(created.spawn);
+
+    if (_db_spawn_panel)
+    {
+      _db_spawn_panel->refresh();
+      _db_spawn_panel->selectSpawn(created.spawn);
+    }
+
+    markSpawnOverlayDirty();
+
+    std::string const message
+      ( std::string("Placed ") + (creature ? "creature" : "gameobject") + " entry "
+      + std::to_string(entry) + (label.empty() ? std::string() : " (" + label + ")")
+      + ". Its guid is allocated from MAX(guid) when the changeset is applied; nothing is written"
+        " until you save." );
+
+    Log << message << std::endl;
+    _main_window->statusBar()->showMessage(QString::fromStdString(message), 5000);
+
+    // Not through `report`: success on this path must not raise a modal, because placing spawns
+    // is something a user does repeatedly and a dialog per placement is unusable.
+    return "OK " + message;
+  }
+  catch (std::exception const& e)
+  {
+    LogError << "Creating a database spawn failed: " << e.what() << std::endl;
+
+    return report(std::string("Could not place the spawn. ") + e.what(), true);
+  }
+#else
+  (void)creature;
+  (void)entry;
+  (void)position;
+
+  if (interactive)
+  {
+    QMessageBox::information
+      ( this
+      , "Database spawns"
+      , "This build has no database support. Reconfigure with -DUSE_SQL=ON."
+      );
+  }
+
+  return "ERR this build has no database support (reconfigure with -DUSE_SQL=ON)";
+#endif
+}
+
+std::string MapView::deleteDatabaseSpawn
+  (Noggit::Database::SpawnRef const& spawn, bool interactive)
+{
+  auto const report = [this, interactive] (std::string const& message, bool is_error)
+  {
+    return reportDatabaseSpawnOutcome(message, is_error, interactive);
+  };
+
+  if (!_db_spawn_scene || !spawn.valid())
+  {
+    return report("Select a spawn in the list first.", true);
+  }
+
+  // Counted before and after rather than compared against the provisional guid range, which
+  // would put a second copy of PROVISIONAL_GUID_BASE here to fall out of step with the one in
+  // SpawnSceneCache. removedSpawns() is the cache's own answer to "will this produce a DELETE",
+  // and it is the same answer saveDatabaseChanges will act on.
+  std::size_t const tombstones_before (_db_spawn_scene->removedSpawns().size());
+
+  // Deleting a spawn the user PLACED destroys it outright -- it has no row to delete and nothing
+  // to be restored to, so leaving it in the cache's tombstone list only made it unreachable. That
+  // destruction releases its model reference, and the last reference to a Model destroys OpenGL
+  // vertex arrays from a destructor that throws when no context is bound: a terminate, not an
+  // error. Deleting a database-issued spawn still releases nothing, but this path cannot know
+  // which it was handed until remove() has run, so the guard covers both.
+  //
+  // Same guard, same reason, as loadDatabaseSpawnsForTiles and discardDatabaseSpawnChanges.
+  makeCurrent();
+  OpenGL::context::scoped_setter const _gl_context (::gl, context());
+
+  if (!_db_spawn_scene->remove(spawn))
+  {
+    return report("That spawn is not loaded, so there is nothing to delete.", true);
+  }
+
+  // No new tombstone means remove() destroyed it, which it does only for a spawn the user placed.
+  // Still derived from the cache's own answer rather than from the guid, so the two cannot drift.
+  bool const was_new (_db_spawn_scene->removedSpawns().size() == tombstones_before);
+
+  if (_db_spawn_panel)
+  {
+    _db_spawn_panel->refresh();
+  }
+
+  markSpawnOverlayDirty();
+
+  // The two cases are genuinely different and the user is entitled to know which one happened.
+  // Deleting a spawn the user placed a moment ago produces no SQL at all; deleting one the
+  // database issued produces a DELETE that a reviewer will see.
+  std::string const message
+    ( was_new
+        ? std::string("Removed the spawn you placed. It was never in the database, so nothing is"
+                      " deleted and no SQL is emitted for it.")
+        : std::string("Marked ")
+            + (spawn.kind == Noggit::Database::SpawnKind::CREATURE ? "creature" : "gameobject")
+            + " guid " + std::to_string(spawn.guid)
+            + " for deletion. The DELETE is written when you save; Discard puts it back."
+    );
+
+  Log << message << std::endl;
+  _main_window->statusBar()->showMessage(QString::fromStdString(message), 5000);
+
+  return "OK " + message;
+}
+
+std::string MapView::discardDatabaseSpawnChanges()
+{
+  if (!_db_spawn_scene)
+  {
+    return "OK Nothing to discard.";
+  }
+
+  std::size_t const pending (_db_spawn_scene->pendingCount());
+
+  // Dropping a created spawn releases the last reference to its Model, which destroys OpenGL
+  // vertex arrays from a destructor that throws when no context is bound -- a terminate, not an
+  // error. Same guard, same reason, as loadDatabaseSpawnsForTiles.
+  makeCurrent();
+  OpenGL::context::scoped_setter const _gl_context (::gl, context());
+
+  std::size_t const dropped (_db_spawn_scene->discardPending());
+
+  if (_db_spawn_panel)
+  {
+    _db_spawn_panel->refresh();
+  }
+
+  markSpawnOverlayDirty();
+
+  std::string message
+    (std::to_string(pending) + " unsaved change(s) discarded");
+
+  if (dropped > 0)
+  {
+    message += ", including " + std::to_string(dropped) + " placed spawn(s) removed";
+  }
+
+  message += ". Deleted spawns are back where they were.";
+
+  return "OK " + message;
+}
+
 std::string MapView::saveDatabaseChanges(bool apply_to_dev, bool interactive)
 {
 #ifdef USE_MYSQL_UID_STORAGE
@@ -765,28 +1312,40 @@ std::string MapView::saveDatabaseChanges(bool apply_to_dev, bool interactive)
     return (is_error ? std::string("ERR ") : std::string("OK ")) + message;
   };
 
-  if (!_db_spawn_scene || _db_spawn_scene->dirtyCount() == 0)
+  if (!_db_spawn_scene || _db_spawn_scene->pendingCount() == 0)
   {
-    return report("Nothing has been moved, so there is nothing to save.", true);
+    // pendingCount, not dirtyCount: a session that only placed or only deleted spawns has moved
+    // nothing, and refusing to save it would silently discard the whole of the user's work.
+    return report("Nothing has been changed, so there is nothing to save.", true);
   }
 
   try
   {
+    auto const read_config (Noggit::Database::DatabaseSettings::readConnectionConfig());
+
     Noggit::Database::WorldDatabaseConnection read_connection
-      ( Noggit::Database::DatabaseSettings::readConnectionConfig()
+      ( read_config
       , Noggit::Database::AccessMode::READ_ONLY
       , Noggit::Database::DatabaseSettings::readWritableSchema()
       );
 
-    Noggit::Database::SchemaModel const schema
-      (Noggit::Database::SchemaIntrospector::readModel(read_connection, read_connection.schema()));
+    // Cached like the create path. ChangesetBuilder takes its SchemaModel by value, so what the
+    // emitter reasons about is a copy taken here -- a later settings change cannot retune a
+    // changeset already being built.
+    Noggit::Database::SchemaModel const& schema (databaseSchemaFor(read_connection, read_config));
 
     Noggit::Database::ChangesetBuilder::Options options;
-    options.description = "Spawn positions edited in Noggit";
+    options.description = "Spawn edits from Noggit: moves, placements and deletions";
 
     Noggit::Database::ChangesetBuilder builder (schema, options);
 
+    // Three lists, three emitter entry points, and the separation matters. dirtyEntries() is
+    // edits only -- a spawn the user placed is excluded there even after being dragged, because
+    // its guid is provisional and an INSERT keyed off it would overwrite a real row. See
+    // SpawnSceneEntry::is_new.
     auto const dirty (_db_spawn_scene->dirtyEntries());
+    auto const created (_db_spawn_scene->newEntries());
+    auto const removed (_db_spawn_scene->removedSpawns());
 
     for (auto const* entry : dirty)
     {
@@ -797,6 +1356,35 @@ std::string MapView::saveDatabaseChanges(bool apply_to_dev, bool interactive)
       else
       {
         builder.addGameObject(entry->gameobject);
+      }
+    }
+
+    for (auto const* entry : created)
+    {
+      if (entry->kind == Noggit::Database::SpawnKind::CREATURE)
+      {
+        builder.addNewCreature(entry->creature);
+      }
+      else
+      {
+        builder.addNewGameObject(entry->gameobject);
+      }
+    }
+
+    // removedSpawns() carries only guids the database issued: a spawn created and deleted again
+    // before saving is absent from all three lists and produces no SQL whatever.
+    for (auto const& spawn : removed)
+    {
+      if (spawn.kind == Noggit::Database::SpawnKind::CREATURE)
+      {
+        // Takes the creature_addon row with it. That is the one case where clearing the addon is
+        // right -- the creature row it belonged to is going away, so what would be left is an
+        // orphan rather than anybody's data.
+        builder.removeCreature(spawn.guid);
+      }
+      else
+      {
+        builder.removeGameObject(spawn.guid);
       }
     }
 
@@ -833,7 +1421,9 @@ std::string MapView::saveDatabaseChanges(bool apply_to_dev, bool interactive)
     file.close();
 
     std::string message
-      ( std::to_string(dirty.size()) + " spawn(s) written to " + path.toStdString());
+      ( std::to_string(dirty.size()) + " moved, " + std::to_string(created.size())
+      + " placed and " + std::to_string(removed.size()) + " deleted spawn(s) written to "
+      + path.toStdString() );
 
     if (apply_to_dev)
     {
@@ -858,7 +1448,36 @@ std::string MapView::saveDatabaseChanges(bool apply_to_dev, bool interactive)
                + " (" + std::to_string(statements) + " statements)";
     }
 
-    _db_spawn_scene->clearDirty();
+    // Dropping the placed spawns releases their model references, which destroys OpenGL vertex
+    // arrays from a destructor -- the same terminate-rather-than-throw hazard the load path
+    // guards. This slot had no context bound before creation existed, because clearDirty()
+    // destroyed nothing.
+    makeCurrent();
+    OpenGL::context::scoped_setter const _gl_context (::gl, context());
+
+    std::size_t const dropped (_db_spawn_scene->clearPending());
+
+    if (dropped > 0)
+    {
+      // Said plainly, because the spawns visibly disappear and the reason is not guessable. Their
+      // guids are still the editor's invention: the file has been written, not necessarily
+      // applied, and even when it has been, nothing told the editor which guids the server chose.
+      // Keeping them would leave entries whose next save either creates them a second time or
+      // writes a fictional guid into an INSERT that overwrites a real row.
+      message += ". The " + std::to_string(dropped) + " placed spawn(s) have been removed from the"
+                 " view: their guids are chosen by the server when the file is applied, so reload"
+                 " the tile to see them with the guids the database issued";
+    }
+
+    // Refreshed here rather than only in the panel's own handler: clearPending() drops the placed
+    // spawns from the cache, so a save driven from the dev bridge or the menu would otherwise
+    // leave the list showing entries that no longer exist.
+    if (_db_spawn_panel)
+    {
+      _db_spawn_panel->refresh();
+    }
+
+    markSpawnOverlayDirty();
 
     Log << message << std::endl;
     _main_window->statusBar()->showMessage(QString::fromStdString(message), 8000);
@@ -1503,6 +2122,71 @@ std::string MapView::handleBridgeCommand(std::string const& line)
     bool const apply (argv.size() > 1 && argv[1] == "apply");
 
     return saveDatabaseChanges(apply, false);
+  }
+
+  if (command == "createspawn")
+  {
+    double entry = 0.0;
+
+    if (argv.size() < 3 || (argv[1] != "creature" && argv[1] != "gameobject")
+        || !number(2, entry))
+    {
+      return "ERR usage: createspawn creature|gameobject <entry> [<x> <y> <z>]"
+             "   (Noggit coordinates; the cursor position when omitted)";
+    }
+
+    // The terrain cursor by default, which is where the panel's place mode puts things too. An
+    // explicit position exists so a script can place a spawn without a mouse -- and the numbers
+    // are Noggit's, not the server's, so a bridge session and a click go through the same
+    // conversion rather than two.
+    glm::vec3 position (_cursor_pos);
+
+    if (argv.size() >= 6)
+    {
+      double x = 0.0;
+      double y = 0.0;
+      double z = 0.0;
+
+      if (!number(3, x) || !number(4, y) || !number(5, z))
+      {
+        return "ERR usage: createspawn creature|gameobject <entry> [<x> <y> <z>]";
+      }
+
+      position = glm::vec3( static_cast<float>(x)
+                          , static_cast<float>(y)
+                          , static_cast<float>(z)
+                          );
+    }
+
+    return createDatabaseSpawn
+      (argv[1] == "creature", static_cast<std::uint32_t>(entry), position, false);
+  }
+
+  if (command == "deletespawn")
+  {
+    double guid = 0.0;
+
+    if (!number(1, guid))
+    {
+      return "ERR usage: deletespawn <guid> [creature|gameobject]";
+    }
+
+    Noggit::Database::SpawnRef spawn;
+    std::string const error
+      (resolve_spawn(static_cast<std::uint32_t>(guid)
+                    , argv.size() > 2 ? argv[2] : std::string(), spawn));
+
+    if (!error.empty())
+    {
+      return error;
+    }
+
+    return deleteDatabaseSpawn(spawn, false);
+  }
+
+  if (command == "discardchanges")
+  {
+    return discardDatabaseSpawnChanges();
   }
 
   if (command == "rotatespawn")
@@ -5818,6 +6502,28 @@ void MapView::mousePressEvent(QMouseEvent* event)
         return;
       }
     }
+  }
+
+  // Placing a NEW spawn, on the same terms as move mode: ahead of the active tool, off by
+  // default, and behind a deliberate toggle. The two modes are mutually exclusive in the panel,
+  // so at most one of these branches can be armed at a time.
+  //
+  // _cursor_pos is the terrain cursor, i.e. where the click actually landed on the ground --
+  // the same value move mode uses. Taking the camera position instead would put the spawn inside
+  // the viewer.
+  if (event->button() == Qt::LeftButton && _db_spawn_panel && _db_spawn_panel->placeMode()
+   && !gizmo_has_the_click)
+  {
+    // Interactive: a human clicked, so a failure -- an entry that does not exist, a template
+    // with no model -- has to say so rather than doing nothing visible.
+    createDatabaseSpawn( _db_spawn_panel->placeCreature()
+                       , _db_spawn_panel->placeEntry()
+                       , _cursor_pos
+                       , true
+                       );
+
+    _needs_redraw = true;
+    return;
   }
 
   activeTool()->onMousePress({

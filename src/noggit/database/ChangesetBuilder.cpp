@@ -34,6 +34,16 @@ namespace
   constexpr char const* VARIABLE_GAMEOBJECT_GUID = "@OGUID";
   constexpr char const* VARIABLE_PATH = "@PATH";
 
+  // Separate variables for created spawns, because they are allocated differently: @CGUID is SET
+  // to a guid the editor READ, while @CGUID_NEW is SET to an expression the SERVER evaluates when
+  // the file is applied. One variable cannot be both, and a created row keyed off the edited
+  // spawns' base would overwrite a row somebody else authored.
+  //
+  // MySQL user-variable names are [A-Za-z0-9_$.], so @CGUID_NEW lexes as one name and is not
+  // ambiguous with @CGUID despite sharing its prefix.
+  constexpr char const* VARIABLE_NEW_CREATURE_GUID = "@CGUID_NEW";
+  constexpr char const* VARIABLE_NEW_GAMEOBJECT_GUID = "@OGUID_NEW";
+
   // Six decimals is comfortably inside FLOAT precision at world magnitudes: at ~9500 yards the
   // representable step of a FLOAT is roughly 1e-3, so the emitted text carries more digits than
   // the column can hold and nothing is lost on write.
@@ -234,6 +244,34 @@ namespace
     return std::string(variable) + "+" + unsignedText(value - base);
   }
 
+  // The guid expression for the `index`-th created spawn of its kind.
+  //
+  // Offsets start at 1, not 0, because the variable is SET to MAX(guid) rather than to
+  // MAX(guid)+1. Reading the maximum itself keeps the SET statement free of arithmetic that would
+  // have to be right in two places -- here and there -- and it makes "@CGUID_NEW+1 is the first
+  // new spawn" true on its face.
+  std::string newGuidExpression(char const* variable, std::size_t index)
+  {
+    return std::string(variable) + "+" + unsignedText(index + 1);
+  }
+
+  // The statement that allocates a block of guids on the server, at apply time.
+  //
+  // IFNULL, because MAX() over an empty table is NULL and NULL+1 is NULL: without it, creating
+  // the first ever spawn on a fresh schema inserts guid NULL, which MySQL turns into 0 in a
+  // non-strict sql_mode and rejects in a strict one. Neither is what was asked for.
+  //
+  // Placed with the other SET statements at the top of the file, ahead of every DELETE. That can
+  // only over-estimate the maximum -- a guid this file is about to delete is still counted -- and
+  // over-estimating leaves a gap in the sequence, which costs nothing. Under-estimating would
+  // collide, so the safe direction is the one taken.
+  std::string allocateFromMaxStatement
+    (char const* variable, std::string const& table, std::string const& key_column)
+  {
+    return std::string("SET ") + variable + " := (SELECT IFNULL(MAX("
+         + quoteIdentifier(key_column) + "), 0) FROM " + quoteIdentifier(table) + ");\n";
+  }
+
   std::string deleteStatement
     ( std::string const& table
     , std::string const& key_column
@@ -344,6 +382,18 @@ namespace
     return out;
   }
 
+  // The values of one `creature` row, in the column order build() emits.
+  //
+  // Shared by the edited and the created sections so the two cannot drift into writing different
+  // columns for the same table -- which would be invisible in review until MySQL rejected the
+  // second value tuple, or worse, accepted it with every field shifted by one. The guid is the
+  // only thing that differs between them, so it is the only thing passed in.
+  std::vector<std::string> creatureRowValues
+    (CreatureSpawn const& spawn, std::string const& guid_expression);
+
+  std::vector<std::string> gameObjectRowValues
+    (GameObjectSpawn const& spawn, std::string const& guid_expression);
+
   // rotation0..3 is a quaternion, not Euler angles. A caller that set only `orientation` gets
   // the quaternion derived from it; emitting the identity instead would leave every rotated
   // object facing north in game while looking correct in the editor.
@@ -381,6 +431,78 @@ namespace
          + SqlFormat::coordinate(from_quaternion) + " but the orientation column says "
          + SqlFormat::coordinate(from_orientation) + ". The quaternion is emitted as given;"
            " the core uses it, not the orientation column.";
+  }
+
+  std::vector<std::string> creatureRowValues
+    (CreatureSpawn const& spawn, std::string const& guid_expression)
+  {
+    // The core's own WORLD_INS_CREATURE shape, which is exactly what the server writes when a GM
+    // spawns a creature, and therefore the shape least likely to surprise it. No zone or area
+    // column: the core derives both.
+    return
+      { guid_expression
+      , unsignedText(spawn.id)
+      , unsignedText(spawn.map)
+      , unsignedText(spawn.spawn_mask)
+      , unsignedText(spawn.phase_mask)
+      , unsignedText(spawn.model_id)
+      , signedText(spawn.equipment_id)
+      , SqlFormat::coordinate(spawn.position.x)
+      , SqlFormat::coordinate(spawn.position.y)
+      , SqlFormat::coordinate(spawn.position.z)
+      , SqlFormat::coordinate(TileCoordinates::normaliseOrientation(spawn.orientation))
+      , unsignedText(spawn.spawn_time_secs)
+      , SqlFormat::coordinate(spawn.wander_distance)
+      , unsignedText(spawn.current_waypoint)
+      , unsignedText(spawn.cur_health)
+      , unsignedText(spawn.cur_mana)
+      , unsignedText(static_cast<std::uint32_t>(spawn.movement_type))
+      , unsignedText(spawn.npc_flag)
+      , unsignedText(spawn.unit_flags)
+      , unsignedText(spawn.dynamic_flags)
+      };
+  }
+
+  std::vector<std::string> gameObjectRowValues
+    (GameObjectSpawn const& spawn, std::string const& guid_expression)
+  {
+    TileCoordinates::Quaternion const rotation (resolvedRotation(spawn));
+
+    return
+      { guid_expression
+      , unsignedText(spawn.id)
+      , unsignedText(spawn.map)
+      , unsignedText(spawn.spawn_mask)
+      , unsignedText(spawn.phase_mask)
+      , SqlFormat::coordinate(spawn.position.x)
+      , SqlFormat::coordinate(spawn.position.y)
+      , SqlFormat::coordinate(spawn.position.z)
+      , SqlFormat::coordinate(TileCoordinates::normaliseOrientation(spawn.orientation))
+      // Not coordinate(): the quaternion components live where |v| <= 1, and six decimals there
+      // is six significant digits -- enough slack to rewrite the stored bytes of a gameobject
+      // this changeset never edited.
+      , SqlFormat::rotationComponent(rotation.r0)
+      , SqlFormat::rotationComponent(rotation.r1)
+      , SqlFormat::rotationComponent(rotation.r2)
+      , SqlFormat::rotationComponent(rotation.r3)
+      , signedText(spawn.spawn_time_secs)
+      , unsignedText(spawn.anim_progress)
+      , unsignedText(spawn.state)
+      };
+  }
+
+  // Every issue a spawn raises, rendered as SQL comment lines to sit above the statement.
+  std::string validationNotes(std::vector<ValidationIssue> const& issues, std::string const& subject)
+  {
+    std::string notes;
+
+    for (ValidationIssue const& issue : issues)
+    {
+      notes += std::string("-- ") + severityLabel(issue.severity) + " (" + subject + "): "
+             + issue.message + "\n";
+    }
+
+    return notes;
   }
 
   // Fixed-notation text with `decimals` places after the point. Both formatters go through this
@@ -749,6 +871,68 @@ void ChangesetBuilder::addWaypointPath(WaypointPath const& path)
   _paths.push_back(path);
 }
 
+void ChangesetBuilder::addNewCreature(CreatureSpawn const& spawn)
+{
+  // Numbered by position, not by guid. The guid a created spawn carries is the editor's
+  // provisional one and naming it in a message would invite a reader to look for it in the
+  // emitted file, where it deliberately does not appear.
+  std::string const context
+    ( "new creature #" + unsignedText(_new_creatures.size() + 1) + " (entry "
+    + unsignedText(spawn.id) + ")" );
+
+  CreatureSpawn resolved (spawn);
+
+  if (resolved.movement_type == MovementType::WAYPOINT)
+  {
+    resolved.has_addon = true;
+
+    if (resolved.path_id == 0)
+    {
+      // The one place the conventional path_id = guid * multiplier cannot be applied, and it is
+      // worth refusing rather than inventing something. There is no guid yet: it is allocated on
+      // the server when the file is applied. Deriving a path id from the editor's provisional
+      // number would bind the creature to a path nobody wrote nodes for, and the creature would
+      // stand still with nothing in the changeset explaining why.
+      _issues.push_back
+        ( makeIssue
+            ( ValidationIssue::Severity::BLOCKING
+            , context + ": follows a waypoint path but no path id was given. The conventional"
+                        " guid * " + unsignedText(_options.path_id_multiplier) + " cannot be"
+                        " used for a spawn the database has not issued a guid for yet -- the"
+                        " guid does not exist until this file is applied. Assign a path id"
+                        " explicitly."
+            )
+        );
+    }
+  }
+
+  // Validated with its provisional guid in place, because validate() rejects guid 0 outright and
+  // that check is worth keeping for every other caller. The guid is never emitted for a created
+  // spawn; the section in build() reads @CGUID_NEW and nothing else.
+  appendIssues(_issues, SpawnValidation::validate(resolved), context);
+
+  _new_creatures.push_back(resolved);
+}
+
+void ChangesetBuilder::addNewGameObject(GameObjectSpawn const& spawn)
+{
+  std::string const context
+    ( "new gameobject #" + unsignedText(_new_gameobjects.size() + 1) + " (entry "
+    + unsignedText(spawn.id) + ")" );
+
+  appendIssues(_issues, SpawnValidation::validate(spawn), context);
+
+  std::string const disagreement (rotationDisagreement(spawn));
+
+  if (!disagreement.empty())
+  {
+    _issues.push_back
+      (makeIssue(ValidationIssue::Severity::WARNING, context + ": " + disagreement));
+  }
+
+  _new_gameobjects.push_back(spawn);
+}
+
 void ChangesetBuilder::removeCreature(std::uint32_t guid)
 {
   _removed_creatures.push_back(guid);
@@ -768,6 +952,8 @@ bool ChangesetBuilder::empty() const
 {
   return _creatures.empty()
       && _gameobjects.empty()
+      && _new_creatures.empty()
+      && _new_gameobjects.empty()
       && _paths.empty()
       && _removed_creatures.empty()
       && _removed_gameobjects.empty()
@@ -776,11 +962,72 @@ bool ChangesetBuilder::empty() const
 
 std::string ChangesetBuilder::build() const
 {
-  if (_options.reject_invalid && SpawnValidation::hasErrors(_issues))
+  // Issues raised while adding, plus the ones that only exist as a relationship between two
+  // calls and so cannot be detected by either of them alone. Order of calls is up to the caller,
+  // so "added and also removed" is not a question addCreature or removeCreature can answer.
+  std::vector<ValidationIssue> issues (_issues);
+
+  // A guid on both lists produces DELETE-then-INSERT of the same row: the removal is silently
+  // undone and the user is told the spawn was deleted. Refusing is the only honest answer,
+  // because either intent is plausible and guessing gets it wrong half the time.
+  auto const check_add_remove_conflict =
+    [&issues] ( std::vector<std::uint32_t> const& removed
+              , std::vector<std::uint32_t> const& added
+              , char const* kind
+              )
+    {
+      for (std::uint32_t guid : removed)
+      {
+        if (guid == 0)
+        {
+          SpawnValidation::addError
+            ( issues
+            , std::string(kind) + " guid 0 was marked for removal. No row carries guid 0 -- it is"
+              " the core's 'no spawn' sentinel -- so this DELETE names nothing, and emitting it"
+              " would suggest something was removed."
+            );
+
+          continue;
+        }
+
+        if (std::find(added.begin(), added.end(), guid) != added.end())
+        {
+          SpawnValidation::addError
+            ( issues
+            , std::string(kind) + " guid " + unsignedText(guid) + " is both written and removed"
+              " by this changeset. The DELETE runs first and the INSERT puts the row straight"
+              " back, so the removal would silently do nothing."
+            );
+        }
+      }
+    };
+
+  {
+    std::vector<std::uint32_t> creature_guids;
+    std::vector<std::uint32_t> gameobject_guids;
+
+    for (CreatureSpawn const& spawn : _creatures)
+    {
+      creature_guids.push_back(spawn.guid);
+    }
+
+    for (GameObjectSpawn const& spawn : _gameobjects)
+    {
+      gameobject_guids.push_back(spawn.guid);
+    }
+
+    // Created spawns are deliberately NOT in these lists. Their guids are the editor's
+    // provisional ones and never reach the file, so a provisional number colliding with a real
+    // guid being removed is not a conflict -- the two name different things.
+    check_add_remove_conflict(_removed_creatures, creature_guids, "creature");
+    check_add_remove_conflict(_removed_gameobjects, gameobject_guids, "gameobject");
+  }
+
+  if (_options.reject_invalid && SpawnValidation::hasErrors(issues))
   {
     std::string detail;
 
-    for (ValidationIssue const& issue : _issues)
+    for (ValidationIssue const& issue : issues)
     {
       if (issue.severity == ValidationIssue::Severity::BLOCKING)
       {
@@ -814,7 +1061,8 @@ std::string ChangesetBuilder::build() const
   out << "--\n"
          "--   Apply:  mysql <world> -e \"source <this file>\"\n"
          "--\n"
-         "-- Idempotent: every table touched is cleared for the affected keys before it is\n"
+         "-- Idempotent, except where a block below says otherwise: every table touched is\n"
+         "-- cleared for the affected keys before it is\n"
          "-- rewritten, so applying this file twice leaves identical rows and raises no error.\n"
          "-- creature_addon is the exception and updates in place. The editor reads only path_id\n"
          "-- from that table, so clearing it would discard the mount, pose, emote and auras it\n"
@@ -832,11 +1080,25 @@ std::string ChangesetBuilder::build() const
          "-- read them and the core does not write them either. The server derives both.\n"
          "-- Waypoint rows carry no core-managed guid column: authoring it corrupts the path.\n";
 
-  if (!_issues.empty())
+  if (!_new_creatures.empty() || !_new_gameobjects.empty())
+  {
+    // Said in the file, not only in the source. A reviewer who applies a changeset twice on the
+    // strength of the "idempotent" line above and finds duplicate spawns was misled by this file.
+    out << "--\n"
+           "-- THIS FILE CREATES SPAWNS, AND THAT PART IS NOT IDEMPOTENT. Apply it ONCE.\n"
+           "-- A row the database has never seen has no guid to key a DELETE on, so the created\n"
+           "-- rows are appended: their guids are allocated on the server from MAX(guid) when\n"
+           "-- this file is applied, which is why @CGUID_NEW / @OGUID_NEW are SET from a SELECT\n"
+           "-- rather than from a number. Applying twice therefore creates them twice. Deleting\n"
+           "-- by (entry, map, position) instead would remove a pre-existing duplicate somebody\n"
+           "-- else authored, which is worse than the duplicate this warns about.\n";
+  }
+
+  if (!issues.empty())
   {
     out << "--\n-- Validation notes:\n";
 
-    for (ValidationIssue const& issue : _issues)
+    for (ValidationIssue const& issue : issues)
     {
       out << "--   " << severityLabel(issue.severity) << ": " << issue.message << "\n";
     }
@@ -887,6 +1149,18 @@ std::string ChangesetBuilder::build() const
     path_keys.push_back(path_id);
   }
 
+  // A created spawn contributes NO guid key: its guid does not exist yet, and folding the
+  // editor's provisional number into the @CGUID base would shift every offset in the edited
+  // section onto rows that have nothing to do with it. Its path id is a different matter -- the
+  // caller authored that one, so it is a real key like any other.
+  for (CreatureSpawn const& spawn : _new_creatures)
+  {
+    if (spawn.has_addon && spawn.path_id != 0)
+    {
+      path_keys.push_back(spawn.path_id);
+    }
+  }
+
   std::uint64_t const creature_base
     (creature_keys.empty()
        ? 0u
@@ -914,6 +1188,47 @@ std::string ChangesetBuilder::build() const
     out << "SET " << VARIABLE_PATH << "   := " << unsignedText(path_base) << ";\n";
   }
 
+  // The allocating SETs, beside the literal ones so a reviewer sees every guid decision in one
+  // block. These are the only two lines in the file whose value the server, not the editor,
+  // decides -- see allocateFromMaxStatement on why that is where the decision belongs.
+  if (!_new_creatures.empty())
+  {
+    out << allocateFromMaxStatement(VARIABLE_NEW_CREATURE_GUID, TABLE_CREATURE, COLUMN_GUID);
+  }
+
+  if (!_new_gameobjects.empty())
+  {
+    out << allocateFromMaxStatement(VARIABLE_NEW_GAMEOBJECT_GUID, TABLE_GAMEOBJECT, COLUMN_GUID);
+  }
+
+  // Hoisted here because both the edited and the created section write the same columns, and two
+  // copies of a twenty-name list is how the two drift into writing different shapes for one table.
+  //
+  // Built only when a creature row is actually written: wanderDistanceColumn() throws on a schema
+  // it recognises neither variant of, and a changeset that touches no creature has no business
+  // failing over a column it never names.
+  std::vector<std::string> creature_columns;
+
+  if (!_creatures.empty() || !_new_creatures.empty())
+  {
+    // The one column of `creature` whose name differs between cores. Resolved, never assumed.
+    std::string const wander_column (_schema.wanderDistanceColumn());
+
+    creature_columns =
+      { "guid", "id", "map", "spawnMask", "phaseMask", "modelid", "equipment_id"
+      , "position_x", "position_y", "position_z", "orientation"
+      , "spawntimesecs", wander_column, "currentwaypoint", "curhealth", "curmana"
+      , "MovementType", "npcflag", "unit_flags", "dynamicflags"
+      };
+  }
+
+  std::vector<std::string> const gameobject_columns
+    { "guid", "id", "map", "spawnMask", "phaseMask"
+    , "position_x", "position_y", "position_z", "orientation"
+    , "rotation0", "rotation1", "rotation2", "rotation3"
+    , "spawntimesecs", "animprogress", "state"
+    };
+
   // --- creature --------------------------------------------------------------------------
 
   if (!creature_keys.empty())
@@ -939,57 +1254,49 @@ std::string ChangesetBuilder::build() const
 
     if (!_creatures.empty())
     {
-      // The one column whose name differs between cores. Resolved, never assumed.
-      std::string const wander_column (_schema.wanderDistanceColumn());
-
-      // The core's own WORLD_INS_CREATURE shape, which is exactly what the server writes when
-      // a GM spawns a creature, and therefore the shape least likely to surprise it. No zone
-      // or area column: the core derives both.
-      std::vector<std::string> const columns
-        { "guid", "id", "map", "spawnMask", "phaseMask", "modelid", "equipment_id"
-        , "position_x", "position_y", "position_z", "orientation"
-        , "spawntimesecs", wander_column, "currentwaypoint", "curhealth", "curmana"
-        , "MovementType", "npcflag", "unit_flags", "dynamicflags"
-        };
-
       std::vector<std::vector<std::string>> rows;
       std::string notes;
 
       for (CreatureSpawn const& spawn : _creatures)
       {
-        for (ValidationIssue const& issue : SpawnValidation::validate(spawn))
-        {
-          notes += std::string("-- ") + severityLabel(issue.severity) + " (guid "
-                 + unsignedText(spawn.guid) + "): " + issue.message + "\n";
-        }
+        notes += validationNotes
+          (SpawnValidation::validate(spawn), "guid " + unsignedText(spawn.guid));
 
         rows.push_back
-          ( { variableExpression(VARIABLE_CREATURE_GUID, creature_base, spawn.guid)
-            , unsignedText(spawn.id)
-            , unsignedText(spawn.map)
-            , unsignedText(spawn.spawn_mask)
-            , unsignedText(spawn.phase_mask)
-            , unsignedText(spawn.model_id)
-            , signedText(spawn.equipment_id)
-            , SqlFormat::coordinate(spawn.position.x)
-            , SqlFormat::coordinate(spawn.position.y)
-            , SqlFormat::coordinate(spawn.position.z)
-            , SqlFormat::coordinate(TileCoordinates::normaliseOrientation(spawn.orientation))
-            , unsignedText(spawn.spawn_time_secs)
-            , SqlFormat::coordinate(spawn.wander_distance)
-            , unsignedText(spawn.current_waypoint)
-            , unsignedText(spawn.cur_health)
-            , unsignedText(spawn.cur_mana)
-            , unsignedText(static_cast<std::uint32_t>(spawn.movement_type))
-            , unsignedText(spawn.npc_flag)
-            , unsignedText(spawn.unit_flags)
-            , unsignedText(spawn.dynamic_flags)
-            }
+          ( creatureRowValues
+              (spawn, variableExpression(VARIABLE_CREATURE_GUID, creature_base, spawn.guid))
           );
       }
 
-      out << notes << insertStatement(TABLE_CREATURE, columns, rows);
+      out << notes << insertStatement(TABLE_CREATURE, creature_columns, rows);
     }
+  }
+
+  // --- creature, created ------------------------------------------------------------------
+  // Its own section, and no DELETE in front of it. There is nothing to clear: these rows do not
+  // exist yet, and the guids they will occupy are not known until the SELECT in the header runs
+  // on the server. See the warning block emitted above -- this section is append-only and that
+  // is a property of creating a row, not a shortcut taken here.
+
+  if (!_new_creatures.empty())
+  {
+    out << "\n" << sectionHeader(std::string(TABLE_CREATURE) + " (new spawns)");
+
+    std::vector<std::vector<std::string>> rows;
+    std::string notes;
+
+    for (std::size_t i = 0; i < _new_creatures.size(); ++i)
+    {
+      CreatureSpawn const& spawn (_new_creatures[i]);
+
+      notes += validationNotes
+        (SpawnValidation::validate(spawn), "new #" + unsignedText(i + 1));
+
+      rows.push_back
+        (creatureRowValues(spawn, newGuidExpression(VARIABLE_NEW_CREATURE_GUID, i)));
+    }
+
+    out << notes << insertStatement(TABLE_CREATURE, creature_columns, rows);
   }
 
   // --- creature_addon --------------------------------------------------------------------
@@ -1026,13 +1333,29 @@ std::string ChangesetBuilder::build() const
   // DELETE FROM `creature` above does not cascade here and take the addon row with it; if it
   // did, preserving the row in this section would be pointless.
 
-  std::vector<CreatureSpawn> with_addon;
+  // Paired with the guid expression each row is keyed by, because an edited creature is keyed off
+  // @CGUID and a created one off @CGUID_NEW. Resolving that here, once, keeps the emit loop below
+  // from having to know which list a spawn came from.
+  std::vector<std::pair<std::string, CreatureSpawn>> with_addon;
 
   for (CreatureSpawn const& spawn : _creatures)
   {
     if (spawn.has_addon)
     {
-      with_addon.push_back(spawn);
+      with_addon.emplace_back
+        (variableExpression(VARIABLE_CREATURE_GUID, creature_base, spawn.guid), spawn);
+    }
+  }
+
+  // A created creature reaches this list only when the caller authored a waypoint binding for it.
+  // The editor never sets has_addon on a spawn it places, so "creating a spawn does not invent
+  // addon data" is structural: with has_addon false there is no row here to invent anything in.
+  for (std::size_t i = 0; i < _new_creatures.size(); ++i)
+  {
+    if (_new_creatures[i].has_addon)
+    {
+      with_addon.emplace_back
+        (newGuidExpression(VARIABLE_NEW_CREATURE_GUID, i), _new_creatures[i]);
     }
   }
 
@@ -1089,10 +1412,12 @@ std::string ChangesetBuilder::build() const
 
       std::vector<std::vector<std::string>> rows;
 
-      for (CreatureSpawn const& spawn : with_addon)
+      for (auto const& keyed : with_addon)
       {
+        CreatureSpawn const& spawn (keyed.second);
+
         std::vector<std::string> row
-          { variableExpression(VARIABLE_CREATURE_GUID, creature_base, spawn.guid)
+          { keyed.first
           , spawn.path_id == 0
               ? std::string("0")
               : variableExpression(VARIABLE_PATH, path_base, spawn.path_id)
@@ -1166,59 +1491,64 @@ std::string ChangesetBuilder::build() const
 
     if (!_gameobjects.empty())
     {
-      std::vector<std::string> const columns
-        { "guid", "id", "map", "spawnMask", "phaseMask"
-        , "position_x", "position_y", "position_z", "orientation"
-        , "rotation0", "rotation1", "rotation2", "rotation3"
-        , "spawntimesecs", "animprogress", "state"
-        };
-
       std::vector<std::vector<std::string>> rows;
       std::string notes;
 
       for (GameObjectSpawn const& spawn : _gameobjects)
       {
-        for (ValidationIssue const& issue : SpawnValidation::validate(spawn))
-        {
-          notes += std::string("-- ") + severityLabel(issue.severity) + " (guid "
-                 + unsignedText(spawn.guid) + "): " + issue.message + "\n";
-        }
+        std::string const subject ("guid " + unsignedText(spawn.guid));
+
+        notes += validationNotes(SpawnValidation::validate(spawn), subject);
 
         std::string const disagreement (rotationDisagreement(spawn));
 
         if (!disagreement.empty())
         {
-          notes += "-- WARNING (guid " + unsignedText(spawn.guid) + "): " + disagreement + "\n";
+          notes += "-- WARNING (" + subject + "): " + disagreement + "\n";
         }
 
-        TileCoordinates::Quaternion const rotation (resolvedRotation(spawn));
-
         rows.push_back
-          ( { variableExpression(VARIABLE_GAMEOBJECT_GUID, gameobject_base, spawn.guid)
-            , unsignedText(spawn.id)
-            , unsignedText(spawn.map)
-            , unsignedText(spawn.spawn_mask)
-            , unsignedText(spawn.phase_mask)
-            , SqlFormat::coordinate(spawn.position.x)
-            , SqlFormat::coordinate(spawn.position.y)
-            , SqlFormat::coordinate(spawn.position.z)
-            , SqlFormat::coordinate(TileCoordinates::normaliseOrientation(spawn.orientation))
-            // Not coordinate(): the quaternion components live where |v| <= 1, and six decimals
-            // there is six significant digits -- enough slack to rewrite the stored bytes of a
-            // gameobject this changeset never edited.
-            , SqlFormat::rotationComponent(rotation.r0)
-            , SqlFormat::rotationComponent(rotation.r1)
-            , SqlFormat::rotationComponent(rotation.r2)
-            , SqlFormat::rotationComponent(rotation.r3)
-            , signedText(spawn.spawn_time_secs)
-            , unsignedText(spawn.anim_progress)
-            , unsignedText(spawn.state)
-            }
+          ( gameObjectRowValues
+              (spawn, variableExpression(VARIABLE_GAMEOBJECT_GUID, gameobject_base, spawn.guid))
           );
       }
 
-      out << notes << insertStatement(TABLE_GAMEOBJECT, columns, rows);
+      out << notes << insertStatement(TABLE_GAMEOBJECT, gameobject_columns, rows);
     }
+  }
+
+  // --- gameobject, created ----------------------------------------------------------------
+  // Append-only, for the same reason the created creature section is, and keyed off its own
+  // variable: gameobject.guid is a separate primary key sequence from creature.guid, so one
+  // allocation cannot serve both. Treating a guid as unique across the two tables is the exact
+  // mistake SpawnRef exists to prevent on the editor side, and it would be the same mistake here.
+
+  if (!_new_gameobjects.empty())
+  {
+    out << "\n" << sectionHeader(std::string(TABLE_GAMEOBJECT) + " (new spawns)");
+
+    std::vector<std::vector<std::string>> rows;
+    std::string notes;
+
+    for (std::size_t i = 0; i < _new_gameobjects.size(); ++i)
+    {
+      GameObjectSpawn const& spawn (_new_gameobjects[i]);
+      std::string const subject ("new #" + unsignedText(i + 1));
+
+      notes += validationNotes(SpawnValidation::validate(spawn), subject);
+
+      std::string const disagreement (rotationDisagreement(spawn));
+
+      if (!disagreement.empty())
+      {
+        notes += "-- WARNING (" + subject + "): " + disagreement + "\n";
+      }
+
+      rows.push_back
+        (gameObjectRowValues(spawn, newGuidExpression(VARIABLE_NEW_GAMEOBJECT_GUID, i)));
+    }
+
+    out << notes << insertStatement(TABLE_GAMEOBJECT, gameobject_columns, rows);
   }
 
   // --- waypoint path ---------------------------------------------------------------------

@@ -710,6 +710,366 @@ TEST_CASE("deleting a creature still takes its addon row with it", "[changeset][
   CHECK_FALSE(contains(sql, "DELETE FROM `creature_addon` WHERE `guid` IN"));
 }
 
+// --- creating spawns ------------------------------------------------------------------------
+//
+// The property under test throughout this block is guid allocation, and it is the part of
+// creation that fails silently rather than loudly. creature.guid and gameobject.guid are two
+// independent primary-key sequences, both counting up from 1 with no reserved range, so a number
+// the editor invents in order to have something to select is a number that very probably names a
+// real row in one or both tables. Emitting it would not error -- it would overwrite somebody's
+// spawn, in their database, with no diff to show for it.
+
+namespace
+{
+  // A spawn the database has never seen, carrying the shape SpawnSceneCache hands out: a
+  // provisional guid well above anything a real sequence has reached, which must never appear in
+  // the emitted file.
+  constexpr std::uint32_t PROVISIONAL_GUID = 0xF0000001u;
+
+  CreatureSpawn newCreature()
+  {
+    CreatureSpawn spawn;
+    spawn.guid = PROVISIONAL_GUID;
+    spawn.id = 299;
+    spawn.map = 0;
+    spawn.position = WorldPosition {-8913.230, -132.087, 82.663};
+    spawn.orientation = 0.0;
+    spawn.spawn_time_secs = 120;
+    spawn.cur_health = 1;
+    spawn.movement_type = MovementType::IDLE;
+    return spawn;
+  }
+
+  GameObjectSpawn newGameObject()
+  {
+    GameObjectSpawn spawn;
+    spawn.guid = PROVISIONAL_GUID;
+    spawn.id = 180000;
+    spawn.map = 0;
+    spawn.position = WorldPosition {-8913.230, -132.087, 82.663};
+    spawn.orientation = 0.0;
+    return spawn;
+  }
+}
+
+TEST_CASE("a created spawn allocates its guid from MAX at apply time", "[changeset][create]")
+{
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addNewCreature(newCreature());
+
+  std::string const sql (builder.build());
+
+  // The whole allocation, in one line the reviewer can read. IFNULL because MAX() of an empty
+  // table is NULL, and NULL+1 is NULL -- which inserts guid 0 under a lax sql_mode.
+  CHECK(contains(sql, "SET @CGUID_NEW := (SELECT IFNULL(MAX(`guid`), 0) FROM `creature`);"));
+
+  // Offsets start at 1 because the variable holds the maximum, not the next free value.
+  CHECK(contains(flattened(sql), "(@CGUID_NEW+1, 299,"));
+}
+
+TEST_CASE("a created spawn's provisional guid never reaches the SQL", "[changeset][create][safety]")
+{
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addNewCreature(newCreature());
+  builder.addNewGameObject(newGameObject());
+
+  std::string const sql (builder.build());
+
+  // The number the editor invented so it had something to select, list and drag. It is an
+  // editor-side identity and nothing else; a file naming it would be claiming the database had
+  // issued it.
+  CHECK_FALSE(contains(sql, std::to_string(PROVISIONAL_GUID)));
+
+  // Nor in hex, in case a future change formats it differently.
+  CHECK_FALSE(contains(sql, "F0000001"));
+}
+
+TEST_CASE("creature and gameobject guids come from independent sequences"
+         , "[changeset][create][guid]")
+{
+  // The audit finding this pins: a guid is unique within its table and nowhere else. One
+  // allocation serving both tables would put a creature and a gameobject on the same number,
+  // which is legal, and then use one table's maximum to place a row in the other, which is not.
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addNewCreature(newCreature());
+  builder.addNewGameObject(newGameObject());
+
+  std::string const sql (builder.build());
+
+  CHECK(contains(sql, "SET @CGUID_NEW := (SELECT IFNULL(MAX(`guid`), 0) FROM `creature`);"));
+  CHECK(contains(sql, "SET @OGUID_NEW := (SELECT IFNULL(MAX(`guid`), 0) FROM `gameobject`);"));
+
+  // Each row keyed off its own table's allocation, never the other's.
+  std::string const flat (flattened(sql));
+  CHECK(contains(flat, "(@CGUID_NEW+1, 299,"));
+  CHECK(contains(flat, "(@OGUID_NEW+1, 180000,"));
+
+  CHECK_FALSE(contains(sql, "MAX(`guid`), 0) FROM `creature`);\nSET @OGUID_NEW := (SELECT "
+                            "IFNULL(MAX(`guid`), 0) FROM `creature`)"));
+}
+
+TEST_CASE("created spawns are numbered in the order they were added", "[changeset][create]")
+{
+  CreatureSpawn second (newCreature());
+  second.guid = PROVISIONAL_GUID + 1;
+  second.id = 300;
+
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addNewCreature(newCreature());
+  builder.addNewCreature(second);
+
+  std::string const flat (flattened(builder.build()));
+
+  CHECK(contains(flat, "(@CGUID_NEW+1, 299,"));
+  CHECK(contains(flat, "(@CGUID_NEW+2, 300,"));
+
+  // Two rows on the same number would collide on the primary key at apply time, after the
+  // DELETEs above them had committed.
+  CHECK_FALSE(contains(flat, "(@CGUID_NEW+1, 300,"));
+}
+
+TEST_CASE("creating and editing in one file do not share a guid base", "[changeset][create][guid]")
+{
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addCreature(referenceCreature());     // guid 9000004, read from the database
+  builder.addNewCreature(newCreature());        // no guid yet
+
+  std::string const sql (builder.build());
+
+  // @CGUID is a guid the editor READ; @CGUID_NEW is one the SERVER will choose. Folding the
+  // provisional number into @CGUID's base would move every offset in the edited section onto
+  // rows that have nothing to do with it.
+  CHECK(contains(sql, "SET @CGUID  := 9000004;"));
+  CHECK(contains(sql, "SET @CGUID_NEW := (SELECT"));
+
+  // The edited row is cleared before it is rewritten; the created row has nothing to clear.
+  CHECK(contains(sql, "DELETE FROM `creature` WHERE `guid` = @CGUID;"));
+  CHECK_FALSE(contains(sql, "@CGUID_NEW+1;"));
+  CHECK_FALSE(contains(sql, "DELETE FROM `creature` WHERE `guid` = @CGUID_NEW"));
+}
+
+TEST_CASE("a created spawn writes exactly the columns an edited one does"
+         , "[changeset][create][shape]")
+{
+  // Two INSERT statements into one table is two places a column list can be wrong. They are
+  // built from one list precisely so this assertion can be true by construction; it is here to
+  // catch the day somebody makes it not be.
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addCreature(referenceCreature());
+  builder.addNewCreature(newCreature());
+  builder.addGameObject(referenceGameObject());
+  builder.addNewGameObject(newGameObject());
+
+  std::string const flat (flattened(builder.build()));
+
+  std::string const creature_columns
+    ( "INSERT INTO `creature` (`guid`, `id`, `map`, `spawnMask`, `phaseMask`, `modelid`,"
+      " `equipment_id`, `position_x`, `position_y`, `position_z`, `orientation`,"
+      " `spawntimesecs`, `wander_distance`, `currentwaypoint`, `curhealth`, `curmana`,"
+      " `MovementType`, `npcflag`, `unit_flags`, `dynamicflags`) VALUES" );
+
+  std::size_t const first (flat.find(creature_columns));
+  REQUIRE(first != std::string::npos);
+  CHECK(flat.find(creature_columns, first + 1) != std::string::npos);
+
+  std::string const gameobject_columns
+    ( "INSERT INTO `gameobject` (`guid`, `id`, `map`, `spawnMask`, `phaseMask`, `position_x`,"
+      " `position_y`, `position_z`, `orientation`, `rotation0`, `rotation1`, `rotation2`,"
+      " `rotation3`, `spawntimesecs`, `animprogress`, `state`) VALUES" );
+
+  std::size_t const object_first (flat.find(gameobject_columns));
+  REQUIRE(object_first != std::string::npos);
+  CHECK(flat.find(gameobject_columns, object_first + 1) != std::string::npos);
+}
+
+TEST_CASE("a created spawn's coordinates survive the round trip to FLOAT"
+         , "[changeset][create][roundtrip]")
+{
+  // The requirement that a created spawn, once applied and reloaded, is in the same place. The
+  // emitted text is the only thing that reaches the column, so it is what gets parsed back.
+  CreatureSpawn spawn (newCreature());
+  spawn.position = WorldPosition {-8913.234375, -132.0869140625, 82.66312408447266};
+
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addNewCreature(spawn);
+
+  std::string const flat (flattened(builder.build()));
+
+  std::size_t const values (flat.find("(@CGUID_NEW+1,"));
+  REQUIRE(values != std::string::npos);
+
+  std::vector<std::string> fields;
+  std::string field;
+
+  for (std::size_t at (values + 1); at < flat.size() && flat[at] != ')'; ++at)
+  {
+    if (flat[at] == ',')
+    {
+      fields.push_back(field);
+      field.clear();
+    }
+    else if (flat[at] != ' ')
+    {
+      field.push_back(flat[at]);
+    }
+  }
+
+  fields.push_back(field);
+
+  // Column 8, 9, 10 of the WORLD_INS_CREATURE shape, zero-based 7, 8, 9.
+  REQUIRE(fields.size() == 20);
+
+  CHECK(bitsOf(reparsed(fields[7])) == bitsOf(static_cast<float>(spawn.position.x)));
+  CHECK(bitsOf(reparsed(fields[8])) == bitsOf(static_cast<float>(spawn.position.y)));
+  CHECK(bitsOf(reparsed(fields[9])) == bitsOf(static_cast<float>(spawn.position.z)));
+}
+
+TEST_CASE("creating a spawn invents no creature_addon row", "[changeset][create][addon]")
+{
+  // A creature the editor placed carries no mount, pose, emote or aura, because the editor has
+  // no way to author any of them. Writing a row of defaults would state something about data
+  // nobody supplied -- the same class of claim the addon DELETE used to make.
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addNewCreature(newCreature());
+
+  std::string const sql (builder.build());
+
+  CHECK(contains(sql, "INSERT INTO `creature`"));
+  CHECK_FALSE(contains(sql, "INSERT INTO `creature_addon`"));
+  CHECK_FALSE(contains(sql, "DELETE FROM `creature_addon`"));
+  CHECK_FALSE(contains(sql, "-- creature_addon -"));
+}
+
+TEST_CASE("a created creature with an authored path gets an addon row on the new guid"
+         , "[changeset][create][addon]")
+{
+  // The one case that does write an addon row: the caller authored a waypoint binding, so the
+  // path_id is data somebody supplied rather than a default this class invented. It has to be
+  // keyed off @CGUID_NEW, not off the provisional guid.
+  CreatureSpawn spawn (newCreature());
+  spawn.movement_type = MovementType::WAYPOINT;
+  spawn.path_id = 2990010;
+
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addNewCreature(spawn);
+
+  std::string const flat (flattened(builder.build()));
+
+  CHECK(contains(flat, "(@CGUID_NEW+1, @PATH, 0, 0, 0, 0, 0, 1, 0, 0, 0, NULL)"));
+  CHECK(contains(flat, "ON DUPLICATE KEY UPDATE `path_id` = VALUES(`path_id`);"));
+  CHECK(contains(flat, "SET @PATH := 2990010;"));
+}
+
+TEST_CASE("a created waypoint creature with no path id is refused"
+         , "[changeset][create][validation]")
+{
+  // The conventional path_id = guid * 10 cannot be applied to a guid that does not exist yet.
+  // Deriving one from the provisional number would bind the creature to a path nobody wrote
+  // nodes for, and it would stand still with nothing in the file explaining why.
+  CreatureSpawn spawn (newCreature());
+  spawn.movement_type = MovementType::WAYPOINT;
+  spawn.path_id = 0;
+
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addNewCreature(spawn);
+
+  CHECK_THROWS_AS(builder.build(), ChangesetError);
+
+  bool mentioned = false;
+
+  for (auto const& issue : builder.issues())
+  {
+    if (issue.message.find("does not exist until this file is applied") != std::string::npos)
+    {
+      mentioned = true;
+    }
+  }
+
+  CHECK(mentioned);
+}
+
+TEST_CASE("a file that creates spawns says it is not idempotent", "[changeset][create][safety]")
+{
+  // The class header promises idempotency and this is the exception. A reviewer who applies a
+  // file twice on the strength of that promise and gets duplicate spawns was misled by the file,
+  // so the file has to carry the correction, not just the source.
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addNewCreature(newCreature());
+
+  CHECK(contains(builder.build(), "NOT IDEMPOTENT"));
+
+  // And a file that creates nothing must not carry the warning, or it stops being read.
+  ChangesetBuilder edits_only (modelFrom(REAL_FIXTURE));
+  edits_only.addCreature(referenceCreature());
+
+  CHECK_FALSE(contains(edits_only.build(), "NOT IDEMPOTENT"));
+}
+
+// --- deleting spawns ------------------------------------------------------------------------
+
+TEST_CASE("deleting a creature emits a DELETE for its addon and no INSERT for either"
+         , "[changeset][removal][addon]")
+{
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.removeCreature(9000004);
+
+  std::string const sql (builder.build());
+
+  CHECK(contains(sql, "DELETE FROM `creature` WHERE `guid` = @CGUID;"));
+  CHECK(contains(sql, "DELETE FROM `creature_addon` WHERE `guid` = @CGUID;"));
+
+  // Nothing is written back for a spawn that is going away. In particular the addon row is not
+  // re-created from the defaults, which would leave a row bound to a creature that no longer
+  // exists.
+  CHECK_FALSE(contains(sql, "INSERT INTO"));
+}
+
+TEST_CASE("a guid that is both written and removed is refused", "[changeset][removal][validation]")
+{
+  // DELETE runs before INSERT, so the row would be removed and put straight back. Either intent
+  // is plausible -- "delete it" and "move it" -- and guessing gets it wrong half the time, in a
+  // direction the user is told nothing about.
+  SECTION("creature")
+  {
+    ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+    builder.addCreature(referenceCreature());
+    builder.removeCreature(referenceCreature().guid);
+
+    CHECK_THROWS_AS(builder.build(), ChangesetError);
+  }
+
+  SECTION("gameobject")
+  {
+    ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+    builder.addGameObject(referenceGameObject());
+    builder.removeGameObject(referenceGameObject().guid);
+
+    CHECK_THROWS_AS(builder.build(), ChangesetError);
+  }
+
+  SECTION("a created spawn does not conflict with a removal on the same number")
+  {
+    // The provisional guid is an editor-side identity in a different namespace entirely. A real
+    // removal that happens to carry the same number is not the same row.
+    ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+    builder.addNewCreature(newCreature());
+    builder.removeCreature(PROVISIONAL_GUID);
+
+    CHECK_NOTHROW(builder.build());
+  }
+}
+
+TEST_CASE("removing guid 0 is refused", "[changeset][removal][validation]")
+{
+  // 0 is the core's "no spawn" sentinel and no row carries it, so this DELETE names nothing --
+  // but it reads as though something was removed, which is the part that matters. It is also
+  // what an uninitialised SpawnRef reaching the emitter would look like.
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.removeCreature(0);
+
+  CHECK_THROWS_AS(builder.build(), ChangesetError);
+}
+
 // --- validation ---------------------------------------------------------------------------
 
 TEST_CASE("an invalid spawn refuses to build", "[changeset][validation]")
@@ -1102,3 +1462,4 @@ TEST_CASE("a quoted value is safe to embed in a single-quoted literal"
     CHECK(at == literal.size() - 1);
   }
 }
+
