@@ -294,7 +294,7 @@ TEST_CASE("emitted SQL never names a derived or core-managed column", "[changese
   }
 }
 
-TEST_CASE("every INSERT is preceded by a DELETE for the same table", "[changeset][idempotency]")
+TEST_CASE("every INSERT is either preceded by a DELETE or upserts", "[changeset][idempotency]")
 {
   ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
   builder.addCreature(referenceCreature());
@@ -310,6 +310,22 @@ TEST_CASE("every INSERT is preceded by a DELETE for the same table", "[changeset
 
   for (auto const& insert : inserts)
   {
+    // Applying twice must leave identical rows. Clearing the keys first is how three of the
+    // four tables get there; creature_addon cannot, because the emitter holds only one of its
+    // columns and a DELETE would discard the rest. It reaches the same property with ON
+    // DUPLICATE KEY UPDATE instead.
+    if (insert.second == "creature_addon")
+    {
+      std::size_t const terminator (sql.find(";\n", insert.first));
+      REQUIRE(terminator != std::string::npos);
+
+      std::size_t const upsert (sql.find("ON DUPLICATE KEY UPDATE", insert.first));
+
+      INFO("INSERT INTO `creature_addon` is neither DELETE-preceded nor an upsert");
+      CHECK((upsert != std::string::npos && upsert < terminator));
+      continue;
+    }
+
     bool preceded = false;
 
     for (auto const& remove : deletes)
@@ -343,14 +359,15 @@ TEST_CASE("the creature row matches the reference changeset", "[changeset][shape
 
 TEST_CASE("the creature_addon row matches the reference changeset", "[changeset][shape]")
 {
-  // Byte for byte the values on line 51 of tools/dev-db/03_example_changeset.sql.
+  // Byte for byte the values on line 51 of tools/dev-db/03_example_changeset.sql. The statement
+  // terminator moved off the value tuple when the row became an upsert; the values did not.
   CHECK(contains(flattened(buildReferenceSpawn(REAL_FIXTURE))
-                , "(@CGUID, @PATH, 0, 0, 0, 0, 0, 1, 0, 0, 0, NULL);"));
+                , "(@CGUID, @PATH, 0, 0, 0, 0, 0, 1, 0, 0, 0, NULL) ON DUPLICATE KEY UPDATE"));
 
   // The same pose in the packed layout: bytes1 holds the stand state, bytes2 the sheath
   // state, and the drifted schema has no visibilityDistanceType column.
   CHECK(contains(flattened(buildReferenceSpawn(DRIFTED_FIXTURE))
-                , "(@CGUID, @PATH, 0, 0, 1, 0, NULL);"));
+                , "(@CGUID, @PATH, 0, 0, 1, 0, NULL) ON DUPLICATE KEY UPDATE"));
 }
 
 TEST_CASE("the changeset is variable-driven", "[changeset][shape]")
@@ -591,13 +608,23 @@ TEST_CASE("removals emit a DELETE and no INSERT", "[changeset][removal]")
   CHECK_FALSE(contains(sql, "INSERT INTO"));
 }
 
-TEST_CASE("a replaced creature has its old addon row cleared even without a new one"
-         , "[changeset][idempotency]")
+// --- creature_addon: the columns the editor never reads -------------------------------------
+//
+// The defect these cover, stated once: the emitter used to DELETE creature_addon for every
+// creature in the changeset and re-INSERT a row only for spawns carrying path data. mount,
+// MountCreatureID, StandState, AnimTier, VisFlags, SheathState, PvPFlags, emote,
+// visibilityDistanceType and auras are never selected by the read path
+// (SpawnQueryDetail.cpp:557-568), so nothing in the editor could rewrite what that DELETE
+// removed. Moving a mounted, kneeling or aura-carrying creature one yard destroyed all of it,
+// in the user's own database, silently.
+
+TEST_CASE("moving a creature with no addon data touches creature_addon not at all"
+         , "[changeset][addon][dataloss]")
 {
   CreatureSpawn spawn (referenceCreature());
   spawn.movement_type = MovementType::IDLE;
   spawn.wander_distance = 0.0;
-  spawn.has_addon = false;
+  spawn.has_addon = false;        // the read found no addon row
   spawn.path_id = 0;
 
   ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
@@ -605,9 +632,82 @@ TEST_CASE("a replaced creature has its old addon row cleared even without a new 
 
   std::string const sql (builder.build());
 
-  // Without this the spawn keeps following the path a previous changeset gave it.
-  CHECK(contains(sql, "DELETE FROM `creature_addon` WHERE `guid` = @CGUID;"));
+  CHECK(contains(sql, "INSERT INTO `creature`"));
+
+  // A changeset must not state anything about data it never read. Emitting a DELETE here was
+  // the whole defect: has_addon false means the reader saw no row, which is not the same claim
+  // as "there is no row", and the difference cost the user their addon.
+  //
+  // Checked as statements rather than as the word, because the file's own comment header now
+  // explains the exception and names the table in prose.
+  CHECK_FALSE(contains(sql, "DELETE FROM `creature_addon`"));
   CHECK_FALSE(contains(sql, "INSERT INTO `creature_addon`"));
+
+  // Not even the section rule, so a reviewer is not left wondering what happened under it.
+  CHECK_FALSE(contains(sql, "-- creature_addon -"));
+}
+
+TEST_CASE("a creature that keeps its addon row keeps the columns nobody read"
+         , "[changeset][addon][dataloss]")
+{
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addCreature(referenceCreature());     // has_addon, on a waypoint path
+
+  std::string const sql (builder.build());
+  std::string const flat (flattened(sql));
+
+  CHECK_FALSE(contains(sql, "DELETE FROM `creature_addon`"));
+  CHECK(contains(flat, "ON DUPLICATE KEY UPDATE `path_id` = VALUES(`path_id`);"));
+
+  // path_id is the only column the editor authored, so it is the only one allowed to overwrite
+  // an existing row. The rest of the value tuple exists solely to give a creature with no addon
+  // row a complete one; naming any of them in the update clause reinstates the data loss.
+  for (char const* column :
+        { "mount", "MountCreatureID", "StandState", "AnimTier", "VisFlags", "SheathState"
+        , "PvPFlags", "emote", "visibilityDistanceType", "auras", "guid"
+        })
+  {
+    CAPTURE(column);
+    CHECK_FALSE(contains(flat, "VALUES(`" + std::string(column) + "`)"));
+  }
+}
+
+TEST_CASE("a path the editor removed is still cleared", "[changeset][addon]")
+{
+  // The one behaviour the destructive DELETE did provide: a spawn that lost its path must stop
+  // walking it. It is reached without destroying anything, because such a spawn arrives with
+  // its addon row still present and path_id 0, and the update writes that 0.
+  CreatureSpawn spawn (referenceCreature());
+  spawn.movement_type = MovementType::IDLE;
+  spawn.wander_distance = 0.0;
+  spawn.has_addon = true;
+  spawn.path_id = 0;
+
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addCreature(spawn);
+
+  std::string const flat (flattened(builder.build()));
+
+  CHECK(contains(flat, "(@CGUID, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, NULL) ON DUPLICATE KEY UPDATE"));
+  CHECK(contains(flat, "ON DUPLICATE KEY UPDATE `path_id` = VALUES(`path_id`);"));
+
+  // No path was authored, so nothing declares @PATH and the row must not reference it.
+  CHECK_FALSE(contains(flat, "@PATH"));
+}
+
+TEST_CASE("deleting a creature still takes its addon row with it", "[changeset][addon][removal]")
+{
+  // The one case where DELETE is right: the `creature` row is going away, so what is left is an
+  // orphan rather than anybody's data. Asserted alongside an edited creature to prove the two
+  // are separated -- the edited spawn's guid must not appear in the DELETE.
+  ChangesetBuilder builder (modelFrom(REAL_FIXTURE));
+  builder.addCreature(referenceCreature());     // guid 9000004, edited
+  builder.removeCreature(9000006);              // deleted
+
+  std::string const sql (builder.build());
+
+  CHECK(contains(sql, "DELETE FROM `creature_addon` WHERE `guid` = @CGUID+2;"));
+  CHECK_FALSE(contains(sql, "DELETE FROM `creature_addon` WHERE `guid` IN"));
 }
 
 // --- validation ---------------------------------------------------------------------------

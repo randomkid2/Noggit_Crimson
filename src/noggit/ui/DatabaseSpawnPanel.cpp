@@ -16,7 +16,51 @@
 #include <QtWidgets/QSpinBox>
 #include <QtWidgets/QVBoxLayout>
 
+#include <cmath>
+
 using namespace Noggit::Ui;
+
+namespace
+{
+  constexpr double PI = 3.14159265358979323846;
+
+  // Where a list item keeps the kind half of its spawn's identity. Qt::UserRole holds the guid.
+  //
+  // Both halves are needed: creature.guid and gameobject.guid are independent primary keys, so
+  // the guid alone selects up to two different rows. See Noggit::Database::SpawnRef.
+  constexpr int SPAWN_KIND_ROLE = Qt::UserRole + 1;
+
+  // A facing in whole degrees, the way the spin box shows it.
+  //
+  // Rounded and wrapped, not truncated. 90 degrees written out and read back is 1.5707963...
+  // radians, which comes back as 89.99999...; static_cast<int> of that is 89, so the box would
+  // walk one degree backwards every time the same spawn was reselected -- and the focus-out guard
+  // in applyOrientationIfChanged, which compares the box against this, would see a difference the
+  // user never made and write it. The double wrap keeps a hand-edited negative row out of a
+  // spin box whose range starts at 0.
+  int degreesFor(double radians)
+  {
+    long const degrees (std::lround(radians * 180.0 / PI));
+
+    return static_cast<int>(((degrees % 360) + 360) % 360);
+  }
+
+  // The spawn a list item stands for. A default SpawnRef (guid 0) for no item.
+  Noggit::Database::SpawnRef refOf(QListWidgetItem const* item)
+  {
+    if (!item)
+    {
+      return {};
+    }
+
+    // Carried as item data rather than parsed back out of the label, so the label stays free to
+    // change without silently breaking selection.
+    return Noggit::Database::SpawnRef
+      { static_cast<Noggit::Database::SpawnKind>(item->data(SPAWN_KIND_ROLE).toUInt())
+      , item->data(Qt::UserRole).toUInt()
+      };
+  }
+}
 
 DatabaseSpawnPanel::DatabaseSpawnPanel(MapView* map_view, QWidget* parent)
   : QWidget(parent)
@@ -106,27 +150,81 @@ DatabaseSpawnPanel::DatabaseSpawnPanel(MapView* map_view, QWidget* parent)
   // editingFinished, not valueChanged: valueChanged fires on every step of a spin or a drag, so
   // holding the arrow would mark the spawn dirty dozens of times and rebuild the list under the
   // cursor while the user was still choosing an angle.
-  connect(_orientation, &QSpinBox::editingFinished, this, [this]
-    {
-      std::uint32_t const guid = selectedGuid();
-
-      if (guid == 0)
-      {
-        return;
-      }
-
-      if (auto* cache = _map_view->databaseSpawns())
-      {
-        constexpr double DEGREES_TO_RADIANS = 3.14159265358979323846 / 180.0;
-
-        cache->rotateTo(guid, _orientation->value() * DEGREES_TO_RADIANS);
-        _map_view->markSpawnOverlayDirty();
-        refresh();
-      }
-    }
-  );
+  //
+  // But editingFinished is not "the user edited something" either -- QAbstractSpinBox emits it
+  // from focusOutEvent as well, so it fires when the box is merely clicked into and away from.
+  // That is why the slot compares before it writes; see applyOrientationIfChanged.
+  connect(_orientation, &QSpinBox::editingFinished, this
+         , &DatabaseSpawnPanel::applyOrientationIfChanged);
 
   refresh();
+}
+
+void DatabaseSpawnPanel::applyOrientationIfChanged()
+{
+  Noggit::Database::SpawnRef const spawn (selectedSpawn());
+
+  auto* cache = _map_view->databaseSpawns();
+
+  if (!spawn.valid() || !cache)
+  {
+    return;
+  }
+
+  int stored_degrees = 0;
+
+  // Not loaded. Nothing to write, and writing anyway would mean writing to whichever spawn the
+  // scan happened to reach first.
+  if (!spawnFacingDegrees(spawn, stored_degrees))
+  {
+    return;
+  }
+
+  // The guard this function exists for.
+  //
+  // An equal value means the box was focused and left without an edit -- the focus-out case
+  // above. Writing then would replace the row's exact stored radians with a whole-degree
+  // approximation of themselves and mark the spawn dirty, putting a facing in the changeset that
+  // nobody changed.
+  if (_orientation->value() == stored_degrees)
+  {
+    return;
+  }
+
+  constexpr double DEGREES_TO_RADIANS = PI / 180.0;
+
+  cache->rotateTo(spawn, _orientation->value() * DEGREES_TO_RADIANS);
+  _map_view->markSpawnOverlayDirty();
+  refresh();
+}
+
+bool DatabaseSpawnPanel::spawnFacingDegrees
+  (Noggit::Database::SpawnRef const& spawn, int& degrees) const
+{
+  auto const* cache = _map_view->databaseSpawns();
+
+  if (!cache || !spawn.valid())
+  {
+    return false;
+  }
+
+  for (auto const* entry : cache->allEntries())
+  {
+    if (entry->ref() != spawn)
+    {
+      continue;
+    }
+
+    degrees = degreesFor
+      ( entry->kind == Noggit::Database::SpawnKind::CREATURE
+          ? entry->creature.orientation
+          : entry->gameobject.orientation
+      );
+
+    return true;
+  }
+
+  return false;
 }
 
 void DatabaseSpawnPanel::onSelectionChanged()
@@ -138,45 +236,53 @@ void DatabaseSpawnPanel::onSelectionChanged()
     return;
   }
 
-  std::uint32_t const guid = selectedGuid();
+  Noggit::Database::SpawnRef const spawn (selectedSpawn());
 
-  cache->setSelected(guid);
+  cache->setSelected(spawn);
 
   // Show the spawn's current facing without marking it dirty -- reading a value must never look
   // like an edit, or every click in the list would queue a change to save.
-  for (auto const* entry : cache->allEntries())
+  int degrees = 0;
+
+  if (spawnFacingDegrees(spawn, degrees))
   {
-    if (entry->guid != guid)
-    {
-      continue;
-    }
-
-    constexpr double RADIANS_TO_DEGREES = 180.0 / 3.14159265358979323846;
-
-    double const orientation
-      ( entry->kind == Noggit::Database::SpawnKind::CREATURE
-          ? entry->creature.orientation
-          : entry->gameobject.orientation
-      );
-
     QSignalBlocker const blocker (_orientation);
-    _orientation->setValue(static_cast<int>(orientation * RADIANS_TO_DEGREES) % 360);
-    break;
+    _orientation->setValue(degrees);
   }
 
   _map_view->markSpawnOverlayDirty();
 }
 
+void DatabaseSpawnPanel::selectSpawn(Noggit::Database::SpawnRef const& spawn)
+{
+  for (int row = 0; row < _spawn_list->count(); ++row)
+  {
+    auto* item = _spawn_list->item(row);
+
+    if (refOf(item) != spawn)
+    {
+      continue;
+    }
+
+    // currentRowChanged fires onSelectionChanged, which is what loads the facing into the spin
+    // box and re-marks the overlay. Letting it run is the point -- clicking a spawn in the world
+    // should leave the panel in exactly the state it would be in had you clicked the row.
+    _spawn_list->setCurrentItem(item);
+    _spawn_list->scrollToItem(item);
+    return;
+  }
+}
+
 void DatabaseSpawnPanel::onFocus()
 {
-  std::uint32_t const guid = selectedGuid();
+  Noggit::Database::SpawnRef const spawn (selectedSpawn());
 
-  if (guid == 0)
+  if (!spawn.valid())
   {
     return;
   }
 
-  _map_view->focusOnSpawn(guid);
+  _map_view->focusOnSpawn(spawn);
 }
 
 bool DatabaseSpawnPanel::moveMode() const
@@ -184,13 +290,9 @@ bool DatabaseSpawnPanel::moveMode() const
   return _move_mode->isChecked();
 }
 
-std::uint32_t DatabaseSpawnPanel::selectedGuid() const
+Noggit::Database::SpawnRef DatabaseSpawnPanel::selectedSpawn() const
 {
-  auto const* item = _spawn_list->currentItem();
-
-  // The guid is carried as item data rather than parsed back out of the label, so the label stays
-  // free to change without silently breaking selection.
-  return item ? item->data(Qt::UserRole).toUInt() : 0u;
+  return refOf(_spawn_list->currentItem());
 }
 
 void DatabaseSpawnPanel::refresh()
@@ -199,7 +301,7 @@ void DatabaseSpawnPanel::refresh()
 
   // Preserved across the rebuild, otherwise every move would drop the selection and the next
   // click would do nothing.
-  std::uint32_t const previously_selected = selectedGuid();
+  Noggit::Database::SpawnRef const previously_selected (selectedSpawn());
 
   _spawn_list->clear();
 
@@ -222,8 +324,9 @@ void DatabaseSpawnPanel::refresh()
 
       auto* item = new QListWidgetItem(label, _spawn_list);
       item->setData(Qt::UserRole, entry->guid);
+      item->setData(SPAWN_KIND_ROLE, static_cast<unsigned>(entry->kind));
 
-      if (entry->guid == previously_selected)
+      if (entry->ref() == previously_selected)
       {
         _spawn_list->setCurrentItem(item);
       }

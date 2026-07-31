@@ -52,6 +52,17 @@ protected:
   Noggit::world_model_instances_storage _model_instance_storage;
   Noggit::world_tile_update_queue _tile_update_queue;
 public:
+  // Duplicate unique IDs repaired while this world's instances loaded.
+  //
+  // A narrow accessor rather than exposing _model_instance_storage: the log is read-only
+  // reporting, and widening access to the whole storage to reach it would hand every caller the
+  // instance maps as well.
+  [[nodiscard]]
+  Noggit::UidCollisionLog const& uidCollisionLog() const
+  {
+    return _model_instance_storage.uid_collision_log();
+  }
+
   std::vector<selection_group> _selection_groups;
 
   MapIndex mapIndex;

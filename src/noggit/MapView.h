@@ -44,6 +44,7 @@ namespace Noggit
   namespace Database
   {
     class SpawnSceneCache;
+    struct SpawnRef;
   }
 
   namespace Project
@@ -349,11 +350,19 @@ public:
   // something else happens to trigger a frame.
   void markSpawnOverlayDirty();
 
+  // guid of the database spawn under the cursor, or 0.
+  //
+  // Nearest-hit across every loaded spawn rather than first-hit: overlapping creatures are
+  // normal in a camp, and picking whichever happened to be iterated first would select one
+  // the user cannot see.
+  [[nodiscard]]
+  Noggit::Database::SpawnRef pickDatabaseSpawn();
+
   // Point the camera at a loaded spawn. False when that guid is not loaded.
   //
   // Shared by the panel's Focus button and the dev bridge's `lookat`, so the two cannot drift
   // into framing a spawn differently.
-  bool focusOnSpawn(std::uint32_t guid, float distance = 12.0f);
+  bool focusOnSpawn(Noggit::Database::SpawnRef const& spawn, float distance = 12.0f);
 
   void tick (float dt);
   void change_selected_wmo_nameset(int set);

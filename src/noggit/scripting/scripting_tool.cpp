@@ -4,6 +4,8 @@
 #include <noggit/scripting/script_profiles.hpp>
 #include <noggit/scripting/script_settings.hpp>
 #include <noggit/scripting/scripting_tool.hpp>
+#include <noggit/Action.hpp>
+#include <noggit/ActionManager.hpp>
 #include <noggit/Camera.hpp>
 #include <noggit/Log.h>
 #include <noggit/tool_enums.hpp>
@@ -30,6 +32,13 @@ namespace Noggit
     namespace
     {
       std::string cur_exception = "";
+
+      // Gap between two sendBrushEvent calls that can only mean the caller skipped the ticks
+      // where the button was up. MapView drives onTick from the render loop, so honoured calls
+      // are one frame apart; no human releases and re-presses inside a quarter second, and only
+      // a hitch longer than that could produce a false positive. Used solely by the fallback in
+      // sendBrushEvent, which disarms itself as soon as the caller is seen ticking while idle.
+      constexpr std::chrono::milliseconds SWALLOWED_STROKE_GAP {250};
     }
     void set_cur_exception(std::string const& exception)
     {
@@ -206,10 +215,104 @@ namespace Noggit
       get_settings()->save_json();
     }
 
+    void scripting_tool::dispatchBrushEdges( bool left
+                                           , bool right
+                                           , std::shared_ptr<script_brush_event> const& evt
+                                           )
+    {
+      int const sel = get_context()->get_selection();
+      if (sel < 0)
+      {
+        return;
+      }
+
+      auto brush = get_context()->get_scripts()[sel];
+
+      if (left)
+      {
+        if (!_last_left) brush->on_left_click.call_if_exists("brush_event", evt);
+        else brush->on_left_hold.call_if_exists("brush_event", evt);
+      }
+      else if (_last_left)
+      {
+        brush->on_left_release.call_if_exists("(brush_event)", evt);
+      }
+      // Adopted here, not by the caller, so that two transitions can be replayed back to back.
+      _last_left = left;
+
+      if (right)
+      {
+        if (!_last_right) brush->on_right_click.call_if_exists("brush_event", evt);
+        else brush->on_right_hold.call_if_exists("brush_event", evt);
+      }
+      else if (_last_right)
+      {
+        brush->on_right_release.call_if_exists("(brush_event)", evt);
+      }
+      _last_right = right;
+    }
+
     void scripting_tool::sendBrushEvent(glm::vec3 const& pos, float dt)
     {
-      bool new_left = get_view()->leftMouse;
-      bool new_right = get_view()->rightMouse;
+      bool const new_left = get_view()->leftMouse;
+      bool const new_right = get_view()->rightMouse;
+
+      auto const now = std::chrono::steady_clock::now();
+      auto const since_last_call = now - _last_call_time;
+      _last_call_time = now;
+
+      // A call with neither button down is only reachable from a caller that ticks this
+      // unconditionally, and it is also the only call on which a release edge can be observed.
+      // Seeing one proves the contract in the header is being honoured.
+      if (!new_left && !new_right)
+      {
+        _pumped_while_idle = true;
+      }
+
+      // Idle and nothing pending: no script call, no undo action, not even the event object.
+      // This is what makes "call me every tick" cheap enough for the caller to honour.
+      if (!new_left && !new_right && !_last_left && !_last_right)
+      {
+        return;
+      }
+
+      // doReload() leaves the context null if the very first load throws (doReload, above), and
+      // this now runs on every tick rather than only mid-stroke.
+      if (!get_context())
+      {
+        return;
+      }
+
+      if (get_context()->get_selection() < 0)
+      {
+        // No script to receive anything. State is still adopted, so a script selected mid-hold
+        // does not see a click edge for a button that was already down.
+        _last_left = new_left;
+        _last_right = new_right;
+        return;
+      }
+
+      // Script callbacks edit the world, and a world edit with no action running dereferences a
+      // null NOGGIT_CUR_ACTION for terrain (World.cpp:1270). The release edge in particular
+      // lands on the tick AFTER MapView closed the caller's LMB-modal action
+      // (MapView.cpp:4197), so there is provably none open for it. beginAction returns the
+      // running action untouched when there is one (ActionManager.cpp:64-65), so a caller that
+      // opens its own keeps ownership and nothing below fires.
+      bool const opened_action = (NOGGIT_CUR_ACTION == nullptr);
+      if (opened_action)
+      {
+        int modality = ActionModalityControllers::eNONE;
+        if (new_left)  modality |= ActionModalityControllers::eLMB;
+        if (new_right) modality |= ActionModalityControllers::eRMB;
+
+        // Objects and terrain both: a script is not restricted to one kind of edit, so the
+        // action has to record whatever it touches.
+        NOGGIT_ACTION_MGR->beginAction(get_view()
+          , ActionFlags::eOBJECTS_ADDED
+          | ActionFlags::eOBJECTS_REMOVED
+          | ActionFlags::eCHUNKS_TERRAIN
+          , modality);
+      }
 
       auto evt = std::make_shared<script_brush_event>(
           get_settings()
@@ -219,30 +322,17 @@ namespace Noggit
 
       try
       {
-        int sel = get_context()->get_selection();
-        if(sel>=0)
+        // Fallback for a caller that only reaches this while a button is held: the up ticks
+        // never arrive, so the detector sees one endless hold. A gap far longer than a frame is
+        // the only in-band evidence that the stroke ended; replaying the missing all-up
+        // transition fires the release and turns the next press back into a click. It cannot
+        // recover right-button events, which such a caller never reaches at all.
+        if (!_pumped_while_idle && since_last_call > SWALLOWED_STROKE_GAP)
         {
-          auto brush = get_context()->get_scripts()[sel];
-          if(new_left)
-          {
-            if(!_last_left ) brush->on_left_click.call_if_exists("brush_event",evt);
-            else brush->on_left_hold.call_if_exists("brush_event",evt);
-          }
-          else
-          {
-            if(_last_left) brush->on_left_release.call_if_exists("(brush_event)",evt);
-          }
-
-          if(new_right)
-          {
-            if(!_last_right) brush->on_right_click.call_if_exists("brush_event",evt);
-            else brush->on_right_hold.call_if_exists("brush_event",evt);
-          }
-          else
-          {
-            if(_last_right) brush->on_right_release.call_if_exists("(brush_event)",evt);
-          }
+          dispatchBrushEdges(false, false, evt);
         }
+
+        dispatchBrushEdges(new_left, new_right, evt);
       }
       catch (std::exception const& e)
       {
@@ -259,8 +349,21 @@ namespace Noggit
         }
         resetLogScroll();
       }
+
+      // Outside the try on purpose: a throwing callback must not leave the detector on a stale
+      // state and re-fire the same click on every following tick.
       _last_left = new_left;
       _last_right = new_right;
+
+      // An action opened for a tick with no button held carries no modality controller, so
+      // endActionOnModalityMismatch can never close it (it returns early on eNONE,
+      // ActionManager.cpp:128-129) and undo() would assert with it still running. While a button
+      // IS held it is deliberately left open: MapView closes it on release, which is what makes
+      // a whole stroke one undo step instead of one per tick.
+      if (opened_action && !new_left && !new_right && NOGGIT_CUR_ACTION)
+      {
+        NOGGIT_ACTION_MGR->endAction();
+      }
     }
 
     void scripting_tool::addDescription(std::string const& stext)

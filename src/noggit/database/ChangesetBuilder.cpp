@@ -55,11 +55,15 @@ namespace
 
   constexpr std::uint64_t MAX_UINT32 = 0xFFFFFFFFull;
 
-  // creature_addon pose defaults.
+  // creature_addon pose defaults, for a creature that has NO addon row yet.
   //
   // CreatureSpawn carries no pose data on purpose: Noggit places spawns, it does not author
   // emotes or stand states. These are the TDB defaults, and SheathState 1 (melee) is what the
   // reference changeset in tools/dev-db/03_example_changeset.sql writes.
+  //
+  // They are never applied to a row that already exists -- the addon statement updates only
+  // path_id on a key collision. Writing them over an existing row would silently unmount,
+  // unsheathe and de-aura a creature whose position was the only thing the user changed.
   constexpr std::uint32_t DEFAULT_MOUNT = 0;
   constexpr std::uint32_t DEFAULT_MOUNT_CREATURE_ID = 0;
   constexpr std::uint32_t DEFAULT_STAND_STATE = 0;
@@ -262,10 +266,15 @@ namespace
     return out + joinWrapped(expressions, "   ", out.size()) + ");\n";
   }
 
+  // `upsert_columns`, when non-empty, appends ON DUPLICATE KEY UPDATE for exactly those columns
+  // and leaves every other column of an existing row untouched. Used where the emitter holds
+  // only part of a row and must not overwrite the part it never read -- see the creature_addon
+  // section in build().
   std::string insertStatement
     ( std::string const& table
     , std::vector<std::string> const& columns
     , std::vector<std::vector<std::string>> const& rows
+    , std::vector<std::string> const& upsert_columns = {}
     )
   {
     std::vector<std::string> quoted;
@@ -293,8 +302,44 @@ namespace
       }
 
       out += "  (" + joinWrapped(rows[i], "   ", 3) + ")";
-      out += (i + 1 == rows.size()) ? ";\n" : ",\n";
+
+      if (i + 1 != rows.size())
+      {
+        out += ",\n";
+      }
     }
+
+    if (!upsert_columns.empty())
+    {
+      std::vector<std::string> assignments;
+      assignments.reserve(upsert_columns.size());
+
+      for (std::string const& column : upsert_columns)
+      {
+        // VALUES(col) can only name a column the INSERT actually supplies. Catching it here
+        // beats an ERROR 1054 part-way through applying a file whose DELETEs have committed.
+        if (std::find(columns.begin(), columns.end(), column) == columns.end())
+        {
+          throw ChangesetError
+            ("Internal error building the " + table + " statement: the update clause names '"
+             + column + "', which is not among the columns being inserted.");
+        }
+
+        std::string const name (quoteIdentifier(column));
+
+        // VALUES(col), not the row-alias form MySQL 8.0.20 introduced: the alias syntax does
+        // not exist on MySQL 5.7 or on MariaDB, both ordinary hosts for a 3.3.5 world
+        // database. VALUES() is accepted by every version, and it is the only way to reach a
+        // per-row value from the update clause of a multi-row INSERT.
+        assignments.push_back(name + " = VALUES(" + name + ")");
+      }
+
+      std::string const clause ("ON DUPLICATE KEY UPDATE ");
+
+      out += "\n" + clause + joinWrapped(assignments, "  ", clause.size());
+    }
+
+    out += ";\n";
 
     return out;
   }
@@ -771,6 +816,10 @@ std::string ChangesetBuilder::build() const
          "--\n"
          "-- Idempotent: every table touched is cleared for the affected keys before it is\n"
          "-- rewritten, so applying this file twice leaves identical rows and raises no error.\n"
+         "-- creature_addon is the exception and updates in place. The editor reads only path_id\n"
+         "-- from that table, so clearing it would discard the mount, pose, emote and auras it\n"
+         "-- never read: only path_id is written, and only for creatures this file edits. An\n"
+         "-- addon row is deleted only when its creature is being deleted with it.\n"
          "-- Variable-driven: guids and path ids are declared once below, so a reviewer can\n"
          "-- retarget the whole changeset by editing the header.\n"
          "-- Column-explicit: never positional. Names that differ between core generations --\n"
@@ -944,39 +993,66 @@ std::string ChangesetBuilder::build() const
   }
 
   // --- creature_addon --------------------------------------------------------------------
-  // The delete covers every creature this changeset touches, not only those getting an addon
-  // row. A spawn that lost its path would otherwise keep the addon row from a previous
-  // changeset and go on following a path the reviewer thinks was removed.
+  // The one section that is not DELETE-then-INSERT, and the exception is deliberate.
+  //
+  // The read path selects exactly two things from this table: path_id, and a boolean saying
+  // whether a row exists at all (SpawnQueryDetail.cpp:557-568). mount, MountCreatureID,
+  // StandState, AnimTier, VisFlags, SheathState, PvPFlags, emote, visibilityDistanceType and
+  // auras are never read, so CreatureSpawn cannot carry them and this emitter has nothing to
+  // write back for them. A DELETE covering every creature the changeset touches, followed by an
+  // INSERT of the hardcoded defaults below, therefore replaced whatever the target held with
+  // zeroes -- a creature that was mounted, kneeling, sheathed, emoting or carrying auras lost
+  // all of it the moment somebody nudged its position.
+  //
+  // Two ways out: read enough to round-trip the row, or stop writing columns that are never
+  // read. The second is taken, and not merely because the first means widening both
+  // CreatureSpawn and the row decoder. Round-tripping is a promise this emitter cannot keep --
+  // any column a later core generation adds would be dropped by exactly the same mechanism --
+  // whereas "write only what the editor authored" holds for columns nobody has invented yet.
+  //
+  // So an edited creature gets INSERT ... ON DUPLICATE KEY UPDATE `path_id`. Where no addon row
+  // exists one is created from the defaults; where one exists only the path binding moves and
+  // the pose survives. It stays idempotent, applying twice leaves identical rows, and it still
+  // clears a path the editor removed: such a spawn arrives with path_id 0 and has_addon true,
+  // so the update writes the 0.
+  //
+  // A creature the editor is deleting is the one case that still DELETEs here: its `creature`
+  // row is going away, so what would be left is an orphan rather than anybody's data.
+  //
+  // Two measured facts this rests on, both from the reference structure dump. creature_addon is
+  // keyed PRIMARY KEY (guid), so the upsert collides on exactly the row it means to -- the same
+  // assumption the reader's LEFT JOIN on guid already makes, since without that key the join
+  // would multiply spawns. And the world schema declares no foreign keys at all, so the
+  // DELETE FROM `creature` above does not cascade here and take the addon row with it; if it
+  // did, preserving the row in this section would be pointless.
 
-  if (!creature_keys.empty())
+  std::vector<CreatureSpawn> with_addon;
+
+  for (CreatureSpawn const& spawn : _creatures)
+  {
+    if (spawn.has_addon)
+    {
+      with_addon.push_back(spawn);
+    }
+  }
+
+  if (!with_addon.empty() || !_removed_creatures.empty())
   {
     out << "\n" << sectionHeader(TABLE_CREATURE_ADDON);
 
-    std::vector<std::uint64_t> delete_keys;
-
-    for (CreatureSpawn const& spawn : _creatures)
+    if (!_removed_creatures.empty())
     {
-      delete_keys.push_back(spawn.guid);
-    }
+      std::vector<std::uint64_t> delete_keys;
 
-    for (std::uint32_t guid : _removed_creatures)
-    {
-      delete_keys.push_back(guid);
-    }
-
-    out << deleteStatement
-             ( TABLE_CREATURE_ADDON, COLUMN_GUID, delete_keys
-             , VARIABLE_CREATURE_GUID, creature_base
-             );
-
-    std::vector<CreatureSpawn> with_addon;
-
-    for (CreatureSpawn const& spawn : _creatures)
-    {
-      if (spawn.has_addon)
+      for (std::uint32_t guid : _removed_creatures)
       {
-        with_addon.push_back(spawn);
+        delete_keys.push_back(guid);
       }
+
+      out << deleteStatement
+               ( TABLE_CREATURE_ADDON, COLUMN_GUID, delete_keys
+               , VARIABLE_CREATURE_GUID, creature_base
+               );
     }
 
     if (!with_addon.empty())
@@ -1058,7 +1134,10 @@ std::string ChangesetBuilder::build() const
         rows.push_back(row);
       }
 
-      out << insertStatement(TABLE_CREATURE_ADDON, columns, rows);
+      // path_id is the only column the editor authored, so it is the only one allowed to
+      // overwrite an existing row. Everything else in the value tuple exists solely to give a
+      // creature that has no addon row yet a complete one.
+      out << insertStatement(TABLE_CREATURE_ADDON, columns, rows, {"path_id"});
     }
   }
 

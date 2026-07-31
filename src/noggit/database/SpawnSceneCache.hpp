@@ -40,6 +40,37 @@ namespace Noggit::Database
     GAMEOBJECT = 1
   };
 
+  // What identifies one spawn. A guid on its own does NOT.
+  //
+  // `creature.guid` and `gameobject.guid` are independent primary keys in separate tables, each
+  // counting up from 1, so their ranges overlap almost completely -- a tile holding creature 100
+  // and gameobject 100 is ordinary, not a corner case. Every lookup here used to match on guid
+  // alone and stop at the first hit, and setTile pushes all creatures before any gameobject
+  // (SpawnSceneCache.cpp:117 then :152), so selecting gameobject 100 outlined both, moving it
+  // moved the creature, and the changeset rewrote a row in the wrong table -- a spawn the user
+  // never touched, changed silently.
+  //
+  // Kept as a struct rather than a packed 64-bit key so that the kind stays readable at every
+  // call site; a caller that has to remember which half of a uint64 is the discriminator will
+  // eventually get it wrong in exactly the way this type exists to prevent.
+  struct SpawnRef
+  {
+    SpawnKind kind = SpawnKind::CREATURE;
+
+    // 0 means "nothing selected". Neither table ever issues guid 0, so it cannot collide with a
+    // real row.
+    std::uint32_t guid = 0;
+
+    bool valid() const { return guid != 0; }
+
+    friend bool operator==(SpawnRef const& lhs, SpawnRef const& rhs)
+    {
+      return lhs.kind == rhs.kind && lhs.guid == rhs.guid;
+    }
+
+    friend bool operator!=(SpawnRef const& lhs, SpawnRef const& rhs) { return !(lhs == rhs); }
+  };
+
   // One drawable spawn.
   //
   // The instance is held by unique_ptr rather than by value so its address is stable: M2's
@@ -89,6 +120,9 @@ namespace Noggit::Database
     // >
     // > Holding them here means the load happens once and the reference outlives it.
     std::vector<std::pair<int, scoped_blp_texture_reference>> skin_textures;
+
+    // How the rest of the editor names this spawn. See SpawnRef on why the guid alone will not do.
+    SpawnRef ref() const { return SpawnRef{kind, guid}; }
   };
 
   // Why spawns in a tile were not drawn.
@@ -172,7 +206,7 @@ namespace Noggit::Database
       // Converts back to server coordinates through SpawnPlacement::serverPositionFor, so the
       // stored row stays the authority on where the spawn is and the round trip goes through the
       // one tested seam rather than being open-coded at a UI call site.
-      bool moveTo(std::uint32_t guid, glm::vec3 const& position);
+      bool moveTo(SpawnRef const& spawn, glm::vec3 const& position);
 
       // Sets a spawn's facing, in server radians, and marks it dirty.
       //
@@ -180,15 +214,16 @@ namespace Noggit::Database
       // client renders the quaternion, so writing one without the other produces a spawn that
       // faces two different ways depending on who is asking -- and the disagreement only shows up
       // in game, never in the editor.
-      bool rotateTo(std::uint32_t guid, double orientation);
+      bool rotateTo(SpawnRef const& spawn, double orientation);
 
-      // Which spawn the UI has selected, so the renderer can outline it. 0 for none.
+      // Which spawn the UI has selected, so the renderer can outline it. Default-constructed
+      // (guid 0) for none.
       //
       // Held here rather than in the panel because the render path needs it and already has the
       // cache; routing it through render params instead would mean threading a second pointer
-      // through WorldRenderParams for one integer.
-      void setSelected(std::uint32_t guid) { _selected_guid = guid; }
-      std::uint32_t selected() const { return _selected_guid; }
+      // through WorldRenderParams for one selection.
+      void setSelected(SpawnRef const& spawn) { _selected = spawn; }
+      SpawnRef selected() const { return _selected; }
 
       // Every loaded entry, in tile then load order. For listing them in the UI.
       std::vector<SpawnSceneEntry const*> allEntries() const;
@@ -201,11 +236,20 @@ namespace Noggit::Database
       // Forgets all edits, leaving the loaded scene alone. For "discard changes".
       void clearDirty();
 
-      // Noggit-frame position of one loaded spawn, by guid. False when it is not loaded.
+      // Noggit-frame position of one loaded spawn. False when it is not loaded.
       //
       // Exists so a caller can aim at a spawn instead of computing where it ought to be and being
       // wrong -- which is a surprisingly effective way to conclude that nothing rendered.
-      bool positionOf(std::uint32_t guid, glm::vec3& position) const;
+      bool positionOf(SpawnRef const& spawn, glm::vec3& position) const;
+
+      // Every loaded spawn carrying this guid, in tile then load order.
+      //
+      // For the one caller that genuinely starts from a bare number -- the dev bridge, whose
+      // commands are typed as text. At most two results, since guid is a primary key within each
+      // table, and two is the case that has to be reported rather than resolved: picking either
+      // one would be the same coin flip that made a bare guid unusable as an identity in the
+      // first place. Callers should treat size() != 1 as an error the user has to disambiguate.
+      std::vector<SpawnRef> refsWithGuid(std::uint32_t guid) const;
 
       void clear();
       bool empty() const { return _tiles.empty(); }
@@ -235,7 +279,7 @@ namespace Noggit::Database
       // loading it the first time.
       DisplayResolver _resolver;
 
-      std::uint32_t _selected_guid = 0;
+      SpawnRef _selected;
 
       // std::map, not unordered_map: ::TileIndex already provides operator< (TileIndex.hpp:14)
       // and no std::hash specialisation, and a tile count is at most a few hundred.

@@ -15,6 +15,15 @@ class QListWidget;
 class QPushButton;
 class QSpinBox;
 
+namespace Noggit::Database
+{
+  // Forward-declared rather than including SpawnSceneCache.hpp, which drags in ModelInstance and
+  // with it most of the scene graph. Declaring functions that return it by value is legal with
+  // the type incomplete; the one caller outside this pair (MapView.cpp) already includes the
+  // full header.
+  struct SpawnRef;
+}
+
 namespace Noggit::Ui
 {
   // The editing surface for TrinityCore world-database spawns.
@@ -41,17 +50,38 @@ namespace Noggit::Ui
       // here" rather than whatever the active tool would normally do.
       bool moveMode() const;
 
-      // guid of the highlighted spawn, or 0 when nothing is selected.
-      std::uint32_t selectedGuid() const;
+      // The highlighted spawn. Its guid is 0 when nothing is selected.
+      //
+      // Kind and guid, not a bare guid: creature.guid and gameobject.guid are separate primary
+      // keys with overlapping ranges, so a number alone names up to two different rows. See
+      // Noggit::Database::SpawnRef.
+      Noggit::Database::SpawnRef selectedSpawn() const;
 
       // Called by MapView after a click has moved something, and after a load, so the list and the
       // pending count follow the world rather than drifting from it.
       void refresh();
 
+      // Highlight this spawn in the list, for a viewport click. Does not re-enter the
+      // viewport selection, so a click cannot bounce between the two.
+      void selectSpawn(Noggit::Database::SpawnRef const& spawn);
+
     private:
       void onLoad(bool all_tiles);
       void onSave();
       void onDiscard();
+
+      // Applies the spin box to the selection, but only when it actually differs from what the
+      // spawn already stores.
+      //
+      // QSpinBox::editingFinished fires on focus-out as well as on an edit, so without the
+      // comparison merely tabbing through the box wrote a quantised whole-degree orientation over
+      // exact stored radians and marked an untouched spawn dirty -- it then appeared in the
+      // changeset with a facing nobody had changed.
+      void applyOrientationIfChanged();
+
+      // Facing of a loaded spawn in whole degrees, the way the spin box shows it. False when that
+      // spawn is not loaded.
+      bool spawnFacingDegrees(Noggit::Database::SpawnRef const& spawn, int& degrees) const;
 
       // Points the camera at the selected spawn from a short distance.
       //

@@ -21,6 +21,13 @@ namespace Noggit::Database
   //
   //   1. Idempotent -- DELETE precedes INSERT for every table touched, so applying twice
   //      leaves identical rows and raises no error.
+  //
+  //      creature_addon is the deliberate exception: it is upserted, not cleared. The read
+  //      path takes only path_id and a row-exists flag from it, so a DELETE there would throw
+  //      away the mount, stand state, sheath state, emote and auras this class never read and
+  //      cannot rewrite. It writes the one column the editor authored and leaves the rest of
+  //      an existing row alone. Applying twice is still a no-op. See the section comment in
+  //      build() for the full argument.
   //   2. Variable-driven -- GUIDs declared once at the top as @CGUID/@OGUID/@PATH so a
   //      reviewer can retarget the whole changeset by editing the header.
   //   3. Column-explicit -- never positional, and no emitted column name is assumed to exist.

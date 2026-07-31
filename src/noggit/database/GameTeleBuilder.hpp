@@ -61,6 +61,14 @@ namespace Noggit::Database
     // Names are validated, not escaped-and-hoped: `.tele` matches on the name, and a name with a
     // space in it cannot be typed as one argument. An entry whose name is empty or contains
     // whitespace is skipped and reported in `skipped`.
+    //
+    // So is a name two bookmarks claim. `game_tele` has no unique key on `name` and its collation
+    // is case-insensitive, so two such entries would produce two rows the DELETE above cannot
+    // separate and `.tele` cannot address -- the ambiguity that DELETE exists to prevent, written
+    // by the tool that was supposed to prevent it. Both are refused rather than one silently
+    // winning: there is no rule for choosing between two places the user marked that beats asking
+    // the user. Every dropped entry is named in `skipped`, so `emitted + skipped.size()` always
+    // accounts for every input.
     struct Result
     {
       std::string sql;

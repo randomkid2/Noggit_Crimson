@@ -65,9 +65,17 @@ namespace Noggit::Ui
       void onSaveDbc();
       void onBulkApply();
 
-      // Lowest unused id at or above the custom range, so a new set cannot collide with a Blizzard
-      // row and cannot silently take an id another set already uses.
+      // Lowest id at or above the custom range that this DBC does not already hold, so a new row
+      // cannot collide with a Blizzard one. Consults only the file, so it is the right allocator
+      // for GroundEffectDoodad rows, which are created and appended in the same statement.
       std::uint32_t nextFreeId(DBCFile& dbc) const;
+
+      // The same, but also skipping every id held by a set in _sets.
+      //
+      // Effect sets exist in _sets before they exist in the DBC -- onSaveDbc is what appends them
+      // -- so nextFreeId alone hands out the same id twice, and the second set overwrites the
+      // first. Anything that mints an effect set id has to use this instead.
+      std::uint32_t nextFreeSetId() const;
 
       MapView* _map_view;
 

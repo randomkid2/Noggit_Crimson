@@ -100,18 +100,30 @@ namespace Noggit
         return;
       }
 
+      // Read the transform BEFORE remove(). remove() ends in
+      // world_model_instances_storage::delete_instance, which erases the instance from _m2s/_wmos
+      // (world_model_instances_storage.cpp:241-242) and so destroys the object _object points at.
+      // These three values used to be fetched through _object in the argument lists below, i.e.
+      // after the free.
+      glm::vec3 const pos = get_pos();
+      glm::vec3 const rot = get_rot();
+      float const scale = get_scale();
+
       remove();
 
+      // action=true, matching remove() above. With false the removal was on the undo stack and
+      // the replacement was not, so Ctrl+Z restored the original model and left the replacement
+      // in place -- every undo of a replace() left the scene one object heavier.
       if (filename.ends_with(".wmo"))
       {
-        _object = 
-          world()->addWMOAndGetInstance(filename, get_pos(), math::degrees::vec3 {get_rot()}, get_scale(), false);
+        _object =
+          world()->addWMOAndGetInstance(filename, pos, math::degrees::vec3 {rot}, scale, true);
       }
       else
       {
         auto params = object_paste_params();
         _object =
-          world()->addM2AndGetInstance(filename, get_pos(), get_scale(), math::degrees::vec3 {get_rot()}, &params, false, false);
+          world()->addM2AndGetInstance(filename, pos, scale, math::degrees::vec3 {rot}, &params, false, true);
       }
     }
 

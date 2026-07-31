@@ -10,8 +10,14 @@
 #include <noggit/map_index.hpp>
 #include <noggit/texture_set.hpp>
 #include <noggit/Log.h>
+#include <noggit/project/CurrentProject.hpp>
 
+#include <ClientData.hpp>
+
+#include <QtCore/QDateTime>
+#include <QtCore/QFileInfo>
 #include <QtCore/QSignalBlocker>
+#include <QtCore/QStringList>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QFormLayout>
@@ -57,6 +63,63 @@ namespace
     }
 
     return QString("%1  %2").arg(id, 6).arg(names.isEmpty() ? QString("(empty)") : names.join(", "));
+  }
+
+  // Where DBCFile::save() puts a DBC, reconstructed rather than read back: the path is built
+  // inside save() from the project root and the file's own `filename`, and both are private with
+  // no accessor (DBCFile.h:120, DBCFile.cpp:68-79). Kept byte-for-byte identical to that code,
+  // including the backslash separator, since normalizeFilenameUnix is what resolves it.
+  QString projectDbcPath(QString const& dbc_name)
+  {
+    QString root (QString::fromStdString(Noggit::Project::CurrentProject::get()->ProjectPath));
+
+    if (!(root.endsWith('\\') || root.endsWith('/')))
+    {
+      root += "/";
+    }
+
+    return QString::fromStdString
+      ( BlizzardArchive::ClientData::normalizeFilenameUnix
+          ((root + "DBFilesClient\\" + dbc_name).toStdString()));
+  }
+
+  // Empty when the file really landed, otherwise why it did not.
+  //
+  // DBCFile::save() opens an ofstream and never tests it (DBCFile.cpp:79-91), so a read-only
+  // project directory, a full disk or a locked file all return normally and leave the caller
+  // announcing a save that did not happen. Nothing in DBCFile can report this, and DBCFile is
+  // not ours to change here, so the check is done against the filesystem instead.
+  QString verifyDbcWritten(QString const& dbc_name, DBCFile const& dbc, QDateTime const& started)
+  {
+    QFileInfo const info (projectDbcPath(dbc_name));
+
+    if (!info.exists())
+    {
+      return QString("%1 was not created.").arg(dbc_name);
+    }
+
+    // WDBC magic plus four uint32 header fields, then recordSize bytes per record. The string
+    // table follows and is not counted -- stringSize has no accessor -- so this is a lower bound,
+    // which is all that is needed to catch the truncated write a full disk produces.
+    qint64 const minimum_size
+      ( 20 + static_cast<qint64>(dbc.getRecordCount()) * static_cast<qint64>(dbc.getRecordSize()));
+
+    if (info.size() < minimum_size)
+    {
+      return QString("%1 is %2 bytes, short of the %3 its %4 record(s) need.")
+               .arg(dbc_name).arg(info.size()).arg(minimum_size).arg(dbc.getRecordCount());
+    }
+
+    // A copy left by an earlier session passes the size check even when this write was refused,
+    // so the timestamp is what separates "written now" from "was already there". Two seconds of
+    // slack because FAT-family filesystems store mtime at two-second granularity.
+    if (info.lastModified() < started.addSecs(-2))
+    {
+      return QString("%1 was not modified -- an older copy from %2 is still on disk.")
+               .arg(dbc_name).arg(info.lastModified().toString(Qt::ISODate));
+    }
+
+    return QString();
   }
 }
 
@@ -486,12 +549,38 @@ std::uint32_t GroundEffectSetEditor::nextFreeId(DBCFile& dbc) const
   return candidate;
 }
 
+std::uint32_t GroundEffectSetEditor::nextFreeSetId() const
+{
+  auto const taken_in_session = [this] (std::uint32_t id)
+  {
+    return std::any_of (_sets.begin(), _sets.end()
+                       , [id] (EffectSet const& set) { return set.id == id; });
+  };
+
+  // Both conditions are rechecked after every bump: skipping a session id can land the candidate
+  // back on a DBC row, so testing the two sources in sequence rather than in one loop would let
+  // a collision through.
+  std::uint32_t candidate = CUSTOM_ID_BASE;
+
+  while (gGroundEffectTextureDB.CheckIfIdExists(candidate) || taken_in_session(candidate))
+  {
+    ++candidate;
+  }
+
+  return candidate;
+}
+
 void GroundEffectSetEditor::onNewSet()
 {
   applyEditsToSelected();
 
   EffectSet set;
-  set.id = nextFreeId(gGroundEffectTextureDB);
+
+  // Not nextFreeId: an unsaved set is not in the DBC yet, so two presses of New would both be
+  // given the first free DBC id. onSaveDbc would then take the addRecord branch twice for that
+  // id and DBCFile::addRecord throws AlreadyExists on the second (DBCFile.cpp:187), losing the
+  // whole save.
+  set.id = nextFreeSetId();
 
   _sets.push_back(set);
 
@@ -516,16 +605,10 @@ void GroundEffectSetEditor::onDuplicateSet()
   }
 
   EffectSet set = _sets[static_cast<std::size_t>(row)];
-  set.id = nextFreeId(gGroundEffectTextureDB);
 
-  // Ids are reassigned on save, so a duplicate made before saving must not reuse the source's id.
-  for (auto const& existing : _sets)
-  {
-    if (existing.id == set.id)
-    {
-      ++set.id;
-    }
-  }
+  // Replaces a bump-on-collision loop that only worked by accident: it incremented past each
+  // clashing id without rechecking the ids it had already passed, so it could still land on one.
+  set.id = nextFreeSetId();
 
   _sets.push_back(set);
 
@@ -541,6 +624,9 @@ void GroundEffectSetEditor::onSaveDbc()
 
   std::size_t written_doodads = 0;
   std::size_t written_sets = 0;
+
+  // Taken before the save so the mtime check below has something to compare against.
+  QDateTime const started (QDateTime::currentDateTime());
 
   try
   {
@@ -623,6 +709,34 @@ void GroundEffectSetEditor::onSaveDbc()
     return;
   }
 
+  QStringList problems;
+
+  for (QString const& problem : { verifyDbcWritten("GroundEffectDoodad.dbc", gGroundEffectDoodadDB, started)
+                                , verifyDbcWritten("GroundEffectTexture.dbc", gGroundEffectTextureDB, started)
+                                })
+  {
+    if (!problem.isEmpty())
+    {
+      problems << problem;
+    }
+  }
+
+  if (!problems.isEmpty())
+  {
+    // Deliberately not reloading: the rows are in the in-memory DBCs and in _sets, so leaving both
+    // alone is what lets the user fix the permissions or free the disk and press Save again.
+    QString const failure
+      ( QString("The save did not land on disk.\n\n%1\n\nYour edits are still in memory. Fix the "
+                "problem and save again -- closing Noggit now loses them.")
+          .arg(problems.join("\n")));
+
+    LogError << failure.toStdString() << std::endl;
+
+    _status->setText(failure);
+    QMessageBox::critical(this, "Ground Effect Sets", failure);
+    return;
+  }
+
   QString const message
     ( QString("Saved. %1 new set(s), %2 new doodad row(s), written to the project's "
               "DBFilesClient folder.").arg(written_sets).arg(written_doodads));
@@ -637,7 +751,10 @@ void GroundEffectSetEditor::onBulkApply()
 {
   applyEditsToSelected();
 
-  int const row = _set_list->currentRow();
+  // selectedSetIndex, not currentRow: with the filter or "hide empty" on, the row number and the
+  // _sets index are different numbers, and currentRow would apply whichever set happens to sit at
+  // that offset in the unfiltered vector rather than the one on screen.
+  int const row = selectedSetIndex();
 
   if (row < 0 || static_cast<std::size_t>(row) >= _sets.size())
   {
@@ -660,12 +777,16 @@ void GroundEffectSetEditor::onBulkApply()
   std::size_t chunks_changed = 0;
   std::size_t layers_changed = 0;
 
+  World* world = _map_view->getWorld();
+
   auto const apply_to_tile = [&] (MapTile* tile)
   {
     if (!tile)
     {
       return;
     }
+
+    bool tile_touched = false;
 
     for (int z = 0; z < 16; ++z)
     {
@@ -699,18 +820,27 @@ void GroundEffectSetEditor::onBulkApply()
 
         if (touched)
         {
-          // Same follow-up the scripting API performs after set_effect: the low-detail texture
-          // map is derived from the layers, and the chunk has to be marked so the change is
-          // actually written out.
+          // Same follow-up the scripting API performs after set_effect (script_chunk.cpp:50): the
+          // low-detail texture map is derived from the layers, and the render side has to be told
+          // the MCLY flags moved.
           chunk->texture_set->lod_texture_map();
           chunk->registerChunkUpdate(ChunkUpdateFlags::FLAGS);
           ++chunks_changed;
+          tile_touched = true;
         }
       }
     }
-  };
 
-  World* world = _map_view->getWorld();
+    if (tile_touched)
+    {
+      // registerChunkUpdate is a render-refresh flag and nothing more -- MapChunk's constructor
+      // sets the same bits for every chunk that ever loads (MapChunk.cpp:35), so it cannot mean
+      // "unsaved". The save path tests MapTile::changed instead (map_index.cpp:555 and :584), and
+      // neither setEffect (texture_set.cpp:1717) nor registerChunkUpdate touches it. Without this
+      // the ADT is skipped by saveChanged and the edit is lost on unload.
+      world->mapIndex.setChanged(tile);
+    }
+  };
 
   if (all_tiles)
   {

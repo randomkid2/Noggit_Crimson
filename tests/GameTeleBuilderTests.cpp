@@ -14,6 +14,7 @@
 #include <noggit/database/TileCoordinates.hpp>
 
 #include <string>
+#include <vector>
 
 using namespace Noggit::Database;
 using Catch::Approx;
@@ -86,6 +87,97 @@ TEST_CASE("a name that .tele cannot type is refused rather than written", "[tele
   // The reason travels with the name, so the UI can say why rather than just dropping it.
   CHECK(contains(result.skipped[0], "My Secret Base"));
   CHECK(contains(result.skipped[0], "space"));
+}
+
+TEST_CASE("two bookmarks claiming one name are both refused", "[tele][validation]")
+{
+  // The defect: both were emitted, producing two rows `.tele` cannot tell apart -- the exact
+  // ambiguity the DELETE-by-name exists to prevent, written by the code that prevents it.
+  // Refused rather than deduplicated: choosing one sends the player to one of two places they
+  // marked, and the file gives no clue which.
+  GameTele::Result const result
+    ( GameTele::build
+      ( { entryAt("Camp", 1.0, 2.0, 3.0, 0.0)
+        , entryAt("Goldshire", -9457.0, 62.0, 56.0, 0.0)
+        , entryAt("Camp", 400.0, 500.0, 600.0, 0.0)
+        }
+      )
+    );
+
+  CHECK(result.emitted == 1);
+  REQUIRE(result.skipped.size() == 2);
+
+  CHECK(contains(result.sql, "'Goldshire'"));
+  CHECK_FALSE(contains(result.sql, "'Camp'"));
+
+  // Neither row is written, so neither destination may reach the file.
+  CHECK_FALSE(contains(result.sql, "400.000000"));
+  CHECK_FALSE(contains(result.sql, "1.000000, 2.000000"));
+
+  // Both are reported, in entry order, so the UI can name what the user has to rename.
+  CHECK(contains(result.skipped[0], "Camp"));
+  CHECK(contains(result.skipped[0], "2 bookmarks"));
+  CHECK(contains(result.skipped[1], "Camp"));
+}
+
+TEST_CASE("names that collide only in case are treated as one name", "[tele][validation]")
+{
+  // game_tele.name is a utf8mb4_unicode_ci column with no unique key, so `DELETE WHERE name =
+  // 'Camp'` already removes a stored 'camp'. Emitting both leaves two rows that no later export
+  // of either one can clean up, and `.tele` resolves its argument case-insensitively too.
+  GameTele::Result const result
+    ( GameTele::build
+      ( { entryAt("Camp", 1.0, 2.0, 3.0, 0.0)
+        , entryAt("CAMP", 4.0, 5.0, 6.0, 0.0)
+        }
+      )
+    );
+
+  CHECK(result.emitted == 0);
+  CHECK(result.skipped.size() == 2);
+  CHECK_FALSE(contains(result.sql, "INSERT INTO"));
+}
+
+TEST_CASE("a repeated name does not cost the entries around it", "[tele][validation]")
+{
+  // Refusing a name must not turn into refusing the export. The @TELE offsets are also
+  // recomputed over what is actually written, so a dropped entry cannot leave a gap that
+  // collides with the next id the server hands out.
+  GameTele::Result const result
+    ( GameTele::build
+      ( { entryAt("Alpha", 1.0, 2.0, 3.0, 0.0)
+        , entryAt("Dup", 4.0, 5.0, 6.0, 0.0)
+        , entryAt("Dup", 7.0, 8.0, 9.0, 0.0)
+        , entryAt("Beta", 10.0, 11.0, 12.0, 0.0)
+        }
+      )
+    );
+
+  CHECK(result.emitted == 2);
+  CHECK(result.skipped.size() == 2);
+
+  CHECK(contains(result.sql, "@TELE + 1, 1.000000"));
+  CHECK(contains(result.sql, "@TELE + 2, 10.000000"));
+  CHECK_FALSE(contains(result.sql, "@TELE + 3"));
+}
+
+TEST_CASE("every input is accounted for", "[tele][validation]")
+{
+  // The property the two refusal rules have to share: nothing may vanish without a word. A
+  // bookmark that is neither written nor reported is one the user believes was exported.
+  std::vector<GameTele::Entry> const entries
+    { entryAt("Alpha", 1.0, 2.0, 3.0, 0.0)
+    , entryAt("has a space", 1.0, 2.0, 3.0, 0.0)
+    , entryAt("", 1.0, 2.0, 3.0, 0.0)
+    , entryAt("Dup", 1.0, 2.0, 3.0, 0.0)
+    , entryAt("dup", 1.0, 2.0, 3.0, 0.0)
+    , entryAt("Beta", 1.0, 2.0, 3.0, 0.0)
+    };
+
+  GameTele::Result const result (GameTele::build(entries));
+
+  CHECK(result.emitted + result.skipped.size() == entries.size());
+  CHECK(result.emitted == 2);
 }
 
 TEST_CASE("ids come from MAX(id) at apply time, never baked in", "[tele][sqlformat]")

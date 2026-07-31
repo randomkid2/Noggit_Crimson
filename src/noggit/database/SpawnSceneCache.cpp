@@ -201,13 +201,15 @@ TileSpawnScene const* SpawnSceneCache::tile(::TileIndex const& adt_tile) const
   return found == _tiles.end() ? nullptr : &found->second;
 }
 
-bool SpawnSceneCache::moveTo(std::uint32_t guid, glm::vec3 const& position)
+bool SpawnSceneCache::moveTo(SpawnRef const& spawn, glm::vec3 const& position)
 {
   for (auto& tile : _tiles)
   {
     for (auto& entry : tile.second.entries)
     {
-      if (entry.guid != guid || !entry.instance)
+      // Kind as well as guid. Matching on guid alone stopped at the creature that shares the
+      // number, so moving a gameobject silently rewrote creature.position instead -- see SpawnRef.
+      if (entry.ref() != spawn || !entry.instance)
       {
         continue;
       }
@@ -243,7 +245,7 @@ bool SpawnSceneCache::moveTo(std::uint32_t guid, glm::vec3 const& position)
   return false;
 }
 
-bool SpawnSceneCache::rotateTo(std::uint32_t guid, double orientation)
+bool SpawnSceneCache::rotateTo(SpawnRef const& spawn, double orientation)
 {
   double const normalised (TileCoordinates::normaliseOrientation(orientation));
 
@@ -251,7 +253,9 @@ bool SpawnSceneCache::rotateTo(std::uint32_t guid, double orientation)
   {
     for (auto& entry : tile.second.entries)
     {
-      if (entry.guid != guid || !entry.instance)
+      // Kind as well as guid, for the same reason as moveTo: a bare guid can name a row in
+      // either table.
+      if (entry.ref() != spawn || !entry.instance)
       {
         continue;
       }
@@ -339,13 +343,13 @@ void SpawnSceneCache::clearDirty()
   }
 }
 
-bool SpawnSceneCache::positionOf(std::uint32_t guid, glm::vec3& position) const
+bool SpawnSceneCache::positionOf(SpawnRef const& spawn, glm::vec3& position) const
 {
   for (auto const& tile : _tiles)
   {
     for (auto const& entry : tile.second.entries)
     {
-      if (entry.guid == guid && entry.instance)
+      if (entry.ref() == spawn && entry.instance)
       {
         position = entry.instance->pos;
         return true;
@@ -354,6 +358,29 @@ bool SpawnSceneCache::positionOf(std::uint32_t guid, glm::vec3& position) const
   }
 
   return false;
+}
+
+std::vector<SpawnRef> SpawnSceneCache::refsWithGuid(std::uint32_t guid) const
+{
+  std::vector<SpawnRef> matches;
+
+  if (guid == 0)
+  {
+    return matches;
+  }
+
+  for (auto const& tile : _tiles)
+  {
+    for (auto const& entry : tile.second.entries)
+    {
+      if (entry.guid == guid)
+      {
+        matches.push_back(entry.ref());
+      }
+    }
+  }
+
+  return matches;
 }
 
 void SpawnSceneCache::clear()

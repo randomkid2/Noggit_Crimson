@@ -703,7 +703,7 @@ void WorldRender::draw (glm::mat4x4 const& model_view
           //
           // Amber, to stay distinguishable from the white current-selection and yellow collision
           // boxes the ADT object path already draws (ModelInstance.cpp:93,102).
-          if (entry.guid != 0 && entry.guid == render_settings.db_spawns->selected())
+          if (entry.ref().valid() && entry.ref() == render_settings.db_spawns->selected())
           {
             auto const& extents = spawn_instance->getExtents();
 
@@ -894,7 +894,17 @@ void WorldRender::draw (glm::mat4x4 const& model_view
 
   bool draw_doodads_wmo = render_settings.draw_wmo && render_settings.draw_wmo_doodads;
   // M2s / models
-  if (render_settings.draw_models || draw_doodads_wmo || (render_settings.minimap_render && minimap_render_settings->use_filters))
+  //
+  // draw_db_spawns belongs on THIS gate, not only on the inner one further down.
+  //
+  // It was added to the inner condition alone, which is unreachable unless this one already
+  // passed -- so the added term was a strict no-op and the bug it claimed to fix was still live:
+  // pressing F1 (Doodads) and F2 (WMO doodads), or Shift+F1 which clears all three at once, made
+  // this false and discarded every gathered database spawn while the View menu still showed
+  // "Database spawns" ticked. The amber selection outline kept drawing, because it is emitted
+  // from the gather loop rather than from this pass, leaving a box floating around nothing.
+  if (render_settings.draw_models || draw_doodads_wmo || render_settings.draw_db_spawns
+    || (render_settings.minimap_render && minimap_render_settings->use_filters))
   {
     ZoneScopedN("World::draw() : Draw M2s");
 

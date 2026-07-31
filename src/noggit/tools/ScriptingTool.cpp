@@ -55,44 +55,21 @@ namespace Noggit
 
     void ScriptingTool::onTick(float deltaTime, TickParameters const& params)
     {
-        // Gated on the left button, as every other brush tool is (RaiseLowerTool.cpp:122,
-        // VertexPainterTool.cpp:85). Without it the brush fired on every tick for as long as a
-        // chunk stayed SELECTED, which outlives the click -- so a scatter script kept placing
-        // models after the user had stopped painting, and the only thing holding it back was
-        // whatever spacing check the script happened to implement.
-        if (!params.left_mouse)
-        {
-            return;
-        }
+        // Called on EVERY tick, deliberately, and exactly once.
+        //
+        // An earlier version gated this on params.left_mouse the way the terrain brushes do. That
+        // broke the scripting brush outright: sendBrushEvent drives an edge detector
+        // (scripting_tool.cpp) that compares the current mouse state against the previous one, so
+        // returning early whenever the button is up meant it never observed the "up" state --
+        // on_left_click fired once per session, and on_left_release and every right-button
+        // callback never fired at all.
+        //
+        // sendBrushEvent self-gates instead: idle with nothing pending it dispatches nothing,
+        // allocates nothing and opens no undo action, and it opens its own action with the
+        // eLMB/eRMB modality only when a script callback is about to run -- so a stroke is still
+        // one undo step rather than one per frame.
+        (void)params;
 
-        auto mv = mapView();
-        auto world = mv->getWorld();
-
-        auto currentSelection = world->current_selection();
-        if (world->has_selection())
-        {
-            for (auto& selection : currentSelection)
-            {
-                if (selection.index() == eEntry_MapChunk)
-                {
-                    // One undo step per STROKE, not per tick.
-                    //
-                    // eLMB is what makes that work: the manager keeps the same action open while
-                    // the button is held and closes it on release, so a scatter brush that placed
-                    // two hundred models is a single Ctrl+Z rather than two hundred of them.
-                    //
-                    // Scripts add and remove objects and edit terrain, so the flags cover all
-                    // three -- a script is not restricted to one kind of edit and the action has
-                    // to record whatever it touches.
-                    NOGGIT_ACTION_MGR->beginAction(mv
-                        , Noggit::ActionFlags::eOBJECTS_ADDED
-                        | Noggit::ActionFlags::eOBJECTS_REMOVED
-                        | Noggit::ActionFlags::eCHUNKS_TERRAIN
-                        , Noggit::ActionModalityControllers::eLMB);
-
-                    _scriptingTool->sendBrushEvent(mv->cursorPosition(), 7.5f * deltaTime);
-                }
-            }
-        }
+        _scriptingTool->sendBrushEvent(mapView()->cursorPosition(), 7.5f * deltaTime);
     }
 }

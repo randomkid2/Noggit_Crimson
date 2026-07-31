@@ -1,4 +1,6 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
+#include <noggit/AssetScan.hpp>
+#include <noggit/UidCollisionLog.hpp>
 #include <noggit/database/ChangesetBuilder.hpp>
 #include <noggit/database/DatabaseSettings.hpp>
 #include <noggit/database/GameTeleBuilder.hpp>
@@ -457,6 +459,38 @@ std::string MapView::loadDatabaseSpawns(bool all_loaded_tiles, bool interactive,
                   "details in Settings first.", true);
   }
 
+  // Loading rebuilds the scene from scratch, which throws away every unsaved move and rotation.
+  // Discard already asks before doing exactly that, so loading doing it silently was the
+  // inconsistency -- and the more damaging half, because Discard is a button you press on purpose
+  // while Load is one you press to see more.
+  if (_db_spawn_scene && _db_spawn_scene->dirtyCount() > 0)
+  {
+    std::string const warning
+      ( std::to_string(_db_spawn_scene->dirtyCount())
+      + " spawn(s) have unsaved changes. Loading discards them." );
+
+    if (!interactive)
+    {
+      // A script gets refused rather than silently losing the edits it just made.
+      return report(warning + " Save or discard first.", true);
+    }
+
+    auto const answer
+      ( QMessageBox::question
+        ( this
+        , "Database spawns"
+        , QString::fromStdString(warning) + "\n\nLoad anyway and lose them?"
+        , QMessageBox::Yes | QMessageBox::No
+        , QMessageBox::No
+        )
+      );
+
+    if (answer != QMessageBox::Yes)
+    {
+      return "OK cancelled";
+    }
+  }
+
   // Everything below can throw -- the connection, the introspection, and every query. All of it
   // is contained here, because this runs from a Qt slot and an exception escaping a slot is
   // undefined behaviour under Qt, not a caught error.
@@ -795,11 +829,51 @@ void MapView::markSpawnOverlayDirty()
   _needs_redraw = true;
 }
 
-bool MapView::focusOnSpawn(std::uint32_t guid, float distance)
+Noggit::Database::SpawnRef MapView::pickDatabaseSpawn()
+{
+  if (!_db_spawn_scene)
+  {
+    // Default-constructed: guid 0, which SpawnRef::valid() reports as nothing selected.
+    return {};
+  }
+
+  math::ray const ray (intersect_ray());
+
+  Noggit::Database::SpawnRef nearest;
+  float nearest_distance = std::numeric_limits<float>::max();
+
+  for (auto const* entry : _db_spawn_scene->allEntries())
+  {
+    if (!entry->instance)
+    {
+      continue;
+    }
+
+    // ModelInstance::intersect returns early on a model that has not finished loading, so a
+    // half-streamed tile picks nothing rather than picking wrongly.
+    selection_result hits;
+
+    entry->instance->intersect
+      (_model_view, ray, &hits, static_cast<int>(_world->animtime), _draw_model_animations.get());
+
+    for (auto const& hit : hits)
+    {
+      if (hit.first < nearest_distance)
+      {
+        nearest_distance = hit.first;
+        nearest = entry->ref();
+      }
+    }
+  }
+
+  return nearest;
+}
+
+bool MapView::focusOnSpawn(Noggit::Database::SpawnRef const& spawn, float distance)
 {
   glm::vec3 target (0.0f, 0.0f, 0.0f);
 
-  if (!_db_spawn_scene || !_db_spawn_scene->positionOf(guid, target))
+  if (!_db_spawn_scene || !_db_spawn_scene->positionOf(spawn, target))
   {
     return false;
   }
@@ -820,7 +894,7 @@ bool MapView::focusOnSpawn(std::uint32_t guid, float distance)
   _camera.yaw(math::degrees(glm::degrees(std::atan2(to_target.x, to_target.z))));
   _camera.pitch(math::degrees(glm::degrees(std::asin(-to_target.y / length))));
 
-  _db_spawn_scene->setSelected(guid);
+  _db_spawn_scene->setSelected(spawn);
 
   _camera_moved_since_last_draw = true;
   _needs_redraw = true;
@@ -915,6 +989,59 @@ std::string MapView::handleBridgeCommand(std::string const& line)
     }
   };
 
+  // Resolve a bare guid from a bridge command to a (kind, guid) reference.
+  //
+  // The bridge takes a guid alone because that is what a human reads off a database row, but a
+  // guid alone is genuinely ambiguous: creature.guid and gameobject.guid are independent
+  // sequences, so both tables can hold the same number on the same tile. Rather than guess -- the
+  // defect this whole change exists to remove -- an ambiguous guid is refused and the caller is
+  // told to say which.
+  auto const resolve_spawn = [this] (std::uint32_t guid, std::string const& kind_hint
+                                    , Noggit::Database::SpawnRef& out) -> std::string
+  {
+    if (!_db_spawn_scene)
+    {
+      return "ERR nothing loaded; run loadspawns first";
+    }
+
+    std::vector<Noggit::Database::SpawnRef> matches;
+
+    for (auto const* entry : _db_spawn_scene->allEntries())
+    {
+      if (entry->guid != guid)
+      {
+        continue;
+      }
+
+      if (!kind_hint.empty())
+      {
+        bool const is_creature = entry->kind == Noggit::Database::SpawnKind::CREATURE;
+
+        if ((kind_hint == "creature") != is_creature)
+        {
+          continue;
+        }
+      }
+
+      matches.push_back(entry->ref());
+    }
+
+    if (matches.empty())
+    {
+      return "ERR guid " + std::to_string(guid) + " is not loaded";
+    }
+
+    if (matches.size() > 1)
+    {
+      return "ERR guid " + std::to_string(guid) + " is both a creature and a gameobject here; "
+             "add creature or gameobject as the last argument";
+    }
+
+    out = matches.front();
+
+    return {};
+  };
+
   if (command == "ping")
   {
     return "OK pong";
@@ -951,6 +1078,15 @@ std::string MapView::handleBridgeCommand(std::string const& line)
 
     _camera.position = glm::vec3(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z));
 
+    // _camera_moved_since_last_draw is what makes the renderer re-upload the MVP uniform
+    // block; without it the camera member moves but the GPU keeps drawing from the previous
+    // frame's matrices. Input-driven movement sets it, so only these programmatic paths were
+    // affected -- which is why bridge screenshots kept coming back framed from where the
+    // camera used to be, and why moving to a different TILE appeared to fix it (tile
+    // streaming forces repaints that set it as a side effect).
+    _camera_moved_since_last_draw = true;
+    _needs_redraw = true;
+
     // Tiles stream in around the camera, and nothing else triggers that when the camera is moved
     // programmatically rather than by input.
     _world->mapIndex.enterTile(::TileIndex(_camera.position));
@@ -981,6 +1117,11 @@ std::string MapView::handleBridgeCommand(std::string const& line)
 
     _world->mapIndex.enterTile(::TileIndex(_camera.position));
 
+    // Same reason as `camera` above: without this the MVP block is never re-uploaded and the
+    // next frame is drawn from the old matrices.
+    _camera_moved_since_last_draw = true;
+    _needs_redraw = true;
+
     std::ostringstream out;
     out << "OK camera=" << placement.x << ',' << placement.y << ',' << placement.z;
 
@@ -999,6 +1140,15 @@ std::string MapView::handleBridgeCommand(std::string const& line)
 
     _camera.yaw(math::degrees(static_cast<float>(yaw)));
     _camera.pitch(math::degrees(static_cast<float>(pitch)));
+
+    // _camera_moved_since_last_draw is what makes the renderer re-upload the MVP uniform
+    // block; without it the camera member moves but the GPU keeps drawing from the previous
+    // frame's matrices. Input-driven movement sets it, so only these programmatic paths were
+    // affected -- which is why bridge screenshots kept coming back framed from where the
+    // camera used to be, and why moving to a different TILE appeared to fix it (tile
+    // streaming forces repaints that set it as a side effect).
+    _camera_moved_since_last_draw = true;
+    _needs_redraw = true;
 
     return "OK";
   }
@@ -1084,7 +1234,17 @@ std::string MapView::handleBridgeCommand(std::string const& line)
 
     number(2, distance);
 
-    if (!focusOnSpawn(static_cast<std::uint32_t>(guid), static_cast<float>(distance)))
+    Noggit::Database::SpawnRef spawn;
+    std::string const error
+      (resolve_spawn(static_cast<std::uint32_t>(guid)
+                    , argv.size() > 3 ? argv[3] : std::string(), spawn));
+
+    if (!error.empty())
+    {
+      return error;
+    }
+
+    if (!focusOnSpawn(spawn, static_cast<float>(distance)))
     {
       return "ERR guid " + argv[1] + " is not loaded";
     }
@@ -1109,9 +1269,14 @@ std::string MapView::handleBridgeCommand(std::string const& line)
       return "ERR usage: movespawn <guid> <server_x> <server_y> <server_z>";
     }
 
-    if (!_db_spawn_scene)
+    Noggit::Database::SpawnRef spawn;
+    std::string const error
+      (resolve_spawn(static_cast<std::uint32_t>(guid)
+                    , argv.size() > 5 ? argv[5] : std::string(), spawn));
+
+    if (!error.empty())
     {
-      return "ERR nothing loaded; run loadspawns first";
+      return error;
     }
 
     // Through positionFor, so the bridge and the viewport agree on where a server coordinate is.
@@ -1123,7 +1288,7 @@ std::string MapView::handleBridgeCommand(std::string const& line)
                            , static_cast<float>(placement.z)
                            );
 
-    if (!_db_spawn_scene->moveTo(static_cast<std::uint32_t>(guid), target))
+    if (!_db_spawn_scene->moveTo(spawn, target))
     {
       return "ERR guid " + argv[1] + " is not loaded";
     }
@@ -1152,14 +1317,19 @@ std::string MapView::handleBridgeCommand(std::string const& line)
       return "ERR usage: rotatespawn <guid> <degrees>   (0 faces north)";
     }
 
-    if (!_db_spawn_scene)
+    Noggit::Database::SpawnRef spawn;
+    std::string const error
+      (resolve_spawn(static_cast<std::uint32_t>(guid)
+                    , argv.size() > 3 ? argv[3] : std::string(), spawn));
+
+    if (!error.empty())
     {
-      return "ERR nothing loaded; run loadspawns first";
+      return error;
     }
 
     constexpr double DEGREES_TO_RADIANS = 3.14159265358979323846 / 180.0;
 
-    if (!_db_spawn_scene->rotateTo(static_cast<std::uint32_t>(guid), degrees * DEGREES_TO_RADIANS))
+    if (!_db_spawn_scene->rotateTo(spawn, degrees * DEGREES_TO_RADIANS))
     {
       return "ERR guid " + argv[1] + " is not loaded";
     }
@@ -2713,6 +2883,137 @@ void MapView::setupAssistMenu()
 
         QMessageBox::information(this, "Export game_tele", message);
         Log << message.toStdString() << std::endl;
+      }
+    );
+  }
+
+  // Missing asset report. Shipping without this means players get invisible objects and purple
+  // textures, and the first you hear of it is a bug report.
+  {
+    auto scan_assets (new QAction("Report missing assets...", this));
+    scan_assets->setStatusTip
+      ("Every model and texture referenced by the loaded tiles but absent from the client data.");
+    assist_menu->addAction(scan_assets);
+
+    connect(scan_assets, &QAction::triggered, this, [this]
+      {
+        auto* client_data = Noggit::Application::NoggitApplication::instance()->clientData();
+
+        if (!client_data)
+        {
+          QMessageBox::critical(this, "Missing assets", "No client data is loaded.");
+          return;
+        }
+
+        Noggit::AssetScanner scanner
+          (Noggit::AssetScanCollector::makeClientDataProbe(client_data));
+
+        std::size_t tiles = 0;
+
+        for (MapTile* tile : _world->mapIndex.loaded_tiles())
+        {
+          Noggit::AssetScanCollector::collectTile<MapTile, Model, WMO>(tile, scanner);
+          ++tiles;
+        }
+
+        auto const& result = scanner.result();
+
+        QString report
+          ( QString("Scanned %1 loaded tile(s).\n\n%2\n")
+              .arg(tiles).arg(QString::fromStdString(result.summary())));
+
+        if (!result.hasFailures())
+        {
+          QMessageBox::information(this, "Missing assets", report + "\nNothing is missing.");
+          return;
+        }
+
+        for (auto const& failure : result.failures())
+        {
+          // display_path, not key: the reporter has to go and find this string in the ADT or the
+          // DBC, and the normalised key appears nowhere in the data.
+          report += QString("\n%1  (%2 reference%3)")
+                      .arg(QString::fromStdString(failure.display_path))
+                      .arg(failure.reference_count)
+                      .arg(failure.reference_count == 1 ? "" : "s");
+        }
+
+        QString const path
+          ( QFileDialog::getSaveFileName
+            ( this
+            , "Save missing asset report"
+            , QString::fromStdString(Noggit::Project::CurrentProject::get()->ProjectPath)
+                + "/missing-assets.txt"
+            , "Text (*.txt)"
+            )
+          );
+
+        if (!path.isEmpty())
+        {
+          QFile file (path);
+
+          if (file.open(QIODevice::WriteOnly | QIODevice::Text))
+          {
+            QByteArray const bytes (report.toUtf8());
+            file.write(bytes);
+            file.close();
+          }
+        }
+
+        Log << "Missing asset scan: " << result.summary() << std::endl;
+      }
+    );
+  }
+
+  // UID collision report. The renumbering already happens silently on every load; this is the
+  // only way to find out what it moved.
+  {
+    auto uid_report (new QAction("UID collision report...", this));
+    uid_report->setStatusTip
+      ("Duplicate unique IDs repaired while loading. Silent corruption if left unexamined.");
+    assist_menu->addAction(uid_report);
+
+    connect(uid_report, &QAction::triggered, this, [this]
+      {
+        auto const& log = _world->uidCollisionLog();
+        auto const records = log.snapshot();
+
+        if (records.empty())
+        {
+          QMessageBox::information
+            ( this
+            , "UID collisions"
+            , "No duplicate unique IDs were found while loading this map.\n\n"
+              "That is the healthy result: every object kept the id it was saved with."
+            );
+          return;
+        }
+
+        QString report
+          ( QString("%1 duplicate unique ID(s) were repaired while loading.\n\n"
+                    "Each object below was renumbered in memory so it would not overwrite\n"
+                    "another. Save the map to make the repair permanent.\n")
+              .arg(log.totalCount()));
+
+        if (log.truncated())
+        {
+          report += QString("\nOnly the first %1 are listed; the rest were not recorded.\n")
+                      .arg(log.recordedCount());
+        }
+
+        for (auto const& record : records)
+        {
+          report += "\n" + QString::fromStdString(Noggit::formatUidCollision(record));
+        }
+
+        QMessageBox box (this);
+        box.setWindowTitle("UID collisions");
+        box.setIcon(QMessageBox::Warning);
+        box.setText(QString("%1 duplicate unique ID(s) repaired.").arg(log.totalCount()));
+        box.setDetailedText(report);
+        box.exec();
+
+        Log << "UID collision report: " << log.totalCount() << " repaired" << std::endl;
       }
     );
   }
@@ -4987,6 +5288,25 @@ void MapView::mousePressEvent(QMouseEvent* event)
   makeCurrent();
   OpenGL::context::scoped_setter const _(::gl, context());
 
+  // Clicking a database spawn selects it, ahead of the active tool.
+  //
+  // Only when the overlay is on and the spawn panel is open, so this cannot steal clicks from
+  // anyone not using it. Shift is the modifier because a plain click still has to reach the
+  // terrain tools -- selecting a creature must not stop you painting the ground under it.
+  if (event->button() == Qt::LeftButton && _mod_shift_down && _db_spawn_scene
+   && _db_spawn_panel && _draw_db_spawns.get())
+  {
+    Noggit::Database::SpawnRef const picked (pickDatabaseSpawn());
+
+    if (picked.valid())
+    {
+      _db_spawn_scene->setSelected(picked);
+      _db_spawn_panel->selectSpawn(picked);
+      _needs_redraw = true;
+      return;
+    }
+  }
+
   // Placing a database spawn takes the click before the active tool sees it, and returns.
   //
   // Ahead of the tool rather than after it because otherwise the terrain tool underneath would
@@ -4995,11 +5315,11 @@ void MapView::mousePressEvent(QMouseEvent* event)
   // using it.
   if (event->button() == Qt::LeftButton && _db_spawn_panel && _db_spawn_panel->moveMode())
   {
-    std::uint32_t const guid = _db_spawn_panel->selectedGuid();
+    Noggit::Database::SpawnRef const spawn (_db_spawn_panel->selectedSpawn());
 
-    if (guid != 0 && _db_spawn_scene)
+    if (spawn.valid() && _db_spawn_scene)
     {
-      if (_db_spawn_scene->moveTo(guid, _cursor_pos))
+      if (_db_spawn_scene->moveTo(spawn, _cursor_pos))
       {
         _db_spawn_panel->refresh();
         _needs_redraw = true;
