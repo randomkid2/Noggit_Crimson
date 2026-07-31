@@ -287,6 +287,40 @@ namespace Noggit::Ui::Windows
       }
   }
 
+#ifdef NOGGIT_DEV_BRIDGE_ENABLED
+  bool NoggitWindow::openMapUnattended(int map_id, glm::vec3 const& position)
+  {
+    // Mirrors the bookmark path, which is the only existing route that opens a map at a chosen
+    // position rather than wherever the UI last was.
+    _map_creation_wizard->_world.reset();
+
+    for (DBCFile::Iterator it = gMapDB.begin(); it != gMapDB.end(); ++it)
+    {
+      if (it->getInt(MapDB::MapID) != map_id)
+      {
+        continue;
+      }
+
+      _map_creation_wizard->_world = std::make_unique<World>
+        (it->getString(MapDB::InternalName), map_id, Noggit::NoggitRenderContext::MAP_VIEW);
+
+      // enterMapAt directly, NOT check_uid_then_enter_map: the latter can raise the UID fix
+      // window, and an unattended run has nobody to dismiss it. See the header for why that makes
+      // this unsuitable for an editing session.
+      enterMapAt(position, math::degrees(0.0f), math::degrees(0.0f), uid_fix_mode::none, true);
+
+      Log << "Opened map " << map_id << " unattended for automation. The UID fix was skipped; do "
+          << "not save from this session." << std::endl;
+
+      return true;
+    }
+
+    LogError << "No map with id " << map_id << " in Map.dbc." << std::endl;
+
+    return false;
+  }
+#endif
+
   void NoggitWindow::loadMap(int map_id)
   {
     // _minimap->world(nullptr);

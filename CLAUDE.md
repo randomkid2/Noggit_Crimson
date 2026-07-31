@@ -77,7 +77,13 @@ Add for the DB build:
 ```
 
 Then `cmake --build . --config RelWithDebInfo --target ALL_BUILD`, then `--target INSTALL`.
-Copy Qt5Core/OpenGL/Widgets/Gui (`d` suffix for debug) and `lua51.dll` next to `noggit.exe`.
+
+Run `windeployqt` once against the built exe — it resolves the Qt DLLs *and* the platform plugin,
+which CMake's own copy step does not, and without which the binary exits silently. The only thing
+it cannot know about is the connector DLL. Measured runtime dependencies are listed in
+`docs/setup.md`; two widely repeated instructions are wrong for this configuration and were
+checked with `dumpbin /DEPENDENTS`: **there is no `lua51.dll`** (sol2 links Lua 5.4 statically) and
+**`Qt5OpenGL.dll` is never imported** (NodeEditor needs the module at configure time only).
 
 ## Coding guidelines
 

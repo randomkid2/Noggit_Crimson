@@ -2,6 +2,8 @@
 
 #include "ScriptingTool.hpp"
 
+#include <noggit/ActionManager.hpp>
+#include <noggit/Action.hpp>
 #include <noggit/MapView.h>
 #include <noggit/Input.hpp>
 #include <noggit/scripting/scripting_tool.hpp>
@@ -53,7 +55,18 @@ namespace Noggit
 
     void ScriptingTool::onTick(float deltaTime, TickParameters const& params)
     {
-        auto world = mapView()->getWorld();
+        // Gated on the left button, as every other brush tool is (RaiseLowerTool.cpp:122,
+        // VertexPainterTool.cpp:85). Without it the brush fired on every tick for as long as a
+        // chunk stayed SELECTED, which outlives the click -- so a scatter script kept placing
+        // models after the user had stopped painting, and the only thing holding it back was
+        // whatever spacing check the script happened to implement.
+        if (!params.left_mouse)
+        {
+            return;
+        }
+
+        auto mv = mapView();
+        auto world = mv->getWorld();
 
         auto currentSelection = world->current_selection();
         if (world->has_selection())
@@ -62,7 +75,22 @@ namespace Noggit
             {
                 if (selection.index() == eEntry_MapChunk)
                 {
-                    _scriptingTool->sendBrushEvent(mapView()->cursorPosition(), 7.5f * deltaTime);
+                    // One undo step per STROKE, not per tick.
+                    //
+                    // eLMB is what makes that work: the manager keeps the same action open while
+                    // the button is held and closes it on release, so a scatter brush that placed
+                    // two hundred models is a single Ctrl+Z rather than two hundred of them.
+                    //
+                    // Scripts add and remove objects and edit terrain, so the flags cover all
+                    // three -- a script is not restricted to one kind of edit and the action has
+                    // to record whatever it touches.
+                    NOGGIT_ACTION_MGR->beginAction(mv
+                        , Noggit::ActionFlags::eOBJECTS_ADDED
+                        | Noggit::ActionFlags::eOBJECTS_REMOVED
+                        | Noggit::ActionFlags::eCHUNKS_TERRAIN
+                        , Noggit::ActionModalityControllers::eLMB);
+
+                    _scriptingTool->sendBrushEvent(mv->cursorPosition(), 7.5f * deltaTime);
                 }
             }
         }

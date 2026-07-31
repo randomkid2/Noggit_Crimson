@@ -8,7 +8,11 @@
 #include <QtCore/QSettings>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QFileDialog>
+#include <QtWidgets/QHBoxLayout>
+#include <QtWidgets/QLabel>
+#include <QtWidgets/QLineEdit>
 #include <QtWidgets/QPushButton>
+#include <QtWidgets/QVBoxLayout>
 
 #ifdef USE_MYSQL_UID_STORAGE
 #include <mysql/mysql.h>
@@ -84,6 +88,42 @@ namespace Noggit
       ui->MySQL_box->setCheckable(true);
       ui->mysql_warning->setVisible(false);
 #endif
+
+      // The dev schema is the single most consequential setting in this fork, and this is the
+      // only screen where a user names a database, so it and the safety notice belong here.
+      // Built unconditionally so the pointer is always valid and the posture is stated even in
+      // a build without the MySQL feature; only the load/save below is feature-gated.
+      {
+        auto dev_schema_row = new QHBoxLayout();
+
+        auto dev_schema_label = new QLabel(tr("Dev schema"), ui->MySQL_box);
+        // Same label column width the rows above use, so the fields still line up.
+        dev_schema_label->setMinimumWidth(60);
+        dev_schema_row->addWidget(dev_schema_label);
+
+        _mysql_dev_schema_field = new QLineEdit(ui->MySQL_box);
+        _mysql_dev_schema_field->setPlaceholderText("noggit_dev_world");
+        _mysql_dev_schema_field->setToolTip(
+            tr("The only schema this editor will ever write to. Every other schema on the "
+               "server, including the one named in Database above, is opened read-only."));
+        dev_schema_row->addWidget(_mysql_dev_schema_field);
+
+        auto safety_notice = new QLabel(
+            tr("Edits are emitted as reviewable .sql changesets. This editor never writes to a "
+               "live world database."), ui->MySQL_box);
+        // The sentence is wider than the panel, and it is prose rather than a control label.
+        safety_notice->setWordWrap(true);
+        safety_notice->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+        // mysql_warning and the Test Connection row are the tail of this box, so insert ahead
+        // of the warning instead of appending. indexOf() returns -1 if the form ever moves the
+        // warning elsewhere; appending is then the only sensible position left.
+        int const warning_row = ui->verticalLayout_37->indexOf(ui->mysql_warning);
+        int const insert_at = warning_row < 0 ? ui->verticalLayout_37->count() : warning_row;
+
+        ui->verticalLayout_37->insertLayout(insert_at, dev_schema_row);
+        ui->verticalLayout_37->insertWidget(insert_at + 1, safety_notice);
+      }
 
       ui->_theme->addItem("System");
 
@@ -238,13 +278,17 @@ namespace Noggit
 #ifdef USE_MYSQL_UID_STORAGE
       ui->MySQL_box->setChecked (_settings->value ("project/mysql/enabled").toBool());
 
+      // Each key gets a default appropriate to itself. These four used to default to
+      // "127.0.0.1" like the server key, which put a hostname in the user, password and
+      // database fields on a fresh install and made the port parse as 0.
       auto server_str = _settings->value("project/mysql/server", "127.0.0.1").toString();
-      auto user_str = _settings->value("project/mysql/user", "127.0.0.1").toString();
-      auto pwd_str = _settings->value("project/mysql/pwd", "127.0.0.1").toString();
-      auto db_str = _settings->value("project/mysql/db", "127.0.0.1").toString();
-      auto port_int = _settings->value("project/mysql/port", "127.0.0.1").toInt();
+      auto user_str = _settings->value("project/mysql/user", "").toString();
+      auto pwd_str = _settings->value("project/mysql/pwd", "").toString();
+      auto db_str = _settings->value("project/mysql/db", "").toString();
+      auto port_int = _settings->value("project/mysql/port", 3306).toInt();
 
-      // set some default
+      // A key that exists but holds an empty string never reaches the default above, so the
+      // fallbacks have to be repeated here.
       if (server_str.isEmpty())
           server_str = "127.0.0.1";
       if (user_str.isEmpty())
@@ -256,11 +300,18 @@ namespace Noggit
       if (!port_int)
           port_int = 3306;
 
+      // DatabaseSettings::readWritableSchema() falls back to the same name, so the two agree
+      // whether or not the user has ever opened this panel.
+      auto dev_schema_str = _settings->value("project/mysql/dev_schema", "noggit_dev_world").toString();
+      if (dev_schema_str.isEmpty())
+          dev_schema_str = "noggit_dev_world";
+
       ui->_mysql_server_field->setText (server_str);
       ui->_mysql_user_field->setText(user_str);
       ui->_mysql_pwd_field->setText (pwd_str);
       ui->_mysql_db_field->setText (db_str);
       ui->_mysql_port_field->setValue (port_int);
+      _mysql_dev_schema_field->setText (dev_schema_str);
 #endif
 
       bool wireframe_type = _settings->value("wireframe/type", false).toBool();
@@ -315,6 +366,7 @@ namespace Noggit
       _settings->setValue ("project/mysql/pwd", ui->_mysql_pwd_field->text());
       _settings->setValue ("project/mysql/db", ui->_mysql_db_field->text());
       _settings->setValue ("project/mysql/port", ui->_mysql_port_field->text());
+      _settings->setValue ("project/mysql/dev_schema", _mysql_dev_schema_field->text());
 #endif
 
       _settings->setValue("wireframe/type", ui->radio_wire_cursor->isChecked());

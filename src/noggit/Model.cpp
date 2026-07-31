@@ -332,6 +332,11 @@ void Model::initCommon(const BlizzardArchive::ClientFile& f, ModelHeader& header
   _textureFilenames.resize(header.nTextures);
   _specialTextures.resize(header.nTextures);
 
+  // Preserved before the loop below flattens every replaceable slot to -1. Zero-filled, so a slot
+  // the loop skips (a type-0 texture with a zero-length name) reads as "not replaceable", which is
+  // the truthful answer for it.
+  _replaceable_texture_types.assign(header.nTextures, 0);
+
   for (size_t i = 0; i < header.nTextures; ++i)
   {
     if (texdef[i].type == 0)
@@ -350,6 +355,10 @@ void Model::initCommon(const BlizzardArchive::ClientFile& f, ModelHeader& header
     }
     else
     {
+      // Kept whatever the branch below does with _specialTextures. This is the only record that
+      // the slot was ever replaceable.
+      _replaceable_texture_types[i] = texdef[i].type;
+
 #ifndef NO_REPLACIBLE_TEXTURES_HACK
       _specialTextures[i] = -1;
       _textureFilenames[i] = "tileset/generic/black.blp";

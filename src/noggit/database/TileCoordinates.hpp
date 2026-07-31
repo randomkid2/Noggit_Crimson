@@ -116,6 +116,26 @@ namespace Noggit::Database
     // True when the position lies inside the representable world extent.
     bool isValidPosition(double x, double y);
 
+    // One full turn, in radians.
+    //
+    // Written out rather than derived from std::acos(-1.0) so the value is a constant expression
+    // and identical in every translation unit. It rounds to 0x1.921fb54442d18p+2, which is the
+    // same double as 2 * M_PI.
+    //
+    // Shared rather than copied per module. The emitter, the transform planner and this file all
+    // fold angles against it; a second copy written to fewer digits is a silent invitation for
+    // one of them to wrap at a different place from the others.
+    constexpr double TWO_PI = 6.283185307179586476925286766559;
+
+    // Largest yaw disagreement between a gameobject's `orientation` column and its rotation
+    // quaternion that is written off as float noise rather than reported. A tenth of a degree is
+    // far below anything a reviewer could see in game.
+    //
+    // Shared for the same reason: ChangesetBuilder and ChunkTransform are answering the same
+    // question about the same row, and two thresholds would mean one warns where the other is
+    // silent.
+    constexpr double ORIENTATION_AGREEMENT_TOLERANCE = 1.0e-3;
+
     // Gameobject orientation is stored as a quaternion in rotation0..3, not as Euler angles.
     // For an orientation o about the vertical axis: rotation2 = sin(o/2), rotation3 = cos(o/2),
     // with rotation0 and rotation1 zero.
@@ -132,10 +152,27 @@ namespace Noggit::Database
     // Inverse of the above. Returns a value in [0, 2*pi).
     double orientationForQuaternion(Quaternion const& rotation);
 
+    // True when `rotation` still holds the default-constructed identity, which is
+    // indistinguishable from "nobody authored this" -- the caller then has nothing to go on but
+    // the `orientation` column.
+    //
+    // Exact comparison is deliberate and is not the float-equality mistake docs/schema-335.md
+    // warns about: the question is whether the field was touched, not whether two computed
+    // rotations agree. It lives here because every module that chooses between the quaternion and
+    // the orientation column has to ask it the same way -- ChangesetBuilder when it emits the
+    // row, ChunkTransform when it rotates one, GmCommands when it points a GM at one. A copy that
+    // drifted would make one of them read a yaw out of a field nobody set.
+    bool isDefaultRotation(Quaternion const& rotation);
+
     // Normalises any angle into [0, 2*pi). The core stores orientations in this range and a
     // negative or wrapped value round-trips differently, which shows up as spawns facing the
     // wrong way rather than as an error.
     double normaliseOrientation(double orientation);
+
+    // Shortest angular distance between two yaws, so 0.001 and 2*pi - 0.001 come out close rather
+    // than a full turn apart. Both arguments are expected to be normalised already;
+    // normaliseOrientation is how a caller gets there.
+    double yawSeparation(double a, double b);
   }
 }
 

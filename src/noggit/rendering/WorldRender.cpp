@@ -6,6 +6,7 @@
 #include <math/frustum.hpp>
 #include <noggit/application/Configuration/NoggitApplicationConfiguration.hpp>
 #include <noggit/application/NoggitApplication.hpp>
+#include <noggit/database/SpawnSceneCache.hpp>
 #include <noggit/DBC.h>
 #include <noggit/MapChunk.h>
 #include <noggit/MapTile.h>
@@ -393,6 +394,25 @@ void WorldRender::draw (glm::mat4x4 const& model_view
   std::vector<WMOInstance*> wmos_to_draw;
   std::unordered_map<Model*, std::size_t> model_boxes_to_draw;
 
+  // Database spawns, grouped by (model, display id) rather than by model alone.
+  //
+  // The extra key is not incidental. A creature M2 carries no skin of its own -- the mesh is
+  // shared and the image comes from the display id -- so one wolf model serves wolves of several
+  // colours, and grouping only by model would draw them all with whichever skin was applied last.
+  // Each group is drawn with its own textures bound, which is why these cannot simply be appended
+  // to models_to_draw the way they were before skins were handled.
+  struct DatabaseSpawnGroup
+  {
+    std::vector<glm::mat4x4> transforms;
+
+    // Borrowed from the scene cache, which owns the references. Never constructed here: a texture
+    // reference created per frame and released when the swap is undone drops its refcount to zero
+    // before the asynchronous BLP load finishes, so the model renders black forever.
+    std::vector<std::pair<int, scoped_blp_texture_reference>> const* skins = nullptr;
+  };
+
+  std::map<std::pair<Model*, std::uint32_t>, DatabaseSpawnGroup> db_spawns_to_draw;
+
   // frame counter loop. pretty hacky but works
   // this is used to make sure no object is processed more than once within a frame
   static int frame = 0;
@@ -621,6 +641,96 @@ void WorldRender::draw (glm::mat4x4 const& model_view
         }
       }
     }
+
+    // TrinityCore world-database spawns.
+    //
+    // Appended into the same models_to_draw the MDDF path above fills, so the overlay costs one
+    // instanced draw call per distinct model and needs no shader, no render state and no second
+    // pass of its own -- the consumer further down handles it unchanged.
+    //
+    // Inside the tile loop deliberately: these then inherit the tile-level occlusion and distance
+    // culling applied at the top of it, exactly as ADT objects do. And note what is NOT touched --
+    // MapTile::object_instances. The ADT save path walks that index, so a database spawn cannot
+    // reach MDDF/MODF by any route, which is the hard rule made structural instead of remembered.
+    //
+    // Skipped entirely for a minimap render: these are server-side data and have no business in a
+    // generated minimap, and the per-model include filter below would in any case reject them.
+    if (render_settings.draw_db_spawns && render_settings.db_spawns && !render_settings.minimap_render)
+    {
+      if (auto const* spawn_scene = render_settings.db_spawns->tile(tile->index))
+      {
+        for (auto const& entry : spawn_scene->entries)
+        {
+          ModelInstance* spawn_instance = entry.instance.get();
+
+          // The same guard the MDDF path applies to its map key. Models are streamed in
+          // asynchronously, so on the first frames after a load most of these are not ready yet;
+          // a failed load stays false forever and is skipped rather than drawn as nothing.
+          if (!spawn_instance->model->finishedLoading() || spawn_instance->model->loading_failed())
+            continue;
+
+          // Extents are resolved here rather than as a side effect of isInRenderDist, because
+          // that function is deliberately not used below. recalcExtents defers when the model is
+          // still loading, so without this the frustum test runs against the opposite-infinity
+          // initial values.
+          spawn_instance->ensureExtents();
+
+          // Culling by the view distance directly, NOT via ModelInstance::isInRenderDist.
+          //
+          // That function applies a size-based ladder -- `size_cat < 1 && dist > 300` and so on
+          // (ModelInstance.cpp:243) -- and size_cat is only ever populated from the MDDF/WDT path,
+          // so it is 0 for every database spawn. Every creature would therefore vanish beyond 300
+          // yards, which is barely half an ADT tile: the spawns would be culled while the tile
+          // holding them was still plainly on screen. Correct for scenery doodads, useless for a
+          // placement overlay whose whole job is showing you where things are.
+          float const distance
+            ( glm::distance(camera_pos, spawn_instance->pos)
+            - spawn_instance->model->bounding_box_radius * spawn_instance->scale
+            );
+
+          if (distance >= _cull_distance)
+            continue;
+
+          if (tile->renderer()->objectsFrustumCullTest() <= 1 && !spawn_instance->isInFrustum(frustum))
+            continue;
+
+          // Outline the selected spawn.
+          //
+          // Without this, picking a row in the spawn panel gives no feedback at all, and a tile
+          // holding twenty of the same creature is unworkable -- every one of them looks like the
+          // one you picked. Drawn per instance here rather than in the instanced pass below,
+          // which deliberately knows nothing about individual spawns.
+          //
+          // Amber, to stay distinguishable from the white current-selection and yellow collision
+          // boxes the ADT object path already draws (ModelInstance.cpp:93,102).
+          if (entry.guid != 0 && entry.guid == render_settings.db_spawns->selected())
+          {
+            auto const& extents = spawn_instance->getExtents();
+
+            Noggit::Rendering::Primitives::WireBox::getInstance(_world->_context).draw
+              ( model_view
+              , projection
+              , glm::mat4x4(1.0f)
+              , {1.0f, 0.85f, 0.15f, 1.0f}
+              , extents[0]
+              , extents[1]
+              );
+          }
+
+          auto& group
+            (db_spawns_to_draw[{spawn_instance->model.get(), entry.display_id}]);
+
+          group.transforms.emplace_back(spawn_instance->transformMatrix());
+
+          // Every entry sharing this key has the same display id and therefore the same skins,
+          // so the first one to arrive settles it.
+          if (!group.skins)
+          {
+            group.skins = &entry.skin_textures;
+          }
+        }
+      }
+    }
   }
 
   // WMOs / map objects
@@ -799,7 +909,12 @@ void WorldRender::draw (glm::mat4x4 const& model_view
     }*/
 
     {
-      if (render_settings.draw_models || draw_doodads_wmo || (render_settings.minimap_render && minimap_render_settings->use_filters))
+      // draw_db_spawns has to be part of this condition, not just of the gathering above. The
+      // database overlay shares models_to_draw with the MDDF path, so without it turning "Doodads"
+      // off (F1) would silently drop every database spawn as well while its own toggle still
+      // showed as on -- the map is populated, nothing consumes it.
+      if (render_settings.draw_models || draw_doodads_wmo || render_settings.draw_db_spawns
+        || (render_settings.minimap_render && minimap_render_settings->use_filters))
       {
         OpenGL::Scoped::use_program m2_shader {*_m2_instanced_program.get()};
 
@@ -889,6 +1004,77 @@ void WorldRender::draw (glm::mat4x4 const& model_view
             }
           }
 
+        }
+
+        // Database spawns, one instanced call per (model, display id), with that display's skins
+        // bound for the duration of the call.
+        //
+        // Deliberately after the loop above and inside the same shader scope: it reuses the M2
+        // program, the render state and the same ModelRender::draw entry point, so nothing about
+        // the M2 pass is duplicated here. Only the textures differ.
+        //
+        // The swap is scoped to each draw and undone immediately. Model::_textures belongs to the
+        // shared Model, so leaving a skin applied would repaint every other user of that model --
+        // including, on a later frame, an ADT doodad that happens to reference the same file.
+        // Restoring is what keeps this pass invisible to everything else.
+        for (auto& spawn_group : db_spawns_to_draw)
+        {
+          Model* const spawn_model = spawn_group.first.first;
+
+          if (!spawn_model || spawn_group.second.transforms.empty())
+            continue;
+
+          // Saved by copy, restored by move. scoped_blp_texture_reference has a copy constructor
+          // and a move assignment but its copy assignment is deleted, which is exactly the shape
+          // this needs and the reason it is written as a pair vector rather than a plain swap.
+          std::vector<std::pair<std::size_t, scoped_blp_texture_reference>> saved_textures;
+
+          if (spawn_group.second.skins)
+          {
+            for (auto const& skin : *spawn_group.second.skins)
+            {
+              for (std::size_t slot = 0; slot < spawn_model->_replaceable_texture_types.size(); ++slot)
+              {
+                // Matched by texture type, never by position: a model may declare its replaceable
+                // slots in any order and may declare only some of them.
+                if (spawn_model->_replaceable_texture_types[slot] != skin.first
+                 || slot >= spawn_model->_textures.size())
+                {
+                  continue;
+                }
+
+                saved_textures.emplace_back(slot, spawn_model->_textures[slot]);
+
+                // Copy-construct from the cache's held reference, then move-assign. The cache keeps
+                // its own copy alive, so the texture stays loaded between frames.
+                spawn_model->_textures[slot] = scoped_blp_texture_reference(skin.second);
+              }
+            }
+          }
+
+          bool draw_animated_boxes = true;
+
+          spawn_model->renderer()->draw( model_view
+              , spawn_group.second.transforms
+              , m2_shader
+              , model_render_state
+              , frustum
+              , _cull_distance
+              , camera_pos
+              , _world->animtime
+              , render_settings.draw_models_with_box
+              , model_boxes_to_draw
+              , render_settings.display_mode
+              , false
+              , render_settings.draw_model_animations
+              , false
+              , draw_animated_boxes
+          );
+
+          for (auto& saved : saved_textures)
+          {
+            spawn_model->_textures[saved.first] = std::move(saved.second);
+          }
         }
 
         /*

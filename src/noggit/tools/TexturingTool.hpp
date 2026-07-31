@@ -53,6 +53,14 @@ namespace Noggit
 
         void hidePopups() override;
 
+        // Path of the texture currently selected in the texturing UI, or empty when there is none.
+        //
+        // Exposed so the ground effect editor can apply a set to "the texture you are working
+        // with" without being handed the texturing widget, which would tie a library editor to a
+        // brush tool for the sake of one string.
+        [[nodiscard]]
+        std::string selectedTexturePath() const;
+
     private:
         Ui::texturing_tool* _texturingTool = nullptr;
         QDockWidget* _textureBrowserDock = nullptr;

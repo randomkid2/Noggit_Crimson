@@ -59,6 +59,13 @@ namespace Noggit::Database::SpawnQuery
     // Every field is read defensively, so a row shorter than the select list decodes to zeroes
     // rather than reading off the end of the vector. That cannot happen with the statements built
     // here, but these decode whatever the server actually hands back.
+    //
+    // parseCreatureRow also applies the display id resolution rule, over the four template model
+    // candidates the select list ends with. It is done here rather than in SQL because the rule has
+    // to give the same answer for both schema variants, and the two reach these columns through
+    // entirely different select expressions -- modelid1..4 on one, correlated subqueries over
+    // creature_template_model on the other. SpawnDisplay::resolveCreatureTemplateInfo holds the
+    // rule itself and is tested directly.
     CreatureSpawn parseCreatureRow(ResultRow const& row);
     GameObjectSpawn parseGameObjectRow(ResultRow const& row);
     WaypointNode parseWaypointRow(ResultRow const& row);

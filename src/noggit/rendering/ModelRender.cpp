@@ -1020,13 +1020,27 @@ void ModelRenderPass::bindTexture(size_t index, Model* m, OpenGL::M2RenderState&
   }
   else
   {
-    if (m->_specialTextures[tex] >= m->_replaceTextures.size())
-	{
-	  LogError << "model: special texture index out of range " << m->file_key().stringRepr() << std::endl;
-	  return;
-	}
+    // Looked up by key, not bounds-checked against a size.
+    //
+    // _replaceTextures is a std::map keyed by the M2 texture TYPE (Model.h), not a vector indexed
+    // by position, so comparing the type against the container's size was meaningless: a type-11
+    // monster skin in a map holding one entry gave `11 >= 1`, which logged "index out of range"
+    // and returned without binding anything. Every replaceable texture would have failed that way
+    // the moment the path became reachable.
+    //
+    // Unreachable today only because Model.cpp's replaceable-texture handling forces every
+    // _specialTextures entry to -1, so this branch is never taken. Fixed now rather than left as
+    // a trap for whoever enables it.
+    auto const replacement = m->_replaceTextures.find(m->_specialTextures[tex]);
 
-    auto& texture = m->_replaceTextures.at (m->_specialTextures[tex]);
+    if (replacement == m->_replaceTextures.end())
+    {
+      LogError << "model: no replacement texture for type " << m->_specialTextures[tex]
+               << " in " << m->file_key().stringRepr() << std::endl;
+      return;
+    }
+
+    auto& texture = replacement->second;
     texture->upload();
     GLuint tex_array = texture->texture_array();
     int tex_index = texture->array_index();

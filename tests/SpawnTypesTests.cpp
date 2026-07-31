@@ -31,7 +31,7 @@ namespace
 
     for (ValidationIssue const& issue : issues)
     {
-      if (issue.severity == ValidationIssue::Severity::ERROR)
+      if (issue.severity == ValidationIssue::Severity::BLOCKING)
       {
         ++count;
       }
@@ -760,9 +760,180 @@ TEST_CASE("hasErrors separates a blocking issue from an advisory one", "[spawn][
   CHECK_FALSE(SpawnValidation::hasErrors(warning_only));
 
   std::vector<ValidationIssue> mixed (warning_only);
-  mixed.push_back(ValidationIssue {ValidationIssue::Severity::ERROR, "blocking"});
+  mixed.push_back(ValidationIssue {ValidationIssue::Severity::BLOCKING, "blocking"});
   CHECK(SpawnValidation::hasErrors(mixed));
 
   // The error is last, so a check that only looked at the first issue would miss it.
   CHECK(mixed.front().severity == ValidationIssue::Severity::WARNING);
+}
+
+// --- Display id resolution ---------------------------------------------------------------
+//
+// The rule the whole M1 rendering path rests on. Tested here, on the pure function, rather than
+// only through a decoded row, because it has to give the same answer for both schema variants and
+// the two reach it through completely different SQL.
+
+TEST_CASE("creature.modelid overrides the template, and 0 defers to it"
+         , "[spawn][creature][display]")
+{
+  // 0 is not "no model": it is the sentinel meaning "use the template's", and it is what almost
+  // every real spawn holds. Reading it as an absent model is why a gameobject and a modelid-0
+  // creature could not be rendered at all before this existed.
+  CreatureTemplateInfo const deferred
+    (SpawnDisplay::resolveCreatureTemplateInfo(0, {17188}, "Hogger"));
+
+  CHECK(deferred.display_id == 17188u);
+  CHECK(deferred.display_id_origin == DisplayIdOrigin::TEMPLATE);
+  CHECK(deferred.name == "Hogger");
+
+  CreatureTemplateInfo const overridden
+    (SpawnDisplay::resolveCreatureTemplateInfo(448, {17188}, "Hogger"));
+
+  CHECK(overridden.display_id == 448u);
+  CHECK(overridden.display_id_origin == DisplayIdOrigin::SPAWN);
+
+  // The template's model is still counted. Removing the override means writing
+  // creature.modelid = 0, so the editor has to be able to say what that would look like.
+  CHECK(overridden.template_model_count == 1u);
+}
+
+TEST_CASE("a template with several models resolves to the first non-zero, deterministically"
+         , "[spawn][creature][display]")
+{
+  // TrinityCore rolls one of modelid1..4 per spawn at runtime. The editor cannot: the same tile
+  // would draw a different creature on each open, and a changeset diff would move with a dice
+  // roll. Leading zeroes are skipped rather than treated as a model, because a fixed-width select
+  // list hands over four candidates whether or not the template filled them.
+  CreatureTemplateInfo const info
+    (SpawnDisplay::resolveCreatureTemplateInfo(0, {0, 1400, 1401, 1402}, "Kobold Vermin"));
+
+  CHECK(info.display_id == 1400u);
+  CHECK(info.display_id_origin == DisplayIdOrigin::TEMPLATE);
+  CHECK(info.template_model_count == 3u);
+  CHECK(info.templateOffersAlternatives());
+
+  // Order is the template's, not sorted: modelid1 wins even when modelid2 is numerically smaller.
+  CHECK(SpawnDisplay::resolveCreatureTemplateInfo(0, {900, 100}, "").display_id == 900u);
+
+  // Repeated calls agree. Trivial for a pure function, asserted because determinism is the
+  // requirement -- a later reimplementation using RAND() in SQL, as the core effectively does,
+  // would fail here rather than in a viewport months later.
+  for (int attempt = 0; attempt < 4; ++attempt)
+  {
+    CHECK(SpawnDisplay::resolveCreatureTemplateInfo(0, {0, 1400, 1401, 1402}, "").display_id
+          == 1400u);
+  }
+}
+
+TEST_CASE("a model listed twice is one model, not an ambiguity", "[spawn][creature][display]")
+{
+  // modelid1 == modelid2 means the core would roll the same display id either way, so there is
+  // nothing to warn about. Reporting it would train the user to ignore the flag that matters.
+  CreatureTemplateInfo const duplicated
+    (SpawnDisplay::resolveCreatureTemplateInfo(0, {1400, 1400, 1400, 0}, ""));
+
+  CHECK(duplicated.display_id == 1400u);
+  CHECK(duplicated.template_model_count == 1u);
+  CHECK_FALSE(duplicated.templateOffersAlternatives());
+
+  // Two distinct models with one of them repeated is still an ambiguity.
+  CreatureTemplateInfo const mixed
+    (SpawnDisplay::resolveCreatureTemplateInfo(0, {1400, 1401, 1400, 0}, ""));
+
+  CHECK(mixed.template_model_count == 2u);
+  CHECK(mixed.templateOffersAlternatives());
+}
+
+TEST_CASE("an unresolvable creature is reported unresolved, never guessed"
+         , "[spawn][creature][display]")
+{
+  // Neither side names a model. The renderer has to draw a marker for this, not skip it: a spawn
+  // silently omitted looks like an empty tile, which is the same failure the query bounds and the
+  // zoneId filter are so careful to avoid.
+  for (std::vector<std::uint32_t> const& candidates
+      : {std::vector<std::uint32_t>{}, std::vector<std::uint32_t>{0, 0, 0, 0}})
+  {
+    CreatureTemplateInfo const info
+      (SpawnDisplay::resolveCreatureTemplateInfo(0, candidates, ""));
+
+    CHECK(info.display_id == 0u);
+    CHECK(info.display_id_origin == DisplayIdOrigin::UNRESOLVED);
+    CHECK(info.template_model_count == 0u);
+  }
+
+  CreatureSpawn spawn (validCreature());
+  CHECK_FALSE(SpawnDisplay::isRenderable(spawn));
+
+  spawn.template_info = SpawnDisplay::resolveCreatureTemplateInfo(0, {17188}, "Hogger");
+  CHECK(SpawnDisplay::isRenderable(spawn));
+}
+
+TEST_CASE("the template name is carried through untouched", "[spawn][creature][display]")
+{
+  // A label, not data: it reaches no SQL and is never parsed, so whatever the column holds is what
+  // the UI shows. Names with punctuation are ordinary in this table.
+  CHECK(SpawnDisplay::resolveCreatureTemplateInfo(0, {1}, "Hogger").name == "Hogger");
+  CHECK(SpawnDisplay::resolveCreatureTemplateInfo(0, {1}, "Cook \"Torvald\"").name
+        == "Cook \"Torvald\"");
+  CHECK(SpawnDisplay::resolveCreatureTemplateInfo(0, {1}, "").name.empty());
+
+  // An empty name is the LEFT JOIN having matched nothing, which is worth showing on its own: the
+  // spawn names a creature_template row that does not exist.
+  CHECK(SpawnDisplay::resolveCreatureTemplateInfo(0, {0}, "").name.empty());
+}
+
+TEST_CASE("only the six unrenderable gameobject types are rejected"
+         , "[spawn][gameobject][display]")
+{
+  // From docs/schema-335.md, measured rather than copied from a published table: 6 TRAP and
+  // 18 RITUAL are invisible in the client, 11 TRANSPORT and 15 MO_TRANSPORT move, and
+  // 12 AREADAMAGE and 13 CAMERA have no model at all.
+  for (std::uint32_t const type : {6u, 11u, 12u, 13u, 15u, 18u})
+  {
+    CAPTURE(type);
+    CHECK_FALSE(SpawnDisplay::typeHasRenderableModel(type));
+  }
+
+  // Everything else in the verified 0..26 range is renderable. Asserted as a sweep rather than a
+  // handful of samples so that widening the reject list by accident fails here.
+  for (std::uint32_t type = 0; type <= 26; ++type)
+  {
+    bool const rejected
+      (type == 6u || type == 11u || type == 12u || type == 13u || type == 15u || type == 18u);
+
+    CAPTURE(type);
+    CHECK(SpawnDisplay::typeHasRenderableModel(type) == !rejected);
+  }
+
+  // A type past the verified range is assumed renderable. docs/schema-335.md records that the
+  // numbering above 26 is unverified, so guessing that an unknown type is one of the six would
+  // hide real objects on a schema generation this build has not seen.
+  CHECK(SpawnDisplay::typeHasRenderableModel(27));
+  CHECK(SpawnDisplay::typeHasRenderableModel(1000));
+}
+
+TEST_CASE("a gameobject needs both a display id and a drawable type"
+         , "[spawn][gameobject][display]")
+{
+  GameObjectSpawn spawn (validGameObject());
+
+  // displayId 0 is legal, common, and means there is nothing to draw.
+  CHECK(spawn.template_info.display_id == 0u);
+  CHECK_FALSE(SpawnDisplay::isRenderable(spawn));
+
+  spawn.template_info.display_id = 259;
+  spawn.template_info.type = 3;                   // CHEST
+  spawn.template_info.name = "Battered Chest";
+  CHECK(SpawnDisplay::isRenderable(spawn));
+
+  // A valid displayId on an invisible type still must not be drawn. Traps in particular carry
+  // perfectly good display ids and are invisible in the client, so drawing them would put objects
+  // in the viewport that no player ever sees.
+  spawn.template_info.type = 6;                   // TRAP
+  CHECK_FALSE(SpawnDisplay::isRenderable(spawn));
+
+  // Neither condition alone is enough.
+  spawn.template_info.display_id = 0;
+  spawn.template_info.type = 3;
+  CHECK_FALSE(SpawnDisplay::isRenderable(spawn));
 }

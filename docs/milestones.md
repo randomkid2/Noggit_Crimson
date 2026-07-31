@@ -16,14 +16,15 @@ is not a completed milestone.
 | M0b | Live introspector + connection layer | **done** |
 | M0c | QSettings adapter | **done and compiled** — links into `noggit.exe` |
 | M0c | UID migration off the old `connect()` | remaining |
-| M1 | Tile math + spawn query (logic) | **done** — rendering remaining |
+| M1 | Tile math + spawn query (logic) | **done** |
+| M1 | Spawn overlay rendering | **built** — awaits the screenshot and the `noggit_ro` run |
 | M2 | Changeset emission (logic) | **done** — staging UI remaining |
 | M3 | Waypoint path model + emission | **done** — visual editor remaining |
 | M4 | Chunk transform plan (translate + rotate) | **done** — terrain side remaining |
 | M5 | Doctor, archive/recovery, coordinate round-trip | **done** — UI surface remaining |
 
-**181 test cases, 2239 assertions.** Qt 5.15.2 is installed (via `aqtinstall`, no Qt account
-needed), `noggit.exe` builds with `-DUSE_SQL=ON`, and all 14 database translation units link into
+**220 test cases, 3098 assertions.** Qt 5.15.2 is installed (via `aqtinstall`, no Qt account
+needed), `noggit.exe` builds with `-DUSE_SQL=ON`, and all 17 database translation units link into
 it.
 
 Everything remaining is UI and rendering: wiring the tested logic layer into `MapView`'s render
@@ -34,6 +35,95 @@ the chunk mover, and a Doctor dialog over `DoctorReport::render()`.
 
 Recon (four read-only agents, all findings cited to file:line) established the architecture and
 turned up two blockers that must be cleared before anything can be drawn.
+
+**Steps 1–4 are now done.** Evidence, 2026-07-30:
+
+- `cmake --build build --config RelWithDebInfo --target noggit` → exit 0,
+  `noggit.vcxproj -> build\bin\RelWithDebInfo\noggit.exe` (23,416,832 bytes). `DisplayResolver.obj`
+  names all three DBC globals (`DisplayResolver.cpp:312,333`) and the link resolves, which is the
+  actual proof step 1 is cleared — before this, the first translation unit to touch
+  `gGameObjectDisplayInfoDB` was an unresolved external. Zero warnings attributable to any new or
+  changed database file.
+- `noggit_schema_tests` builds clean under `/W4 /permissive-`; **217 cases, 2702 assertions, all
+  passing**, 5 skipped (the live-DB cases, no password in the environment). `ctest`: 26/26 passed,
+  so all five new tags (`modelpath`, `display`, `creature`, `gameobject`, `parse`) match real cases
+  rather than silently matching nothing.
+- New: `ModelPathFixup` (anchored, case-insensitive, Qt-free `.mdx`/`.mdl` → `.m2`; the existing
+  six copies in-tree are enumerated with file:line in its header, three of them defective) and
+  `DisplayResolver` (caches both DBC chains, throws nothing, bounds-checks the string-table
+  offset that `DBCFile::Record::getString` only guards with an `assert` RelWithDebInfo compiles
+  out).
+- `tests/CMakeLists.txt` is not globbed, unlike the root build — new sources must be added to it
+  by hand or they are silently untested.
+
+**Step 5, the draw hook, is code-complete and built.** Evidence, 2026-07-30:
+
+- `--target noggit` → exit 0, `noggit.exe` 23,461,376 bytes. **No new compiler warnings**: the only
+  three reported against `WorldRender.cpp` are the pre-existing C4018/C4267 pair, shifted from lines
+  326/870/940 to 327/917/987 by the inserted block.
+- **220 cases, 3098 assertions, all passing**; `ctest` 27/27.
+- Added `SpawnSceneCache` (`src/noggit/database/`), which turns `TileSpawns` into `ModelInstance`
+  objects held per ADT tile, plus skip counts by reason so an empty overlay is explainable rather
+  than indistinguishable from an empty tile.
+- The overlay appends into the same `models_to_draw` the MDDF path fills, so it costs one instanced
+  draw call per model and no shader of its own. `MapTile::object_instances` is never touched, which
+  is what makes "DB spawns never enter MDDF/MODF" structural rather than remembered.
+- View menu: a `Database spawns` toggle plus a separate `Load database spawns` action. The query is
+  explicit and synchronous in the Qt handler; the render path issues no query and walks no DBC.
+
+Two defects found and fixed while doing it, both pre-existing:
+
+1. **`ValidationIssue::Severity::ERROR` could not compile in any translation unit that reaches a
+   Windows header.** `<wingdi.h>` does `#define ERROR 0`, making the declaration
+   `enum class Severity { WARNING, 0 }`. It went unnoticed because `SpawnTypes.hpp` was included
+   only by the database layer and its Qt-free test target; the first UI file to include it broke the
+   build. Renamed to `BLOCKING` across all 20 uses, with a comment saying why so it is not "restored".
+2. **`toAdtFileIndex` / `fromAdtFileIndex` had no test at all** — the one conversion in this layer
+   that fails silently rather than loudly, and the subject of warnings in three separate headers.
+   Now pinned by three cases (`[adt]`, 396 assertions) over deliberately asymmetric fixtures, since
+   any `x == y` fixture passes under a helper that does nothing.
+
+**The overlay is confirmed working in the viewport.** Run of 2026-07-30 against `noggit_dev_world`:
+
+```
+MapView.cpp: Database spawns loaded from schema "noggit_dev_world"
+             over 30 loaded tile(s): 5 spawn(s) across 30 tile(s)
+```
+
+Five, not four, and that is correct: `03_example_changeset.sql` adds creature guid `9000004` on
+top of the four seed fixtures. Verified directly against the schema. Zero skips — every spawn
+resolved through template join → display id → DBC chain → model path. The same run confirms all
+three new DBCs open against a stock client (`GameObjectDisplayInfo`, `CreatureDisplayInfo`,
+`CreatureModelData`), which is blockers 1 and 3 proven on real data rather than merely linked.
+
+Three defects found by that run, all fixed:
+
+1. **Hard crash on the second load.** The cache owns `scoped_model_reference`s; releasing the last
+   one destroys a `Model` → `ModelRender` → OpenGL vertex arrays, and `OpenGL::Scoped`'s destructor
+   throws when no context is current. Thrown from a destructor that is `terminate`, not a catchable
+   error, and it cannot reproduce on the first load because there is nothing to release. Fixed by
+   binding the context in `loadDatabaseSpawns` and `~MapView`.
+2. **Everything beyond 300 yards was culled.** `ModelInstance::isInRenderDist` applies a size
+   ladder keyed on `size_cat`, which is only populated from the MDDF/WDT path and is therefore 0
+   for every database spawn. Half an ADT tile. Now culled by view distance directly.
+3. **The multi-tile load was an unguarded footgun.** Split into a this-tile action and an
+   all-loaded-tiles action with a pre-flight `COUNT` and a confirmation above 2000 spawns.
+
+**Creature models render solid black.** This is upstream behaviour, not a defect in this work:
+`Model.cpp:353` substitutes `tileset/generic/black.blp` for every texture with `type != 0`, and
+`NO_REPLACIBLE_TEXTURES_HACK` is not defined anywhere in the tree, so that branch is unconditional.
+Creature skins are exactly that case — they come from `CreatureDisplayInfo.TextureVariation` at
+runtime rather than from the M2. Upstream Noggit draws only doodads and WMOs, which carry embedded
+type-0 textures, so this has never mattered before; the spawn overlay is the first thing in Noggit
+to render a creature. Placement, scale and orientation are unaffected. See below for what fixing it
+requires.
+
+**Remaining for the M1 definition of done:** the read-only proof as `noggit_ro`. Needs that
+account's password, so it is the user's to run.
+
+If the fixtures appear in the right places but uniformly mis-facing,
+`SpawnPlacement::YAW_OFFSET_DEGREES` is the cause — its header flags M2 local-forward `+X` as the
+one link in the derivation that is unverified, and it will be off by exactly 90, 180 or 270.
 
 1. **`gGameObjectDisplayInfoDB` is declared but never defined.** `src/noggit/DBC.h:403` declares
    it; `DBC.cpp` defines 19 globals and this is not one of them, and it is absent from `OpenDBs`.
@@ -58,6 +148,66 @@ turned up two blockers that must be cleared before anything can be drawn.
    (`rendering/WorldRender.cpp:801-892`). The per-tile index it walks is
    `MapTile::object_instances`. `activeTool()->preRender()/postRender()`
    (`MapView.cpp:2812-2827`) are the tool-level hooks. DB spawns must never enter MDDF/MODF.
+
+### The `USE_SQL=OFF` build — fixed
+
+Previously broken, and it mattered: this is a public fork, and most people cloning it will not have
+MySQL Connector/C++ installed, so the default configuration was the one that did not build.
+
+`collect_files(noggit_root_sources src/noggit TRUE "*.cpp")` globs recursively, so everything under
+`src/noggit/database` compiled unconditionally, while the connector's include directory was added
+to the target only when the three `FIND_*` calls succeeded. The result:
+
+```
+WorldDatabaseConnection.cpp(5,10): error C1083:
+  Cannot open include file: 'cppconn/driver.h': No such file or directory
+```
+
+Established by configuring and building `-DUSE_SQL=OFF`, not by reading the CMake. Fixed by
+excluding the four connector-dependent sources — `WorldDatabaseConnection`, `SchemaIntrospector`,
+`SpawnQuery`, `DoctorConnectionChecks` — when the connector is absent. The other three compile
+cleanly on their own, since `WorldDatabaseConnection.hpp` forward-declares `sql::Connection` so
+consumers need no connector headers, but they *call* into it, so leaving them in without it trades
+a compile error for unresolved externals. All four go together.
+
+Everything else in the layer stays compiled in every configuration: the schema model, tile maths,
+changeset emission, the spawn scene cache, and the SQL builders in `SpawnQueryDetail.cpp`. Only the
+code that actually talks to a server is gated.
+
+### Creature skin textures — implemented, not yet seen
+
+Creature spawns rendered as black silhouettes because a creature M2 carries no skin of its own: the
+mesh is shared and the image is supplied per display id. Noggit's loader replaces every such
+texture with `tileset/generic/black.blp` (`Model.cpp:353`) and — the part that actually blocked a
+fix — **flattens the texture type to -1**, so nothing downstream could tell which slots had been
+replaceable.
+
+The approach taken avoids the two routes that looked obvious and are not:
+
+- **Not** by enabling the `NO_REPLACIBLE_TEXTURES_HACK` branch. That code is stale and would not
+  compile: it does `_replaceTextures.emplace(type, _textureFilenames[i])`, but
+  `scoped_blp_texture_reference` has no single-argument constructor. It also runs into a real bug
+  in `ModelRender.cpp:1023`, where the guard `_specialTextures[tex] >= _replaceTextures.size()`
+  compares a **map key against a container size** — `_replaceTextures` is keyed by texture type, so
+  a type-11 skin with one entry gives `11 >= 1` and binds nothing. Both are left untouched.
+- **Not** by giving each display id its own `Model`. `AsyncObjectMultimap` keys models on
+  `(context, FileKey)`, so that would mean changing storage shared by every model, WMO and texture
+  in the application.
+
+Instead: `Model` now records `_replaceable_texture_types` — the original M2 type per slot, which
+nothing else reads, so recording it changes no behaviour. `DisplayResolver` resolves
+`CreatureDisplayInfo.TextureVariation[0..2]` into `.blp` paths beside the model. And database
+spawns draw in their own pass, grouped by **(model, display id)**, with that display's textures
+bound for the duration of the call and restored immediately after — because `Model::_textures`
+belongs to the shared model, and a skin left applied would repaint every other user of it.
+
+Grouping by display id rather than by model is the point: one wolf model serves wolves of several
+colours, so grouping by model alone would draw them all with whichever skin was bound last.
+
+**Not visually confirmed.** It builds clean in both configurations and breaks no test, but
+verifying it needs someone to open a populated tile and look. If creatures are still black, the
+first thing to check is whether `TextureVariation` is populated for those display ids; if they are
+wrongly skinned, the type↔slot matching in the spawn pass is where to look.
 
 ### Known follow-ups from the M4–M5 review
 
@@ -107,11 +257,8 @@ risk today; both are recorded so they are not rediscovered as surprises.
    of `ResultRow` being a typedef. It also means the pure builders sit inside a translation unit
    that links the database connector, so they are gated behind Connector/C++ despite needing no
    database. Fix is to move them into their own translation unit with a small internal header.
-| M1 | Spawn read + tile overlay | not started |
-| M2 | Spawn edit + changeset emission | not started |
-| M3 | Waypoint editor | not started |
-| M4 | Chunk mover | not started |
-| M5 | Doctor, recovery, coordinate round-trip | not started |
+   **Done** — they live in `SpawnQueryDetail.{hpp,cpp}`, which links no database client, so the
+   spawn-query and SQL-builder cases now run on a machine with no MySQL installed.
 
 ## Groundwork — done
 

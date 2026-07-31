@@ -27,6 +27,58 @@ ZoneIntroMusicTableDB gZoneIntroMusicTableDB;
 SoundEntriesDB gSoundEntriesDB;
 WMOAreaTableDB gWMOAreaTableDB;
 
+// The three display-info DBCs. gGameObjectDisplayInfoDB has been declared in DBC.h without a
+// definition anywhere, which links only for as long as nothing names it: the first line of code
+// that touches the object -- not its static field indices, which need no definition -- is an
+// unresolved external. Defined here so the spawn resolver can reference all three.
+GameObjectDisplayInfoDB gGameObjectDisplayInfoDB;
+CreatureDisplayInfoDB gCreatureDisplayInfoDB;
+CreatureModelDataDB gCreatureModelDataDB;
+
+namespace
+{
+  // Opens one DBC in isolation.
+  //
+  // The batch below puts all nineteen original open() calls inside a single try block, so the
+  // first missing .dbc aborts the rest: every DBC after it stays silently empty and the only
+  // evidence is one log line naming an exception, not a file. That is tolerable for the files
+  // Noggit cannot run without, and wrong for these three -- they are needed only to render
+  // database spawns, so a client lacking CreatureModelData.dbc must still get a working AreaDB
+  // and a message that says which file was missing.
+  //
+  // `display_name` is passed in rather than read back off the DBCFile because DBCFile::filename
+  // is private with no accessor, and adding one is not this change's business.
+  void openDbcIsolated
+    ( DBCFile& dbc
+    , char const* display_name
+    , std::shared_ptr<BlizzardArchive::ClientData> const& client_data
+    )
+  {
+    try
+    {
+      dbc.open(client_data);
+    }
+    catch (BlizzardArchive::Exceptions::FileReadFailedError const& e)
+    {
+      LogError << "Could not read \"" << display_name << "\". Spawns that need it will resolve to "
+               << "no model. Details: " << e.what() << std::endl;
+    }
+    catch (std::exception const& e)
+    {
+      // Not redundant with the catch above: DBCFile::open also throws std::logic_error when the
+      // header is inconsistent -- a zero field count or a record size that is not fieldCount * 4
+      // (DBCFile.cpp:47-55). That means a present but wrong-build file, which is a different
+      // problem from a missing one and worth distinguishing in the log.
+      LogError << "Could not use \"" << display_name << "\", it is present but unreadable for this "
+               << "client build. Details: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+      LogError << "Could not open \"" << display_name << "\" : unhandled exception" << std::endl;
+    }
+  }
+}
+
 void OpenDBs(std::shared_ptr<BlizzardArchive::ClientData> clientData)
 {
   Log << "Opening client DBCs..." << std::endl;
@@ -62,6 +114,11 @@ void OpenDBs(std::shared_ptr<BlizzardArchive::ClientData> clientData)
       LogError << "OpenDBs() : unhandled exception" << std::endl;
   }
 
+  // Deliberately outside the block above, so that a failure among the nineteen does not skip
+  // these as well -- and so that a failure here cannot swallow the rest of the batch.
+  openDbcIsolated(gGameObjectDisplayInfoDB, "DBFilesClient\\GameObjectDisplayInfo.dbc", clientData);
+  openDbcIsolated(gCreatureDisplayInfoDB, "DBFilesClient\\CreatureDisplayInfo.dbc", clientData);
+  openDbcIsolated(gCreatureModelDataDB, "DBFilesClient\\CreatureModelData.dbc", clientData);
 }
 
 

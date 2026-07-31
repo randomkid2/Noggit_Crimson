@@ -702,13 +702,22 @@ TEST_CASE("emission and parsing ignore the global locale", "[gm][locale]")
   WorldPosition const position (makePosition(-9500.25, 70.5, 58.125));
   std::string const expected (".go xyz -9500.25 70.5 58.125 0 4.71");
 
-  CHECK(teleportCommand(0, position, 4.71) == expected);
+  std::string const emitted (teleportCommand(0, position, 4.71));
 
-  // The contract, stated the way it can be checked without a locale installed: a decimal POINT,
-  // and no comma anywhere. Under LC_NUMERIC=de_DE a naive formatter writes "-9500,25", which the
+  CHECK(emitted == expected);
+
+  // Asserted against `emitted`, NOT against `expected`.
+  //
+  // These two previously read `expected.find(...)`, which is a literal this test wrote itself --
+  // so they held no matter what the emitter produced and could never fail. On a machine with no
+  // comma-decimal locale installed the case then returned early, and the whole test reported
+  // having verified locale independence while verifying nothing at all.
+  //
+  // The contract, stated so it is checkable even without a locale installed: a decimal POINT and
+  // no comma anywhere. Under LC_NUMERIC=de_DE a naive formatter writes "-9500,25", which the
   // server does not reject -- it reads it as two arguments and teleports somewhere else.
-  CHECK(expected.find('.') != std::string::npos);
-  CHECK(expected.find(',') == std::string::npos);
+  CHECK(emitted.find('.') != std::string::npos);
+  CHECK(emitted.find(',') == std::string::npos);
 
   std::optional<std::locale> const comma (commaDecimalLocale());
 

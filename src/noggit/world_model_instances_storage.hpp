@@ -3,6 +3,7 @@
 #pragma once
 #include <noggit/ModelInstance.h>
 #include <noggit/Selection.h>
+#include <noggit/UidCollisionLog.hpp>
 #include <noggit/WMOInstance.h>
 #include <opengl/scoped.hpp>
 #include <atomic>
@@ -49,6 +50,19 @@ namespace Noggit
 
     bool uid_duplicates_found() const;
 
+    // What uid_duplicates_found() flattens into a bool. Every renumber performed by
+    // unsafe_add_*_no_world_upd is recorded here with the uid it replaced, the model it belonged
+    // to and the tile it sat in.
+    //
+    // Deliberately NOT emptied by clear(). clear() has exactly one caller,
+    // World::unload_every_model_and_wmo_instance, which itself has exactly one:
+    // MapIndex::fixUIDs at map_index.cpp:1104. That is the operation a user runs *because of*
+    // these collisions, so wiping the evidence there would destroy it at the moment they go
+    // looking for it. This matches _uid_duplicates_found, which is likewise never reset. Call
+    // clear() on the log itself once the report has been shown.
+    UidCollisionLog const& uid_collision_log() const;
+    UidCollisionLog& uid_collision_log();
+
     void upload();
     void unload();
 
@@ -56,6 +70,14 @@ namespace Noggit
 
   private: // private functions aren't thread safe
     bool unsafe_uid_is_used(std::uint32_t uid) const;
+
+    // Shared by the M2 and WMO repair sites: the filename and the position both come from
+    // SceneObject, so neither concrete type is needed here.
+    void unsafe_record_uid_collision( std::uint32_t previous_uid
+                                    , std::uint32_t assigned_uid
+                                    , UidCollisionKind kind
+                                    , SceneObject const& instance
+                                    );
 
     std::uint32_t unsafe_add_model_instance_no_world_upd(ModelInstance instance, bool action);
     std::uint32_t unsafe_add_wmo_instance_no_world_upd(WMOInstance instance, bool action);
@@ -105,6 +127,9 @@ namespace Noggit
     World* _world;
     std::mutex _mutex;
     std::atomic<bool> _uid_duplicates_found = {false};
+    // Has its own lock, so readers never contend for _mutex, which instance loading holds for the
+    // whole of an add.
+    UidCollisionLog _uid_collision_log;
 
     m2_instance_umap _m2s;
     wmo_instance_umap _wmos;

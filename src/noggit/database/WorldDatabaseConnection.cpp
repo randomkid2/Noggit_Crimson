@@ -8,7 +8,10 @@
 #include <cppconn/resultset.h>
 #include <cppconn/statement.h>
 
+#include <sstream>
+#include <string>
 #include <utility>
+#include <vector>
 
 using namespace Noggit::Database;
 
@@ -133,6 +136,61 @@ ResultRows WorldDatabaseConnection::query(std::string const& sql) const
       (std::string("Query failed: ") + e.what()
        + " (MySQL error " + std::to_string(e.getErrorCode()) + ")");
   }
+}
+
+std::size_t WorldDatabaseConnection::executeScript(std::string const& sql)
+{
+  // Split first, then let execute() enforce the write guard on each statement. Doing it that way
+  // round means the guard cannot be bypassed by this entry point -- there is exactly one place a
+  // statement reaches the server.
+  std::vector<std::string> statements;
+  std::string current;
+
+  std::istringstream lines (sql);
+  std::string line;
+
+  while (std::getline(lines, line))
+  {
+    // Strip a trailing carriage return so a CRLF file does not leave one inside a statement.
+    if (!line.empty() && line.back() == '\r')
+    {
+      line.pop_back();
+    }
+
+    // Whole-line SQL comments only. Deliberately not a general comment parser: these files are
+    // emitted by ChangesetBuilder, which never puts `--` anywhere but the start of a line, and a
+    // half-correct parser would be worse than a narrow one that matches the format exactly.
+    std::string::size_type const first (line.find_first_not_of(" \t"));
+
+    if (first == std::string::npos || line.compare(first, 2, "--") == 0)
+    {
+      continue;
+    }
+
+    current += line;
+    current += '\n';
+
+    // Statement boundary. Safe for this format because no emitted literal contains a semicolon:
+    // every value is a number, and the only strings are identifiers in backticks.
+    if (line.find_last_not_of(" \t") != std::string::npos
+     && line[line.find_last_not_of(" \t")] == ';')
+    {
+      statements.push_back(current);
+      current.clear();
+    }
+  }
+
+  if (current.find_first_not_of(" \t\n") != std::string::npos)
+  {
+    statements.push_back(current);
+  }
+
+  for (auto const& statement : statements)
+  {
+    execute(statement);
+  }
+
+  return statements.size();
 }
 
 void WorldDatabaseConnection::execute(std::string const& sql)

@@ -3,6 +3,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <noggit/database/SpawnPlacement.hpp>
 #include <noggit/database/TileCoordinates.hpp>
 
 #include <cmath>
@@ -15,7 +16,10 @@ using Catch::Approx;
 namespace
 {
   constexpr double PI = 3.14159265358979323846;
-  constexpr double TWO_PI = 6.283185307179586476925286766559;
+
+  // TWO_PI is deliberately NOT redeclared here. It is TileCoordinates::TWO_PI, which the
+  // using-directive above already brings into scope -- a local copy would be ambiguous with it,
+  // and a local copy is exactly what this file is meant to be testing the absence of.
 
   // Angles are compared to 1e-9 radians: about 6e-8 of a degree, far tighter than anything that
   // could be seen in game and far looser than the 1e-15 of accumulated error a sin/atan2 round
@@ -525,4 +529,146 @@ TEST_CASE("normaliseOrientation survives the rounding traps at both ends", "[til
   CHECK(normaliseOrientation(not_a_number) == Approx(0.0).margin(ANGLE_TOLERANCE));
   CHECK_FALSE(std::isnan(quaternionForOrientation(not_a_number).r2));
   CHECK_FALSE(std::isnan(quaternionForOrientation(not_a_number).r3));
+}
+
+// The shared rotation constants and helpers, pinned.
+//
+// They were three file-local copies -- ChangesetBuilder, ChunkTransform and, for the identity
+// test, GmCommands -- each covered only by its own file's tests, so nothing could observe them
+// drifting apart. These cases are what makes the single copy safe to depend on.
+TEST_CASE("TWO_PI is the double nearest 2*pi, whichever literal names it", "[tile][rotation]")
+{
+  // Exact equality is the point. Multiplying a double by two is exact in binary, so 2.0 * PI is
+  // the correctly-rounded 2*pi and the long literal must land on the same double or every angle
+  // this layer folds would wrap at a slightly different place.
+  CHECK(TWO_PI == 2.0 * PI);
+
+  // The de-duplication merged two DIFFERENT decimal literals: ChangesetBuilder carried the
+  // sixteen-digit form below and the other two carried the long one. They round to the same
+  // double, which is the fact that made the merge a refactor rather than a behaviour change --
+  // asserted rather than assumed, because if it were false the emitter's agreement threshold
+  // would have shifted the day the copies were unified.
+  CHECK(TWO_PI == 6.283185307179586);
+}
+
+TEST_CASE("isDefaultRotation answers 'was this field touched'", "[tile][rotation]")
+{
+  CHECK(isDefaultRotation(Quaternion{}));
+
+  // Each component moved on its own, so a test that checked only some of them fails here rather
+  // than passing on the strength of the others.
+  CHECK_FALSE(isDefaultRotation(Quaternion{1.0, 0.0, 0.0, 1.0}));
+  CHECK_FALSE(isDefaultRotation(Quaternion{0.0, 1.0, 0.0, 1.0}));
+  CHECK_FALSE(isDefaultRotation(Quaternion{0.0, 0.0, 1.0, 1.0}));
+  CHECK_FALSE(isDefaultRotation(Quaternion{0.0, 0.0, 0.0, 0.0}));
+
+  // A yaw of zero produces the identity, so an object deliberately facing north is
+  // indistinguishable from one whose quaternion nobody set. That is not a defect to fix: both
+  // readings give the same facing, which is why the emitter, the transform planner and the .go
+  // command are all free to fall back to the orientation column here.
+  CHECK(isDefaultRotation(quaternionForOrientation(0.0)));
+  CHECK_FALSE(isDefaultRotation(quaternionForOrientation(PI / 2.0)));
+
+  // Every comparison against a NaN is false, so the identity test answers "authored". That is the
+  // safe direction: the caller then reads the yaw back out of the quaternion and validation
+  // rejects it, rather than the row being waved through as untouched.
+  double const not_a_number (std::numeric_limits<double>::quiet_NaN());
+
+  CHECK_FALSE(isDefaultRotation(Quaternion{not_a_number, 0.0, 0.0, 1.0}));
+}
+
+TEST_CASE("yawSeparation measures the short way round the circle", "[tile][rotation]")
+{
+  CHECK(yawSeparation(1.0, 1.0) == Approx(0.0).margin(ANGLE_TOLERANCE));
+
+  // Away from the seam it is just the difference, and it is symmetric in its arguments.
+  CHECK(yawSeparation(1.0, 1.5) == Approx(0.5).margin(ANGLE_TOLERANCE));
+  CHECK(yawSeparation(1.5, 1.0) == Approx(0.5).margin(ANGLE_TOLERANCE));
+
+  // The case the helper exists for. Two yaws a thousandth of a radian either side of zero are
+  // adjacent in the world; subtracting them gives very nearly a full turn, which would report
+  // every object facing north as disagreeing with itself.
+  CHECK(yawSeparation(0.001, TWO_PI - 0.001) == Approx(0.002).margin(ANGLE_TOLERANCE));
+  CHECK(yawSeparation(TWO_PI - 0.001, 0.001) == Approx(0.002).margin(ANGLE_TOLERANCE));
+
+  // Half a turn is the furthest two yaws can be, and it is the fixed point of the two branches.
+  CHECK(yawSeparation(0.0, PI) == Approx(PI).margin(ANGLE_TOLERANCE));
+
+  // Never negative and never more than half a turn, over the whole normalised domain. A branch
+  // that took the wrong minimum passes the fixtures above and fails here.
+  for (int i = 0; i < 32; ++i)
+  {
+    for (int j = 0; j < 32; ++j)
+    {
+      double const a (normaliseOrientation(TWO_PI * i / 32.0));
+      double const b (normaliseOrientation(TWO_PI * j / 32.0));
+      double const separation (yawSeparation(a, b));
+
+      CAPTURE(a, b, separation);
+      CHECK(separation >= 0.0);
+      CHECK(separation <= PI + ANGLE_TOLERANCE);
+      CHECK(separation == Approx(yawSeparation(b, a)).margin(ANGLE_TOLERANCE));
+    }
+  }
+}
+
+// The transposition, pinned.
+//
+// Database::TileIndex is (x, y) in server axis order; AdtFileIndex is (x, z) in ADT filename
+// order, and the two are SWAPPED. Every warning in this layer about a spawn appearing ~9.6 km
+// from where it belongs traces back to these two helpers being confused for each other, and
+// until now neither had a test -- the one conversion in the project that fails silently rather
+// than loudly was the one nothing checked.
+TEST_CASE("toAdtFileIndex transposes the axes", "[tile][adt]")
+{
+  // Asymmetric on purpose. Any x == y case passes under a helper that does nothing at all, so a
+  // symmetric fixture cannot detect the bug this exists to catch.
+  AdtFileIndex const adt (toAdtFileIndex(TileIndex{49, 31}));
+
+  CHECK(adt.x == 31);
+  CHECK(adt.z == 49);
+}
+
+TEST_CASE("fromAdtFileIndex is the exact inverse of toAdtFileIndex", "[tile][adt]")
+{
+  // Both directions over an asymmetric pair, then a sweep, so neither helper can be "fixed" in
+  // isolation and leave the pair disagreeing.
+  TileIndex const db (fromAdtFileIndex(AdtFileIndex{31, 49}));
+
+  CHECK(db.x == 49);
+  CHECK(db.y == 31);
+
+  for (int x = 0; x < 64; x += 7)
+  {
+    for (int y = 0; y < 64; y += 5)
+    {
+      TileIndex const original {x, y};
+      TileIndex const round_tripped (fromAdtFileIndex(toAdtFileIndex(original)));
+
+      CAPTURE(x, y);
+      CHECK(round_tripped == original);
+
+      // And the other way around the loop, which is the direction the renderer uses: it starts
+      // from a loaded ADT tile and has to reach the database's index.
+      AdtFileIndex const adt {x, y};
+      AdtFileIndex const adt_round_tripped (toAdtFileIndex(fromAdtFileIndex(adt)));
+
+      CHECK(adt_round_tripped.x == adt.x);
+      CHECK(adt_round_tripped.z == adt.z);
+    }
+  }
+}
+
+TEST_CASE("adtIndexFor agrees with converting the tile index by hand", "[tile][adt]")
+{
+  // SpawnPlacement::adtIndexFor exists so a caller never has to remember the transposition. If
+  // it ever disagreed with the helpers above, half the project would place spawns one way and
+  // half the other -- so the two routes to the same answer are checked against each other.
+  WorldPosition const position {-8000.0, 1000.0, 50.0};
+
+  AdtFileIndex const direct (SpawnPlacement::adtIndexFor(position));
+  AdtFileIndex const via_helpers (toAdtFileIndex(tileForPosition(position)));
+
+  CHECK(direct.x == via_helpers.x);
+  CHECK(direct.z == via_helpers.z);
 }

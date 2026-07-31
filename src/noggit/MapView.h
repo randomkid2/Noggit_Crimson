@@ -39,6 +39,12 @@ namespace Noggit
 {
   class Tool;
   class TabletManager;
+  class DevBridge;
+
+  namespace Database
+  {
+    class SpawnSceneCache;
+  }
 
   namespace Project
   {
@@ -62,6 +68,7 @@ namespace Noggit
 	
   namespace Ui
   {
+    class DatabaseSpawnPanel;
     class detail_infos;
     class help;
     class minimap_widget;
@@ -146,6 +153,9 @@ public:
   Noggit::BoolToggleProperty _draw_skybox = { true };
   Noggit::BoolToggleProperty _draw_hidden_models = {false};
   Noggit::BoolToggleProperty _draw_occlusion_boxes = {false};
+  // Off by default: an overlay of server-side data has to be asked for, never assumed, and
+  // nothing is loaded until "Load database spawns" is used.
+  Noggit::BoolToggleProperty _draw_db_spawns = {false};
   // Noggit::BoolToggleProperty _game_mode_camera = { false };
   Noggit::BoolToggleProperty _draw_lights_zones = { false };
   Noggit::BoolToggleProperty _show_detail_info_window = { false };
@@ -159,6 +169,64 @@ private:
   void draw_map();
 
   void createGUI();
+
+public:
+  // Public because the spawn panel drives both, and it is a separate widget rather than a friend:
+  // the panel is the buttons, MapView owns the world and the connection, and that seam is worth
+  // keeping visible.
+
+  // Queries the world database and rebuilds the spawn overlay.
+  //
+  // Driven by an explicit menu action, never by tile streaming. The query runs here, on the main
+  // thread, inside the Qt handler -- which is the point: the render path must never issue a query
+  // or walk a DBC inside a frame, and WorldDatabaseConnection holds a single unsynchronised
+  // connection that must not be touched from the loader threads.
+  //
+  // `all_loaded_tiles` false loads only the tile under the camera, which is the normal case and
+  // what the edit workflow actually needs. True loads every loaded tile -- up to a 5x5 block by
+  // default, more if the camera has moved recently -- and runs a pre-flight COUNT first, because
+  // against a populated world database that can be many thousands of spawns, each one queueing an
+  // asynchronous model load.
+  //
+  // `interactive` decides how the outcome is delivered, not what it is: true raises a dialog, as
+  // the menu wants; false returns it and shows nothing, as the dev bridge needs -- a script left
+  // waiting on a modal nobody will click is a hang. Either way the same line comes back, prefixed
+  // `OK ` or `ERR `, so the two paths cannot describe an outcome differently.
+  //
+  // `force` skips the confirmation threshold. Non-interactive callers are refused above it rather
+  // than silently allowed, because that threshold exists for exactly the case a script hits.
+  std::string loadDatabaseSpawns(bool all_loaded_tiles, bool interactive = true, bool force = false);
+
+  // Emits every moved spawn as a reviewable .sql changeset, and optionally applies it.
+  //
+  // "Save to database" cannot mean writing to the connected server, and that is a rule rather
+  // than a limitation: HARD RULE 2 requires every edit to become a DELETE-then-INSERT changeset a
+  // human can read before it touches anything, and HARD RULE 1 permits writes only against the
+  // configured dev schema. So this writes a file, and `apply` runs it against that dev schema and
+  // nowhere else -- WorldDatabaseConnection refuses to construct write-capable against any other.
+  //
+  // Returns the same `OK `/`ERR ` line shape as loadDatabaseSpawns, for the same reason.
+  std::string saveDatabaseChanges(bool apply_to_dev, bool interactive = true);
+
+private:
+
+  // Built lazily by loadDatabaseSpawns, so a session that never asks pays nothing and a build
+  // with no database configured never constructs either. Held by pointer and forward-declared to
+  // keep the database headers out of MapView.h.
+  std::unique_ptr<Noggit::Database::SpawnSceneCache> _db_spawn_scene;
+
+  // Owned by its dock. Null until the dock is built, which is why every use is guarded.
+  Noggit::Ui::DatabaseSpawnPanel* _db_spawn_panel = nullptr;
+
+  // Null unless started with NOGGIT_BRIDGE_PORT set. See DevBridge.hpp for why it is gated twice.
+  //
+  // The member itself is behind the #ifdef, not just its use: DevBridge.cpp is excluded from the
+  // sources when the option is off, so a unique_ptr to it would need ~DevBridge at MapView's own
+  // destructor and find only a declaration -- an unresolved external in the DEFAULT build
+  // configuration, which is the one everybody else gets.
+#ifdef NOGGIT_DEV_BRIDGE_ENABLED
+  std::unique_ptr<Noggit::DevBridge> _dev_bridge;
+#endif
 
   QWidgetAction* createTextSeparator(const QString& text);
 
@@ -244,6 +312,48 @@ public:
           , bool from_bookmark = false
           );
   ~MapView();
+
+  // One dev-bridge command line in, one reply line out, prefixed `OK ` or `ERR `.
+  //
+  // Public because DevBridge calls it, and it lives here rather than there because every command
+  // needs the camera, the world or the spawn cache -- all of which are this class's private
+  // business. Making DevBridge a friend would have traded a clean seam for a shortcut.
+  //
+  // Runs on the GUI thread, so it may touch the GL context. Must not throw; DevBridge catches as
+  // a backstop, but an exception here would be unwinding through a Qt signal emission.
+  std::string handleBridgeCommand(std::string const& line);
+
+  // Path of the texture currently selected in the Texturing tool, or empty when none is.
+  [[nodiscard]]
+  std::string selectedTexturePath() const;
+
+  [[nodiscard]]
+  glm::vec3 cameraPosition() const;
+
+  // The loaded spawn scene, or null when nothing has been loaded. For the spawn panel.
+  [[nodiscard]]
+  Noggit::Database::SpawnSceneCache* databaseSpawns() const;
+
+  // Terrain textures actually painted in scope, mapped to how many layers use each.
+  //
+  // Lives here rather than in the ground effect panel because two callers need it -- the panel,
+  // to offer only textures that exist, and the dev bridge, to check the same thing without a
+  // human at the window. One scan, one answer.
+  [[nodiscard]]
+  std::map<std::string, std::size_t> terrainTexturesInScope(bool all_loaded_tiles) const;
+
+  // Request a repaint after the spawn overlay changed.
+  //
+  // The editor only paints when something asks it to, so moving or rotating a spawn from a panel
+  // -- which is not an input event -- leaves the viewport showing the old position until
+  // something else happens to trigger a frame.
+  void markSpawnOverlayDirty();
+
+  // Point the camera at a loaded spawn. False when that guid is not loaded.
+  //
+  // Shared by the panel's Focus button and the dev bridge's `lookat`, so the two cannot drift
+  // into framing a spawn differently.
+  bool focusOnSpawn(std::uint32_t guid, float distance = 12.0f);
 
   void tick (float dt);
   void change_selected_wmo_nameset(int set);
@@ -390,6 +500,16 @@ private:
   bool _gl_initialized = false;
   bool _destroying = false;
   bool _needs_redraw = false;
+
+  // Forces exactly one paint regardless of _needs_redraw, for the dev bridge's screenshot.
+  //
+  // Setting _needs_redraw is not enough and the reason is a race, not a mistake: the editor
+  // repaints continuously while anything animates, so the normal paint frequently consumes the
+  // flag between the bridge setting it and grabFramebuffer's render running -- at which point
+  // paintGL early-returns and the grab reads back whatever the framebuffer held from an earlier
+  // frame. That is why screenshots showed a stale view while the window itself was demonstrably
+  // correct. A separate flag paintGL clears itself cannot be consumed by anyone else.
+  bool _force_single_render = false;
   bool _unload_tiles = true;
 
   OpenGL::Scoped::deferred_upload_buffers<2> _buffers;

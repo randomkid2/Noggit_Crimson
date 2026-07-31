@@ -1,5 +1,17 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
+#include <noggit/database/ChangesetBuilder.hpp>
+#include <noggit/database/DatabaseSettings.hpp>
+#include <noggit/database/GameTeleBuilder.hpp>
+#include <noggit/database/SchemaIntrospector.hpp>
+#include <noggit/database/SpawnQuery.hpp>
+#include <noggit/database/SpawnSceneCache.hpp>
+#include <noggit/database/TileCoordinates.hpp>
+#include <noggit/database/WorldDatabaseConnection.hpp>
+#include <noggit/database/SpawnPlacement.hpp>
 #include <noggit/DBC.h>
+#ifdef NOGGIT_DEV_BRIDGE_ENABLED
+#include <noggit/DevBridge.hpp>
+#endif
 #include <noggit/MapChunk.h>
 #include <noggit/MapView.h>
 #include <noggit/Misc.h>
@@ -14,6 +26,8 @@
 #include <noggit/Tool.hpp>
 #include <noggit/uid_storage.hpp>
 #include <noggit/ui/CurrentTexture.h>
+#include <noggit/ui/DatabaseSpawnPanel.hpp>
+#include <noggit/ui/GroundEffectSetEditor.hpp>
 #include <noggit/ui/DetailInfos.h> // detailInfos
 #include <noggit/ui/FlattenTool.hpp>
 #include <noggit/ui/Help.h>
@@ -407,6 +421,797 @@ QWidgetAction* MapView::createTextSeparator(const QString& text)
   auto* separator = new QWidgetAction(this);
   separator->setDefaultWidget(pLabel);
   return separator;
+}
+
+std::string MapView::loadDatabaseSpawns(bool all_loaded_tiles, bool interactive, bool force)
+{
+#ifdef USE_MYSQL_UID_STORAGE
+  // Above this many spawns the load is worth confirming rather than simply starting. The cost is
+  // not the query -- it is that each spawn builds a ModelInstance that queues an asynchronous M2
+  // load, so a dense set of city tiles can queue thousands and present as a hang.
+  constexpr std::size_t SPAWN_COUNT_CONFIRM_THRESHOLD = 2000;
+
+  // Every exit reports through here, so the menu and the dev bridge cannot drift into describing
+  // the same outcome differently. A dialog is shown only when a human asked; a script driving this
+  // over the bridge must never be left waiting on a modal nobody will click.
+  auto const report = [this, interactive] (std::string const& message, bool is_error)
+  {
+    if (interactive)
+    {
+      if (is_error)
+      {
+        QMessageBox::critical(this, "Database spawns", QString::fromStdString(message));
+      }
+      else
+      {
+        QMessageBox::information(this, "Database spawns", QString::fromStdString(message));
+      }
+    }
+
+    return (is_error ? std::string("ERR ") : std::string("OK ")) + message;
+  };
+
+  if (!Noggit::Database::DatabaseSettings::isEnabled())
+  {
+    return report("The database feature is not enabled. Turn it on and set the connection "
+                  "details in Settings first.", true);
+  }
+
+  // Everything below can throw -- the connection, the introspection, and every query. All of it
+  // is contained here, because this runs from a Qt slot and an exception escaping a slot is
+  // undefined behaviour under Qt, not a caught error.
+  try
+  {
+    // READ_ONLY unconditionally. This path only ever reads, and asking for a write-capable
+    // connection would make the layer refuse to construct against anything but the dev schema --
+    // which would stop the overlay working against a real world database, the main thing it is
+    // for. See HARD RULE 1: reads against a live schema are fine.
+    Noggit::Database::WorldDatabaseConnection connection
+      ( Noggit::Database::DatabaseSettings::readConnectionConfig()
+      , Noggit::Database::AccessMode::READ_ONLY
+      , Noggit::Database::DatabaseSettings::readWritableSchema()
+      );
+
+    Noggit::Database::SchemaModel const schema
+      (Noggit::Database::SchemaIntrospector::readModel(connection, connection.schema()));
+
+    auto const map_id (static_cast<std::uint16_t>(_world->getMapID()));
+
+    // Decide the tile set BEFORE touching the cache, so a cancelled confirmation leaves the
+    // existing overlay exactly as it was rather than cleared.
+    //
+    // fromAdtFileIndex, never field-by-field. Noggit's index is (x, z) in ADT filename order and
+    // the database layer's is transposed; assigning one to the other reads a tile about 9.6 km
+    // from the one on screen, with no error to show for it.
+    std::vector<Noggit::Database::TileIndex> targets;
+
+    auto const to_db_tile = [] (::TileIndex const& adt)
+    {
+      return Noggit::Database::fromAdtFileIndex
+        ( Noggit::Database::AdtFileIndex
+          {static_cast<int>(adt.x), static_cast<int>(adt.z)}
+        );
+    };
+
+    if (all_loaded_tiles)
+    {
+      for (MapTile* tile : _world->mapIndex.loaded_tiles())
+      {
+        if (tile)
+        {
+          targets.push_back(to_db_tile(tile->index));
+        }
+      }
+    }
+    else
+    {
+      ::TileIndex const current (_camera.position);
+
+      if (!_world->mapIndex.tileLoaded(current))
+      {
+        return report("The tile under the camera is not loaded yet. Wait for it to finish "
+                      "streaming, or load all loaded tiles instead.", true);
+      }
+
+      targets.push_back(to_db_tile(current));
+    }
+
+    if (targets.empty())
+    {
+      return report("No tiles are loaded.", true);
+    }
+
+    // Pre-flight count, for the multi-tile path only. Two COUNT queries per tile with no joins
+    // and no rows fetched, which is cheap next to the load it is describing.
+    if (all_loaded_tiles)
+    {
+      std::size_t expected = 0;
+
+      for (auto const& tile : targets)
+      {
+        expected += Noggit::Database::SpawnQuery::countTile(connection, schema, map_id, tile);
+      }
+
+      if (expected > SPAWN_COUNT_CONFIRM_THRESHOLD && !force)
+      {
+        if (!interactive)
+        {
+          // Refused rather than silently loaded. A script asking for "all tiles" against a
+          // populated world database is exactly the case this threshold exists for, and it has no
+          // human to warn -- so it has to say no and explain how to insist.
+          return report(std::to_string(expected) + " spawns across " + std::to_string(targets.size())
+                        + " tile(s) exceeds the confirmation threshold. Repeat with force to load "
+                          "them anyway.", true);
+        }
+
+        auto const answer
+          ( QMessageBox::question
+            ( this
+            , "Database spawns"
+            , QString("%1 spawns across %2 loaded tile(s).\n\nEach one queues a model load, so "
+                      "this may take a while and use a lot of memory. Continue?")
+                .arg(expected).arg(targets.size())
+            , QMessageBox::Yes | QMessageBox::No
+            , QMessageBox::No
+            )
+          );
+
+        if (answer != QMessageBox::Yes)
+        {
+          Log << "Database spawn load cancelled by the user: " << expected << " spawn(s) across "
+              << targets.size() << " tile(s)." << std::endl;
+
+          return "OK cancelled";
+        }
+      }
+    }
+
+    if (!_db_spawn_scene)
+    {
+      _db_spawn_scene = std::make_unique<Noggit::Database::SpawnSceneCache>(getRenderContext());
+    }
+
+    // An OpenGL context must be current for the rest of this function, and the reason is not
+    // obvious enough to leave unstated.
+    //
+    // Every entry in the cache owns a scoped_model_reference. Releasing the last reference to a
+    // Model runs Model::~Model, which destroys its ModelRender, which destroys OpenGL vertex
+    // array objects -- and OpenGL::Scoped's destructor calls verify_context_and_check_for_gl_errors,
+    // which THROWS when no context is current (context.inl:47). Thrown from a destructor, that is
+    // an immediate terminate, not a catchable error: exactly the crash observed on the second
+    // invocation of this action, where clear() below released the first run's models from a plain
+    // Qt slot with no context bound.
+    //
+    // This is the same guard, for the same reason, that ~MapView applies before deleting its
+    // tools -- see the "opengl context related crash" comment there. Both clear() and setTile()
+    // can release the last reference to a model, so the context covers both.
+    makeCurrent();
+    OpenGL::context::scoped_setter const _gl_context (::gl, context());
+
+    // Rebuilt from scratch rather than merged: tiles unloaded since the last run must not keep
+    // stale spawns alive, and the resolver cache -- the expensive part -- survives regardless
+    // because it belongs to the cache, not to this call.
+    _db_spawn_scene->clear();
+
+    for (auto const& db_tile : targets)
+    {
+      _db_spawn_scene->setTile
+        (Noggit::Database::SpawnQuery::loadTile(connection, schema, map_id, db_tile));
+    }
+
+    std::size_t const tiles_read = targets.size();
+
+    // Turned on for the user: having loaded spawns on request and then not shown them would read
+    // as the load having failed.
+    _draw_db_spawns.set(true);
+
+    std::string const summary (_db_spawn_scene->summary());
+    Log << "Database spawns loaded from schema \"" << connection.schema() << "\" over "
+        << tiles_read << " loaded tile(s): " << summary << std::endl;
+
+    _main_window->statusBar()->showMessage
+      (QString::fromStdString("Database spawns: " + summary), 5000);
+
+    // Success is not reported through `report`: it must not raise a dialog on the menu path, where
+    // the status bar has already said it.
+    return "OK " + summary;
+  }
+  catch (std::exception const& e)
+  {
+    LogError << "Loading database spawns failed: " << e.what() << std::endl;
+
+    return report(std::string("Could not load spawns. ") + e.what(), true);
+  }
+#else
+  (void)all_loaded_tiles;
+  (void)force;
+
+  if (interactive)
+  {
+    QMessageBox::information
+      ( this
+      , "Database spawns"
+      , "This build has no database support. Reconfigure with -DUSE_SQL=ON."
+      );
+  }
+
+  return "ERR this build has no database support (reconfigure with -DUSE_SQL=ON)";
+#endif
+}
+
+std::string MapView::saveDatabaseChanges(bool apply_to_dev, bool interactive)
+{
+#ifdef USE_MYSQL_UID_STORAGE
+  auto const report = [this, interactive] (std::string const& message, bool is_error)
+  {
+    if (interactive)
+    {
+      if (is_error)
+      {
+        QMessageBox::critical(this, "Database spawns", QString::fromStdString(message));
+      }
+      else
+      {
+        QMessageBox::information(this, "Database spawns", QString::fromStdString(message));
+      }
+    }
+
+    return (is_error ? std::string("ERR ") : std::string("OK ")) + message;
+  };
+
+  if (!_db_spawn_scene || _db_spawn_scene->dirtyCount() == 0)
+  {
+    return report("Nothing has been moved, so there is nothing to save.", true);
+  }
+
+  try
+  {
+    Noggit::Database::WorldDatabaseConnection read_connection
+      ( Noggit::Database::DatabaseSettings::readConnectionConfig()
+      , Noggit::Database::AccessMode::READ_ONLY
+      , Noggit::Database::DatabaseSettings::readWritableSchema()
+      );
+
+    Noggit::Database::SchemaModel const schema
+      (Noggit::Database::SchemaIntrospector::readModel(read_connection, read_connection.schema()));
+
+    Noggit::Database::ChangesetBuilder::Options options;
+    options.description = "Spawn positions edited in Noggit";
+
+    Noggit::Database::ChangesetBuilder builder (schema, options);
+
+    auto const dirty (_db_spawn_scene->dirtyEntries());
+
+    for (auto const* entry : dirty)
+    {
+      if (entry->kind == Noggit::Database::SpawnKind::CREATURE)
+      {
+        builder.addCreature(entry->creature);
+      }
+      else
+      {
+        builder.addGameObject(entry->gameobject);
+      }
+    }
+
+    // Throws when a spawn would be rejected by the core's own load-time validation, which is the
+    // point: a changeset that MySQL accepts and the server then silently corrects is worse than
+    // one that was never written.
+    std::string const sql (builder.build());
+
+    // Beside the project, not beside the binary: this is project data, and it is what the user
+    // will hand to whoever applies it.
+    QString directory
+      (QString::fromStdString(Noggit::Project::CurrentProject::get()->ProjectPath));
+
+    if (!(directory.endsWith('/') || directory.endsWith('\\')))
+    {
+      directory += "/";
+    }
+
+    directory += "changesets/";
+    QDir().mkpath(directory);
+
+    QString const path
+      ( directory + "spawns_"
+      + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss") + ".sql");
+
+    QFile file (path);
+
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+      return report("Could not write " + path.toStdString(), true);
+    }
+
+    file.write(sql.data(), static_cast<qint64>(sql.size()));
+    file.close();
+
+    std::string message
+      ( std::to_string(dirty.size()) + " spawn(s) written to " + path.toStdString());
+
+    if (apply_to_dev)
+    {
+      // DEV_WRITE refuses to construct unless the target schema is exactly the configured
+      // writable one, so this cannot reach a live schema even if the settings point at one.
+      auto config (Noggit::Database::DatabaseSettings::readConnectionConfig());
+      config.schema = Noggit::Database::DatabaseSettings::readWritableSchema();
+
+      Noggit::Database::WorldDatabaseConnection write_connection
+        (config, Noggit::Database::AccessMode::DEV_WRITE, config.schema);
+
+      std::size_t const statements (write_connection.executeScript(sql));
+
+      message += ", and applied to " + config.schema
+               + " (" + std::to_string(statements) + " statements)";
+    }
+
+    _db_spawn_scene->clearDirty();
+
+    Log << message << std::endl;
+    _main_window->statusBar()->showMessage(QString::fromStdString(message), 8000);
+
+    return "OK " + message;
+  }
+  catch (std::exception const& e)
+  {
+    LogError << "Saving database spawn changes failed: " << e.what() << std::endl;
+
+    return report(std::string("Could not save changes. ") + e.what(), true);
+  }
+#else
+  (void)apply_to_dev;
+  (void)interactive;
+
+  return "ERR this build has no database support (reconfigure with -DUSE_SQL=ON)";
+#endif
+}
+
+std::string MapView::selectedTexturePath() const
+{
+  auto const index = static_cast<std::size_t>(editing_mode::paint);
+
+  if (index >= _tools.size() || !_tools[index])
+  {
+    return {};
+  }
+
+  auto const* texturing = dynamic_cast<Noggit::TexturingTool const*>(_tools[index].get());
+
+  return texturing ? texturing->selectedTexturePath() : std::string();
+}
+
+glm::vec3 MapView::cameraPosition() const
+{
+  return _camera.position;
+}
+
+Noggit::Database::SpawnSceneCache* MapView::databaseSpawns() const
+{
+  return _db_spawn_scene.get();
+}
+
+void MapView::markSpawnOverlayDirty()
+{
+  _needs_redraw = true;
+}
+
+bool MapView::focusOnSpawn(std::uint32_t guid, float distance)
+{
+  glm::vec3 target (0.0f, 0.0f, 0.0f);
+
+  if (!_db_spawn_scene || !_db_spawn_scene->positionOf(guid, target))
+  {
+    return false;
+  }
+
+  // Stand back and above, then solve the angles rather than guessing them. Camera::direction is
+  // (sin(yaw)cos(pitch), -sin(pitch), cos(yaw)cos(pitch)), so a look vector d gives
+  // yaw = atan2(d.x, d.z) and pitch = asin(-d.y / |d|).
+  glm::vec3 const eye (target.x, target.y + distance * 0.45f, target.z + distance);
+  glm::vec3 const to_target (target - eye);
+  float const length (glm::length(to_target));
+
+  if (length < 1e-4f)
+  {
+    return false;
+  }
+
+  _camera.position = eye;
+  _camera.yaw(math::degrees(glm::degrees(std::atan2(to_target.x, to_target.z))));
+  _camera.pitch(math::degrees(glm::degrees(std::asin(-to_target.y / length))));
+
+  _db_spawn_scene->setSelected(guid);
+
+  _camera_moved_since_last_draw = true;
+  _needs_redraw = true;
+
+  return true;
+}
+
+std::map<std::string, std::size_t> MapView::terrainTexturesInScope(bool all_loaded_tiles) const
+{
+  std::map<std::string, std::size_t> layers_by_texture;
+
+  auto const scan_tile = [&layers_by_texture] (MapTile* tile)
+  {
+    if (!tile)
+    {
+      return;
+    }
+
+    for (int z = 0; z < 16; ++z)
+    {
+      for (int x = 0; x < 16; ++x)
+      {
+        MapChunk* chunk = tile->getChunk(static_cast<unsigned>(x), static_cast<unsigned>(z));
+
+        if (!chunk || !chunk->texture_set)
+        {
+          continue;
+        }
+
+        for (std::size_t layer = 0; layer < chunk->texture_set->num(); ++layer)
+        {
+          ++layers_by_texture[chunk->texture_set->filename(layer)];
+        }
+      }
+    }
+  };
+
+  if (all_loaded_tiles)
+  {
+    for (MapTile* tile : _world->mapIndex.loaded_tiles())
+    {
+      scan_tile(tile);
+    }
+  }
+  else
+  {
+    scan_tile(_world->mapIndex.getTile(::TileIndex(_camera.position)));
+  }
+
+  return layers_by_texture;
+}
+
+std::string MapView::handleBridgeCommand(std::string const& line)
+{
+  // Split on whitespace. The protocol is deliberately this crude: it has one consumer, a shell,
+  // and every argument is a number or a path.
+  std::vector<std::string> argv;
+
+  {
+    std::istringstream stream (line);
+    std::string token;
+
+    while (stream >> token)
+    {
+      argv.push_back(token);
+    }
+  }
+
+  if (argv.empty())
+  {
+    return "ERR empty command";
+  }
+
+  std::string const& command = argv[0];
+
+  auto const number = [&argv] (std::size_t index, double& out)
+  {
+    if (index >= argv.size())
+    {
+      return false;
+    }
+
+    try
+    {
+      std::size_t consumed = 0;
+      out = std::stod(argv[index], &consumed);
+      return consumed == argv[index].size();
+    }
+    catch (...)
+    {
+      return false;
+    }
+  };
+
+  if (command == "ping")
+  {
+    return "OK pong";
+  }
+
+  if (command == "status")
+  {
+    ::TileIndex const tile (_camera.position);
+
+    std::ostringstream out;
+    out << "OK camera=" << _camera.position.x << ',' << _camera.position.y << ','
+        << _camera.position.z
+        << " yaw=" << _camera.yaw()._ << " pitch=" << _camera.pitch()._
+        << " tile=" << tile.x << ',' << tile.z
+        << " tile_loaded=" << (_world->mapIndex.tileLoaded(tile) ? "yes" : "no")
+        << " map=" << _world->getMapID()
+        << " overlay=" << (_draw_db_spawns.get() ? "on" : "off")
+        << " spawns=" << (_db_spawn_scene ? _db_spawn_scene->instanceCount() : 0)
+        << " spawn_tiles=" << (_db_spawn_scene ? _db_spawn_scene->tileCount() : 0);
+
+    return out.str();
+  }
+
+  if (command == "camera")
+  {
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+
+    if (!number(1, x) || !number(2, y) || !number(3, z))
+    {
+      return "ERR usage: camera <x> <y> <z>   (Noggit coordinates)";
+    }
+
+    _camera.position = glm::vec3(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z));
+
+    // Tiles stream in around the camera, and nothing else triggers that when the camera is moved
+    // programmatically rather than by input.
+    _world->mapIndex.enterTile(::TileIndex(_camera.position));
+
+    return "OK";
+  }
+
+  if (command == "goto")
+  {
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+
+    if (!number(1, x) || !number(2, y) || !number(3, z))
+    {
+      return "ERR usage: goto <server_x> <server_y> <server_z>   (TrinityCore coordinates)";
+    }
+
+    // Through the tested conversion rather than by hand. This is the same seam a pasted `.go`
+    // coordinate will use, and there is exactly one place the arithmetic is allowed to live.
+    Noggit::Database::NoggitPlacement const placement
+      (Noggit::Database::SpawnPlacement::positionFor(Noggit::Database::WorldPosition{x, y, z}));
+
+    _camera.position = glm::vec3( static_cast<float>(placement.x)
+                                , static_cast<float>(placement.y)
+                                , static_cast<float>(placement.z)
+                                );
+
+    _world->mapIndex.enterTile(::TileIndex(_camera.position));
+
+    std::ostringstream out;
+    out << "OK camera=" << placement.x << ',' << placement.y << ',' << placement.z;
+
+    return out.str();
+  }
+
+  if (command == "look")
+  {
+    double yaw = 0.0;
+    double pitch = 0.0;
+
+    if (!number(1, yaw) || !number(2, pitch))
+    {
+      return "ERR usage: look <yaw_degrees> <pitch_degrees>";
+    }
+
+    _camera.yaw(math::degrees(static_cast<float>(yaw)));
+    _camera.pitch(math::degrees(static_cast<float>(pitch)));
+
+    return "OK";
+  }
+
+  if (command == "loadspawns")
+  {
+    bool const all (argv.size() > 1 && argv[1] == "all");
+    bool const force (argv.size() > 2 && argv[2] == "force");
+
+    return loadDatabaseSpawns(all, false, force);
+  }
+
+  if (command == "dbspawns")
+  {
+    if (argv.size() < 2 || (argv[1] != "on" && argv[1] != "off"))
+    {
+      return "ERR usage: dbspawns on|off";
+    }
+
+    _draw_db_spawns.set(argv[1] == "on");
+
+    return "OK";
+  }
+
+  if (command == "screenshot")
+  {
+    if (argv.size() < 2)
+    {
+      return "ERR usage: screenshot <absolute path ending in .png>";
+    }
+
+    // Everything after the command is the path, so a path containing spaces survives the split.
+    std::string path (line.substr(line.find(argv[1])));
+
+    // grabFramebuffer renders into an FBO and reads it back, so it produces a correct image even
+    // when the window is occluded -- which a desktop screen grab does not.
+    //
+    // Two things have to be forced here, and both were found the hard way.
+    //
+    // 1. _needs_redraw. paintGL returns immediately when it is clear (MapView.cpp:3245), so the
+    //    paint grabFramebuffer triggers draws nothing and hands back an empty buffer. Observed as
+    //    a perfectly black PNG of a scene that was demonstrably loaded -- 25 tiles, five spawns.
+    //
+    // 2. The MVP matrices. paintGL calls draw_map() and only then tick(), and tick() is what
+    //    recomputes _model_view from the camera (MapView.cpp:3588). So a frame renders with the
+    //    matrix built at the end of the *previous* frame. An idle window never paints at all, so
+    //    nothing recomputes them between commands, and every screenshot came out one camera move
+    //    behind: moving the camera 165 units up produced a byte-identical view.
+    //
+    // Recomputing them here is what tick() would do, so a single grab reflects the camera as it
+    // is now rather than as it was.
+    _model_view = model_view(_debug_cam_mode.get());
+    _projection = projection();
+    _force_single_render = true;
+
+    QImage const image (grabFramebuffer());
+
+    if (image.isNull())
+    {
+      return "ERR framebuffer grab produced no image";
+    }
+
+    if (!image.save(QString::fromStdString(path)))
+    {
+      return "ERR could not write " + path;
+    }
+
+    std::ostringstream out;
+    out << "OK " << path << " (" << image.width() << 'x' << image.height() << ')';
+
+    return out.str();
+  }
+
+  if (command == "lookat")
+  {
+    double guid = 0.0;
+    double distance = 12.0;
+
+    if (!number(1, guid))
+    {
+      return "ERR usage: lookat <guid> [distance]";
+    }
+
+    number(2, distance);
+
+    if (!focusOnSpawn(static_cast<std::uint32_t>(guid), static_cast<float>(distance)))
+    {
+      return "ERR guid " + argv[1] + " is not loaded";
+    }
+
+    std::ostringstream out;
+    out << "OK camera=" << _camera.position.x << ',' << _camera.position.y << ','
+        << _camera.position.z
+        << " yaw=" << _camera.yaw()._ << " pitch=" << _camera.pitch()._;
+
+    return out.str();
+  }
+
+  if (command == "movespawn")
+  {
+    double guid = 0.0;
+    double sx = 0.0;
+    double sy = 0.0;
+    double sz = 0.0;
+
+    if (!number(1, guid) || !number(2, sx) || !number(3, sy) || !number(4, sz))
+    {
+      return "ERR usage: movespawn <guid> <server_x> <server_y> <server_z>";
+    }
+
+    if (!_db_spawn_scene)
+    {
+      return "ERR nothing loaded; run loadspawns first";
+    }
+
+    // Through positionFor, so the bridge and the viewport agree on where a server coordinate is.
+    Noggit::Database::NoggitPlacement const placement
+      (Noggit::Database::SpawnPlacement::positionFor(Noggit::Database::WorldPosition{sx, sy, sz}));
+
+    glm::vec3 const target ( static_cast<float>(placement.x)
+                           , static_cast<float>(placement.y)
+                           , static_cast<float>(placement.z)
+                           );
+
+    if (!_db_spawn_scene->moveTo(static_cast<std::uint32_t>(guid), target))
+    {
+      return "ERR guid " + argv[1] + " is not loaded";
+    }
+
+    std::ostringstream out;
+    out << "OK moved " << argv[1] << " to server " << sx << ',' << sy << ',' << sz
+        << " (" << _db_spawn_scene->dirtyCount() << " pending)";
+
+    return out.str();
+  }
+
+  if (command == "savechanges")
+  {
+    bool const apply (argv.size() > 1 && argv[1] == "apply");
+
+    return saveDatabaseChanges(apply, false);
+  }
+
+  if (command == "rotatespawn")
+  {
+    double guid = 0.0;
+    double degrees = 0.0;
+
+    if (!number(1, guid) || !number(2, degrees))
+    {
+      return "ERR usage: rotatespawn <guid> <degrees>   (0 faces north)";
+    }
+
+    if (!_db_spawn_scene)
+    {
+      return "ERR nothing loaded; run loadspawns first";
+    }
+
+    constexpr double DEGREES_TO_RADIANS = 3.14159265358979323846 / 180.0;
+
+    if (!_db_spawn_scene->rotateTo(static_cast<std::uint32_t>(guid), degrees * DEGREES_TO_RADIANS))
+    {
+      return "ERR guid " + argv[1] + " is not loaded";
+    }
+
+    markSpawnOverlayDirty();
+
+    std::ostringstream out;
+    out << "OK rotated " << argv[1] << " to " << degrees << " degrees ("
+        << _db_spawn_scene->dirtyCount() << " pending)";
+
+    return out.str();
+  }
+
+  if (command == "textures")
+  {
+    bool const all (argv.size() > 1 && argv[1] == "all");
+
+    auto const textures (terrainTexturesInScope(all));
+
+    if (textures.empty())
+    {
+      return "ERR no terrain textures found in scope; is the tile loaded?";
+    }
+
+    std::ostringstream out;
+    out << "OK " << textures.size() << " texture(s)";
+
+    for (auto const& entry : textures)
+    {
+      out << " | " << entry.first << " (" << entry.second << ")";
+    }
+
+    return out.str();
+  }
+
+  if (command == "spawns")
+  {
+    if (!_db_spawn_scene)
+    {
+      return "ERR nothing loaded; run loadspawns first";
+    }
+
+    return "OK" + _db_spawn_scene->describe();
+  }
+
+  if (command == "help")
+  {
+    return "OK ping | status | camera <x> <y> <z> | goto <sx> <sy> <sz> | look <yaw> <pitch> | "
+           "loadspawns [all [force]] | dbspawns on|off | screenshot <path> | help";
+  }
+
+  return "ERR unknown command \"" + command + "\" (try help)";
 }
 
 void MapView::enterEvent(QEvent* event)
@@ -1817,6 +2622,101 @@ void MapView::setupAssistMenu()
   }
   );
 
+  // Bookmarks -> game_tele. The cheapest useful bridge between the editor and the server: a
+  // place you marked while building becomes `.tele <name>` in game.
+  {
+    auto export_teles (new QAction("Export bookmarks as game_tele SQL...", this));
+    export_teles->setStatusTip
+      ("Writes a .sql file adding every bookmark on this map to game_tele.");
+    assist_menu->addAction(export_teles);
+
+    connect(export_teles, &QAction::triggered, this, [this]
+      {
+        std::vector<Noggit::Database::GameTele::Entry> entries;
+
+        for (auto const& bookmark : _project->Bookmarks)
+        {
+          // Bookmarks span every map in the project; a tele row carries its own map id, but
+          // exporting another map's bookmarks from here would be surprising.
+          if (bookmark.map_id != static_cast<int>(_world->getMapID()))
+          {
+            continue;
+          }
+
+          Noggit::Database::NoggitPlacement placement;
+          placement.x = bookmark.position.x;
+          placement.y = bookmark.position.y;
+          placement.z = bookmark.position.z;
+
+          Noggit::Database::GameTele::Entry entry;
+          entry.name = bookmark.name;
+          entry.map = static_cast<std::uint16_t>(bookmark.map_id);
+          entry.position = Noggit::Database::SpawnPlacement::serverPositionFor(placement);
+          entry.orientation
+            = Noggit::Database::GameTele::orientationFromCameraYaw(bookmark.camera_yaw);
+
+          entries.push_back(std::move(entry));
+        }
+
+        if (entries.empty())
+        {
+          QMessageBox::information
+            ( this
+            , "Export game_tele"
+            , "There are no bookmarks on this map. Add one with the bookmark action first."
+            );
+          return;
+        }
+
+        auto const result (Noggit::Database::GameTele::build(entries));
+
+        QString const path
+          ( QFileDialog::getSaveFileName
+            ( this
+            , "Export game_tele SQL"
+            , QString::fromStdString(Noggit::Project::CurrentProject::get()->ProjectPath)
+                + "/game_tele.sql"
+            , "SQL (*.sql)"
+            )
+          );
+
+        if (path.isEmpty())
+        {
+          return;
+        }
+
+        QFile file (path);
+
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+        {
+          QMessageBox::critical(this, "Export game_tele", "Could not write " + path);
+          return;
+        }
+
+        file.write(result.sql.data(), static_cast<qint64>(result.sql.size()));
+        file.close();
+
+        QString message
+          (QString("%1 destination(s) written to %2.").arg(result.emitted).arg(path));
+
+        // Skipped names are reported rather than dropped: a bookmark named "My Base" cannot
+        // become a tele, and silently omitting it would look like the export lost it.
+        if (!result.skipped.empty())
+        {
+          message += QString("\n\nSkipped %1:\n").arg(result.skipped.size());
+
+          for (auto const& skipped : result.skipped)
+          {
+            message += "  " + QString::fromStdString(skipped) + "\n";
+          }
+        }
+
+        QMessageBox::information(this, "Export game_tele", message);
+        Log << message.toStdString() << std::endl;
+      }
+    );
+  }
+
   auto debug_menu(assist_menu->addMenu("Debug"));
 
   ADD_ACTION_NS ( debug_menu
@@ -1906,6 +2806,60 @@ void MapView::setupViewMenu()
 
   ADD_TOGGLE_NS(view_menu, "Draw Sky", _draw_sky);
   ADD_TOGGLE_NS(view_menu, "Draw Skybox", _draw_skybox);
+
+  // TrinityCore world-database spawn overlay.
+  //
+  // The toggle only controls visibility; the query is a separate explicit action, because a
+  // per-tile database read must not be triggered by something as incidental as ticking a menu
+  // item. Loading is also what tells the user whether the connection works at all, so it is
+  // worth being a deliberate act with a reported result.
+  view_menu->addSeparator();
+  view_menu->addAction(createTextSeparator("Database"));
+  view_menu->addSeparator();
+
+  ADD_TOGGLE_NS(view_menu, "Database spawns", _draw_db_spawns);
+
+  {
+    // The editing panel. A dock on the right, so the spawn list and the save button sit beside
+    // the viewport while you place things -- which is the whole workflow.
+    auto spawn_dock (new QDockWidget("Database Spawns", _main_window));
+    _db_spawn_panel = new Noggit::Ui::DatabaseSpawnPanel(this, spawn_dock);
+    spawn_dock->setWidget(_db_spawn_panel);
+    spawn_dock->setFeatures
+      (QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable
+      | QDockWidget::DockWidgetClosable);
+    _main_window->addDockWidget(Qt::RightDockWidgetArea, spawn_dock);
+    spawn_dock->hide();
+
+    connect(this, &QObject::destroyed, spawn_dock, &QObject::deleteLater);
+
+    auto show_panel (new QAction("Database spawn editor", this));
+    show_panel->setCheckable(true);
+    view_menu->addAction(show_panel);
+
+    connect(show_panel, &QAction::toggled, spawn_dock, &QWidget::setVisible);
+    connect(spawn_dock, &QDockWidget::visibilityChanged, show_panel, &QAction::setChecked);
+  }
+
+  {
+    // Two actions rather than one, because the cheap case is the common one. Loading the tile
+    // under the camera is what the edit workflow needs and costs two queries; loading everything
+    // streamed in is occasionally useful and, against a populated world database, expensive
+    // enough to be worth asking for deliberately.
+    auto load_tile (new QAction("Load spawns (this tile)", this));
+    load_tile->setStatusTip
+      ("Read creature and gameobject spawns for the tile under the camera. Read-only; emits "
+       "nothing.");
+    view_menu->addAction(load_tile);
+    connect(load_tile, &QAction::triggered, this, [this] { loadDatabaseSpawns(false); });
+
+    auto load_all (new QAction("Load spawns (all loaded tiles)...", this));
+    load_all->setStatusTip
+      ("Read spawns for every loaded tile. Counts them first and asks before loading a large "
+       "set. Read-only; emits nothing.");
+    view_menu->addAction(load_all);
+    connect(load_all, &QAction::triggered, this, [this] { loadDatabaseSpawns(true); });
+  }
 
   auto debug_menu (view_menu->addMenu ("Debug"));
   ADD_TOGGLE_NS (debug_menu, "Occlusion boxes", _draw_occlusion_boxes);
@@ -2068,6 +3022,26 @@ void MapView::setupToolsMenu()
     {
         tool->registerMenuItems(menu);
     }
+
+    // Ground effect set authoring. A dialog rather than a dock, because it is a library editor
+    // used occasionally rather than a brush used continuously -- and because it deliberately does
+    // not belong inside the Texturing tool, where the existing GroundEffectsTool lives.
+    menu->addSeparator();
+
+    auto ground_effect_sets (new QAction("Ground Effect Sets...", this));
+    ground_effect_sets->setStatusTip
+      ("Create and edit ground effect sets, and apply one to every chunk using a texture.");
+    menu->addAction(ground_effect_sets);
+
+    connect(ground_effect_sets, &QAction::triggered, this, [this]
+      {
+        // Built on demand and owned by this view, so the DBC state it reads is whatever is
+        // currently loaded rather than a snapshot from startup.
+        auto editor (new Noggit::Ui::GroundEffectSetEditor(this, this));
+        editor->setAttribute(Qt::WA_DeleteOnClose);
+        editor->show();
+      }
+    );
 }
 
 void MapView::setupHelpMenu()
@@ -2527,6 +3501,13 @@ MapView::MapView( math::degrees camera_yaw0
   setWindowTitle ("Noggit Studio Red - " STRPRODUCTVER);
   setFocusPolicy (Qt::StrongFocus);
   setMouseTracking (true);
+
+#ifdef NOGGIT_DEV_BRIDGE_ENABLED
+  // Returns null unless NOGGIT_BRIDGE_PORT is set, so this line costs nothing in the ordinary
+  // case and the #ifdef exists only so a release build cannot contain the socket code at all.
+  _dev_bridge = Noggit::DevBridge::createIfEnabled(this);
+#endif
+
   setMinimumHeight(200);
   setMaximumHeight(10000);
   setAttribute(Qt::WA_OpaquePaintEvent, true);
@@ -2788,10 +3769,14 @@ void MapView::paintGL()
   if (lock)
     return;
 
-  if (!_needs_redraw)
+  // _force_single_render is checked alongside the ordinary flag so a bridge screenshot cannot be
+  // starved by the animation repaint consuming _needs_redraw first. Cleared here, by the paint it
+  // was set for.
+  if (!_needs_redraw && !_force_single_render)
     return;
-  else
-    _needs_redraw = false;
+
+  _needs_redraw = false;
+  _force_single_render = false;
 
   if (!_gl_initialized)
   {
@@ -2948,6 +3933,13 @@ MapView::~MapView()
   _main_window->removeToolBar(_main_window->_app_toolbar);
 
   OpenGL::context::scoped_setter const _ (::gl, context());
+
+  // Released here, inside the context, rather than left to the member's own destruction after
+  // this body returns. By then the context is gone, and every model these instances hold the
+  // last reference to would destroy its OpenGL vertex arrays without one -- which throws from a
+  // destructor and terminates. Same hazard as the tools below.
+  _db_spawn_scene.reset();
+
   delete _texBrush;
   delete _viewport_overlay_ui;
 
@@ -3630,6 +4622,10 @@ void MapView::draw_map()
   renderParams.water_layer = displayed_water_layer;
   renderParams.display_mode = _display_mode;
   renderParams.draw_occlusion_boxes = _draw_occlusion_boxes.get();
+  // Null until the load action has run, which is what the renderer checks -- so a session that
+  // never loads spawns, or a build with no database, needs no special case in the render path.
+  renderParams.draw_db_spawns = _draw_db_spawns.get();
+  renderParams.db_spawns = _db_spawn_scene.get();
   renderParams.minimap_render = false;
   renderParams.draw_wmo_exterior = _draw_wmo_exterior.get();
   renderParams.render_select_m2_aabb = _render_m2_aabb;
@@ -3990,6 +4986,27 @@ void MapView::mousePressEvent(QMouseEvent* event)
 
   makeCurrent();
   OpenGL::context::scoped_setter const _(::gl, context());
+
+  // Placing a database spawn takes the click before the active tool sees it, and returns.
+  //
+  // Ahead of the tool rather than after it because otherwise the terrain tool underneath would
+  // also act on the same click -- raising ground where the user meant to put a creature. Move
+  // mode is off by default and is a deliberate toggle, so this cannot surprise anyone who is not
+  // using it.
+  if (event->button() == Qt::LeftButton && _db_spawn_panel && _db_spawn_panel->moveMode())
+  {
+    std::uint32_t const guid = _db_spawn_panel->selectedGuid();
+
+    if (guid != 0 && _db_spawn_scene)
+    {
+      if (_db_spawn_scene->moveTo(guid, _cursor_pos))
+      {
+        _db_spawn_panel->refresh();
+        _needs_redraw = true;
+        return;
+      }
+    }
+  }
 
   activeTool()->onMousePress({
       .button = event->button(),

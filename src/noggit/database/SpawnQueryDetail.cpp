@@ -39,16 +39,56 @@ namespace
 {
   constexpr char const* TABLE_CREATURE = "creature";
   constexpr char const* TABLE_CREATURE_ADDON = "creature_addon";
+  constexpr char const* TABLE_CREATURE_TEMPLATE = "creature_template";
+  constexpr char const* TABLE_CREATURE_TEMPLATE_MODEL = "creature_template_model";
   constexpr char const* TABLE_GAMEOBJECT = "gameobject";
+  constexpr char const* TABLE_GAMEOBJECT_TEMPLATE = "gameobject_template";
 
   constexpr char const* ALIAS_CREATURE = "c";
   constexpr char const* ALIAS_ADDON = "a";
   constexpr char const* ALIAS_GAMEOBJECT = "g";
   constexpr char const* ALIAS_WAYPOINT = "w";
 
+  // The joined template table, whichever statement it appears in. Single-letter aliases match the
+  // rest of this file; the two statements never share one, so `t` can mean both templates.
+  constexpr char const* ALIAS_TEMPLATE = "t";
+  constexpr char const* ALIAS_TEMPLATE_MODEL = "m";
+
   constexpr char const* COLUMN_PATH_ID = "path_id";
   constexpr char const* COLUMN_POSITION_X = "position_x";
   constexpr char const* COLUMN_POSITION_Y = "position_y";
+  constexpr char const* COLUMN_ENTRY = "entry";
+  constexpr char const* COLUMN_NAME = "name";
+
+  // creature_template_model, where it exists instead of modelid1..4.
+  constexpr char const* COLUMN_CREATURE_ID = "CreatureID";
+  constexpr char const* COLUMN_CREATURE_DISPLAY_ID = "CreatureDisplayID";
+  constexpr char const* COLUMN_IDX = "Idx";
+
+  // The template name is selected under one alias whatever the source column is called, so the
+  // positional decoder and a reader of the query log both see the same name.
+  constexpr char const* ALIAS_TEMPLATE_NAME = "template_name";
+  constexpr char const* ALIAS_MODEL_CANDIDATE_PREFIX = "model_candidate_";
+
+  // Model candidate columns emitted per creature, always, whatever the schema.
+  //
+  // Fixed width is what keeps the positional decoder free of schema branching, and four is the cap
+  // creature_template.modelid1..4 imposes anyway -- so a creature_template_model carrying more
+  // than four rows is capped here too, which costs nothing: the count only has to answer "was
+  // there more than one", and four is already more than one.
+  constexpr std::size_t MODEL_CANDIDATE_COUNT = 4;
+
+  // Where the template columns land in each select list. Named rather than written as literals at
+  // the decoder, unlike the older indices, because these two have to move together with
+  // MODEL_CANDIDATE_COUNT: raising the cap without shifting the name index would decode the
+  // fourth candidate as the name and the name as nothing.
+  constexpr std::size_t CREATURE_MODEL_CANDIDATE_BASE = 22;
+  constexpr std::size_t CREATURE_TEMPLATE_NAME_INDEX
+    = CREATURE_MODEL_CANDIDATE_BASE + MODEL_CANDIDATE_COUNT;
+
+  constexpr std::size_t GAMEOBJECT_DISPLAY_ID_INDEX = 16;
+  constexpr std::size_t GAMEOBJECT_TYPE_INDEX = 17;
+  constexpr std::size_t GAMEOBJECT_TEMPLATE_NAME_INDEX = 18;
 
   // Coordinates go into the query as decimal literals. Six decimals is far past what a FLOAT
   // column can hold at world magnitudes, so the bound is never the thing that loses a spawn,
@@ -147,6 +187,156 @@ namespace
     }
 
     return columnRef(alias, column);
+  }
+
+  // A column from a LEFT JOINed template table.
+  //
+  // Two independent reasons to fall back to a literal -- the table is not joined at all, or it is
+  // joined but lacks the column -- and both have to be checked here, because columnOr knows
+  // nothing about whether the alias it is handed actually appears in the statement. Emitting
+  // `t.displayId` for a statement with no `t` in it produces an unknown-column error on every
+  // tile, which is the one failure mode this whole degrade-with-literals scheme exists to avoid.
+  std::string joinedColumnOr
+    ( SchemaModel const& schema
+    , bool joined
+    , std::string const& table
+    , std::string const& column
+    , std::string const& fallback = "0"
+    )
+  {
+    if (!joined)
+    {
+      return fallback + " AS " + quoted(column);
+    }
+
+    return columnOr(schema, table, ALIAS_TEMPLATE, column, fallback);
+  }
+
+  // The template name, under a fixed alias whatever the source column is called or whether it is
+  // there at all.
+  //
+  // NULL rather than an empty string literal for the fallback: this module emits no string literal
+  // anywhere, which is both what makes the injection test meaningful and what keeps a schema-drift
+  // report free of quoting questions. NULL decodes to an empty name, which is the truthful answer.
+  std::string templateNameExpression
+    (SchemaModel const& schema, bool joined, std::string const& table)
+  {
+    if (joined && schema.hasColumn(table, COLUMN_NAME))
+    {
+      return columnRef(ALIAS_TEMPLATE, COLUMN_NAME) + " AS " + quoted(ALIAS_TEMPLATE_NAME);
+    }
+
+    return "NULL AS " + quoted(ALIAS_TEMPLATE_NAME);
+  }
+
+  std::string modelCandidateAlias(std::size_t ordinal)
+  {
+    return quoted(ALIAS_MODEL_CANDIDATE_PREFIX + std::to_string(ordinal));
+  }
+
+  // One model candidate from creature_template_model, by rank.
+  //
+  // A correlated subquery rather than a join, because creature_template_model holds one row PER
+  // MODEL: joining it would return each creature once per model row and silently multiply every
+  // spawn in the tile -- four copies of a creature at the same coordinates, which renders as one
+  // object and counts as four.
+  //
+  // LIMIT with an explicit ORDER BY, never a bare LIMIT: an unordered LIMIT 1 may legitimately
+  // return a different row on each execution, and the point of resolving a display id at all is
+  // that two reads of an unchanged tile draw the same model.
+  std::string templateModelSubquery(SchemaModel const& schema, std::size_t rank)
+  {
+    bool const usable
+      ( schema.hasColumn(TABLE_CREATURE_TEMPLATE_MODEL, COLUMN_CREATURE_ID)
+        && schema.hasColumn(TABLE_CREATURE_TEMPLATE_MODEL, COLUMN_CREATURE_DISPLAY_ID)
+      );
+
+    if (!usable)
+    {
+      return "0";
+    }
+
+    // Idx is the template's own ordering. Where it is absent the display id is ordered on instead:
+    // an arbitrary but stable order beats a nondeterministic one, and nothing here depends on the
+    // order being meaningful -- only on it being the same order next time.
+    std::string const order
+      ( schema.hasColumn(TABLE_CREATURE_TEMPLATE_MODEL, COLUMN_IDX)
+        ? COLUMN_IDX
+        : COLUMN_CREATURE_DISPLAY_ID
+      );
+
+    // Zero display ids are filtered out here so the candidates arrive dense. Otherwise a template
+    // whose first four rows all hold 0 would resolve to nothing while a fifth, usable row sat
+    // unread past the cap.
+    return "(SELECT " + columnRef(ALIAS_TEMPLATE_MODEL, COLUMN_CREATURE_DISPLAY_ID)
+      + " FROM " + quoted(TABLE_CREATURE_TEMPLATE_MODEL) + " AS " + ALIAS_TEMPLATE_MODEL
+      + " WHERE " + columnRef(ALIAS_TEMPLATE_MODEL, COLUMN_CREATURE_ID) + " = "
+      + columnRef(ALIAS_CREATURE, "id")
+      + " AND " + columnRef(ALIAS_TEMPLATE_MODEL, COLUMN_CREATURE_DISPLAY_ID) + " <> 0"
+      + " ORDER BY " + columnRef(ALIAS_TEMPLATE_MODEL, order)
+      + " LIMIT 1 OFFSET " + std::to_string(rank) + ")";
+  }
+
+  // MODEL_CANDIDATE_COUNT expressions, always, in the template's own order.
+  std::vector<std::string> creatureModelCandidates
+    (SchemaModel const& schema, bool join_template)
+  {
+    // creatureModelSource() throws when the schema matches neither known variant. That is the
+    // right answer for a changeset emitter and the wrong one for a reader: refusing to open a tile
+    // because no model could be resolved shows nothing at all, where showing every spawn as an
+    // unresolved marker still lets the user work.
+    //
+    // Caught rather than pre-checked, so SchemaModel stays the single authority on which variant
+    // this is. Repeating its two probes here is exactly how two copies of a rule come to disagree,
+    // and this one already has a documented history of being got wrong -- the published references
+    // claim creature_template_model coexists with modelid1..4 on 3.3.5, and it does not.
+    CreatureModelSource source (CreatureModelSource::TEMPLATE_MODELID_COLUMNS);
+    bool source_known (true);
+
+    try
+    {
+      source = schema.creatureModelSource();
+    }
+    catch (SchemaCapabilityError const&)
+    {
+      source_known = false;
+    }
+
+    std::vector<std::string> expressions;
+    expressions.reserve(MODEL_CANDIDATE_COUNT);
+
+    for (std::size_t i (0); i < MODEL_CANDIDATE_COUNT; ++i)
+    {
+      std::string const alias (" AS " + modelCandidateAlias(i + 1));
+
+      if (!source_known)
+      {
+        expressions.push_back("0" + alias);
+        continue;
+      }
+
+      if (source == CreatureModelSource::TEMPLATE_MODEL_TABLE)
+      {
+        expressions.push_back(templateModelSubquery(schema, i) + alias);
+        continue;
+      }
+
+      // Each modelid column is checked on its own rather than inferred from the source kind:
+      // modelid1 being present says nothing about modelid3, and naming an absent one would fail
+      // the whole query rather than lose one candidate.
+      std::string const column ("modelid" + std::to_string(i + 1));
+
+      if (join_template && schema.hasColumn(TABLE_CREATURE_TEMPLATE, column))
+      {
+        expressions.push_back(columnRef(ALIAS_TEMPLATE, column) + alias);
+      }
+      else
+      {
+        expressions.push_back("0" + alias);
+      }
+    }
+
+    return expressions;
   }
 
   std::string boundsPredicate(std::string const& alias, TileBounds const& bounds)
@@ -329,6 +519,18 @@ namespace Noggit::Database::SpawnQuery
         && schema.hasColumn(TABLE_CREATURE_ADDON, "guid")
       );
 
+    // creature_template carries the model to fall back on when creature.modelid is 0 -- which is
+    // the overwhelming majority of real spawns -- and the name the UI labels them with. Without
+    // this join a creature with modelid 0 can never be resolved to a model at all.
+    //
+    // Joined on the template's primary key, so it cannot multiply rows. LEFT, not INNER: a spawn
+    // naming a template that does not exist is broken data the editor has to be able to show, and
+    // an INNER JOIN would hide it and make the tile look emptier than it is.
+    bool const join_template
+      ( schema.hasTable(TABLE_CREATURE_TEMPLATE)
+        && schema.hasColumn(TABLE_CREATURE_TEMPLATE, COLUMN_ENTRY)
+      );
+
     std::string sql ("SELECT ");
 
     sql += requiredColumn(schema, TABLE_CREATURE, ALIAS_CREATURE, "guid") + ", ";
@@ -366,12 +568,28 @@ namespace Noggit::Database::SpawnQuery
       sql += "0 AS `path_id`, 0 AS `has_addon`";
     }
 
+    // The template columns close the select list rather than sitting beside creature.modelid, so
+    // that every index the row decoder already uses is left where it was.
+    for (std::string const& candidate : creatureModelCandidates(schema, join_template))
+    {
+      sql += ", " + candidate;
+    }
+
+    sql += ", " + templateNameExpression(schema, join_template, TABLE_CREATURE_TEMPLATE);
+
     sql += "\nFROM " + quoted(TABLE_CREATURE) + " AS " + ALIAS_CREATURE;
 
     if (join_addon)
     {
       sql += "\nLEFT JOIN " + quoted(TABLE_CREATURE_ADDON) + " AS " + ALIAS_ADDON
         + " ON " + columnRef(ALIAS_ADDON, "guid") + " = " + columnRef(ALIAS_CREATURE, "guid");
+    }
+
+    if (join_template)
+    {
+      sql += "\nLEFT JOIN " + quoted(TABLE_CREATURE_TEMPLATE) + " AS " + ALIAS_TEMPLATE
+        + " ON " + columnRef(ALIAS_TEMPLATE, COLUMN_ENTRY) + " = "
+        + columnRef(ALIAS_CREATURE, "id");
     }
 
     // Filtered by map and world coordinates only. zoneId and areaId are core-derived and are
@@ -392,6 +610,15 @@ namespace Noggit::Database::SpawnQuery
     {
       failSchema("there is no gameobject table");
     }
+
+    // `gameobject` has no display column of any kind, so this join is the ONLY way a gameobject
+    // resolves to a model. Without it nothing can be drawn for one, which is what blocked
+    // rendering outright. Joined on the template's primary key and LEFT, for the same reasons as
+    // the creature template join.
+    bool const join_template
+      ( schema.hasTable(TABLE_GAMEOBJECT_TEMPLATE)
+        && schema.hasColumn(TABLE_GAMEOBJECT_TEMPLATE, COLUMN_ENTRY)
+      );
 
     std::string sql ("SELECT ");
 
@@ -416,7 +643,23 @@ namespace Noggit::Database::SpawnQuery
     sql += columnOr(schema, TABLE_GAMEOBJECT, ALIAS_GAMEOBJECT, "animprogress", "100") + ", ";
     sql += columnOr(schema, TABLE_GAMEOBJECT, ALIAS_GAMEOBJECT, "state", "1");
 
+    // displayId falls back to 0, which already means "nothing to draw", so an unresolvable
+    // gameobject degrades to a marker rather than to a wrong model. `type` falls back to 0 (DOOR),
+    // which reads as renderable -- deliberately, because the fallback only happens when displayId
+    // fell back too and the spawn is excluded on that ground alone. Claiming a type this build
+    // could not read is one of the six unrenderable ones would hide real objects.
+    sql += ", " + joinedColumnOr(schema, join_template, TABLE_GAMEOBJECT_TEMPLATE, "displayId");
+    sql += ", " + joinedColumnOr(schema, join_template, TABLE_GAMEOBJECT_TEMPLATE, "type");
+    sql += ", " + templateNameExpression(schema, join_template, TABLE_GAMEOBJECT_TEMPLATE);
+
     sql += "\nFROM " + quoted(TABLE_GAMEOBJECT) + " AS " + ALIAS_GAMEOBJECT;
+
+    if (join_template)
+    {
+      sql += "\nLEFT JOIN " + quoted(TABLE_GAMEOBJECT_TEMPLATE) + " AS " + ALIAS_TEMPLATE
+        + " ON " + columnRef(ALIAS_TEMPLATE, COLUMN_ENTRY) + " = "
+        + columnRef(ALIAS_GAMEOBJECT, "id");
+    }
 
     sql += "\nWHERE " + columnRef(ALIAS_GAMEOBJECT, "map") + " = " + std::to_string(map)
       + "\n  AND " + boundsPredicate(ALIAS_GAMEOBJECT, bounds);
@@ -424,6 +667,48 @@ namespace Noggit::Database::SpawnQuery
     sql += "\nORDER BY " + columnRef(ALIAS_GAMEOBJECT, "guid");
 
     return sql;
+  }
+
+  namespace
+  {
+    // Shared body of the two count builders.
+    //
+    // The map and bounds predicate is produced by the same boundsPredicate() the select builders
+    // use, which is the point: a count that disagreed with the load it is meant to describe would
+    // be worse than no count at all -- it would report a number the user then does not get.
+    std::string countSql
+      ( std::string const& table
+      , std::string const& alias
+      , std::uint16_t map
+      , TileBounds const& bounds
+      )
+    {
+      return "SELECT COUNT(*)\nFROM " + quoted(table) + " AS " + alias
+        + "\nWHERE " + columnRef(alias, "map") + " = " + std::to_string(map)
+        + "\n  AND " + boundsPredicate(alias, bounds);
+    }
+  }
+
+  std::string creatureCountSql
+    (SchemaModel const& schema, std::uint16_t map, TileBounds const& bounds)
+  {
+    if (!schema.hasTable(TABLE_CREATURE))
+    {
+      failSchema("there is no creature table");
+    }
+
+    return countSql(TABLE_CREATURE, ALIAS_CREATURE, map, bounds);
+  }
+
+  std::string gameObjectCountSql
+    (SchemaModel const& schema, std::uint16_t map, TileBounds const& bounds)
+  {
+    if (!schema.hasTable(TABLE_GAMEOBJECT))
+    {
+      failSchema("there is no gameobject table");
+    }
+
+    return countSql(TABLE_GAMEOBJECT, ALIAS_GAMEOBJECT, map, bounds);
   }
 
   namespace Detail
@@ -516,6 +801,25 @@ namespace Noggit::Database::SpawnQuery
       spawn.path_id = rowUInt32(row, 20);
       spawn.has_addon = toInt64(fieldOr(row, 21)) != 0;
 
+      // Column 5 is creature.modelid; the four that follow has_addon are the template's candidates
+      // in the template's own order.
+      //
+      // Resolution is deliberately done here rather than as a COALESCE chain in the statement. The
+      // rule -- the spawn's own modelid wins, otherwise the first non-zero candidate, and say
+      // whether there were others -- is the part worth testing, and in SQL it would be testable
+      // only as text. It also has to produce the same answer for both schema variants, and the two
+      // variants reach this point through completely different select expressions.
+      std::vector<std::uint32_t> candidates;
+      candidates.reserve(MODEL_CANDIDATE_COUNT);
+
+      for (std::size_t i (0); i < MODEL_CANDIDATE_COUNT; ++i)
+      {
+        candidates.push_back(rowUInt32(row, CREATURE_MODEL_CANDIDATE_BASE + i));
+      }
+
+      spawn.template_info = SpawnDisplay::resolveCreatureTemplateInfo
+        (spawn.model_id, candidates, fieldOr(row, CREATURE_TEMPLATE_NAME_INDEX));
+
       return spawn;
     }
 
@@ -549,6 +853,13 @@ namespace Noggit::Database::SpawnQuery
       spawn.spawn_time_secs = toI32(row, 13);
       spawn.anim_progress = rowUInt32(row, 14);
       spawn.state = rowUInt32(row, 15);
+
+      // From gameobject_template. There is no per-spawn alternative to fall back on and no
+      // resolution rule to apply: the template's displayId is the only display id a gameobject
+      // has, and 0 means there is nothing to draw.
+      spawn.template_info.display_id = rowUInt32(row, GAMEOBJECT_DISPLAY_ID_INDEX);
+      spawn.template_info.type = rowUInt32(row, GAMEOBJECT_TYPE_INDEX);
+      spawn.template_info.name = fieldOr(row, GAMEOBJECT_TEMPLATE_NAME_INDEX);
 
       return spawn;
     }

@@ -6,8 +6,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <iosfwd>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace Noggit::Database
@@ -28,11 +30,24 @@ namespace Noggit::Database
   // One stored changeset, as reported by ChangesetArchive::list().
   struct ArchiveEntry
   {
-    // Bare file name, never a path. Hand it straight back to load().
-    std::string file_name;
+    // A single path component, never a directory. Hand it straight back to load().
+    //
+    // A std::filesystem::path and not a std::string, because a narrow string is not a spelling
+    // of a Windows file name at all: path::string() converts through the active code page. One
+    // backup copied in from a machine that uses another encoding -- an unremarkable file name
+    // there -- was enough to break the whole archive, and measurably worse than the "name comes
+    // back with replacement characters" this was first recorded as. On MSVC 19.4x with code
+    // page 1252 the conversion THROWS ("No mapping for the Unicode character exists in the
+    // target multi-byte code page"), so list() threw, prune() threw, and store() threw too,
+    // since it calls the same directory scan to choose its next sequence number. Noggit could
+    // not archive anything at all while that one file sat in the root.
+    std::filesystem::path file_name;
 
-    // The SANITISED label, decoded from the file name. Not necessarily the string that was
-    // passed to store() -- see ChangesetArchive::sanitiseLabel.
+    // The SANITISED label, decoded from the file name, for display. Not necessarily the string
+    // that was passed to store() -- see ChangesetArchive::sanitiseLabel.
+    //
+    // A rendering and not a handle: every non-ASCII code unit of a foreign name appears here as
+    // '?', because the label is text for a human while file_name is the thing that opens.
     std::string label;
 
     // Seconds since the Unix epoch, exactly the value handed to store().
@@ -134,8 +149,14 @@ namespace Noggit::Database
       // `file_name` must be a bare name as returned by list(). Throws ArchiveError when it
       // names a directory component, a root, "." or ".." -- a label is caller-supplied text and
       // a name derived from one must never be able to reach outside the archive -- and when the
-      // file is absent or unreadable.
-      std::string load(std::string const& file_name) const;
+      // file is absent, unreadable, or changes length while it is being read.
+      //
+      // A std::string or a string literal still converts implicitly, with one caveat worth
+      // stating: on Windows that conversion is what rejects a narrow string the active code
+      // page cannot express, and it does so by throwing std::filesystem::filesystem_error at
+      // the CALL SITE rather than ArchiveError from in here. Callers that hand back a
+      // file_name from list() never meet it, since that value is already a path.
+      std::string load(std::filesystem::path const& file_name) const;
 
       // Deletes all but the newest `keep_newest` changesets and returns how many were removed.
       //
@@ -162,6 +183,37 @@ namespace Noggit::Database
       // bytes the caller passed. Payloads are UTF-8 safe -- they are written verbatim -- but
       // file names are deliberately ASCII.
       static std::string sanitiseLabel(std::string const& label);
+
+      // The whole of `expected_bytes` from `stream`, or an ArchiveError naming `description`.
+      //
+      // A file has to be measured before it is read, and the two are separate operations: it
+      // can change in EITHER direction in between. Reading exactly `expected_bytes` notices
+      // only shrinkage, so a file that GREW came back silently truncated -- the one failure
+      // this class must never have, given that its whole purpose is that a lost changeset comes
+      // back whole. One byte is read past the measured end so that growth is as loud as a short
+      // read.
+      //
+      // Public for the same reason sanitiseLabel is: it carries the whole of the guarantee that
+      // what load() returns is an entire file, and the case it exists for cannot be STAGED
+      // through load(). Making a real file change length between the stat and the read needs a
+      // second writer and a won race, and a test that has to win a race is a test that will
+      // one day report a fix that is not there. A stream holding more or fewer bytes than it
+      // claims asks the same question with no timing in it at all.
+      static std::string readExactly
+        ( std::istream& stream
+        , std::uintmax_t expected_bytes
+        , std::string const& description
+        );
+
+      // True when a per-file error means the file is simply not there any more.
+      //
+      // Public for the same reason again: it decides alone whether one directory entry is
+      // skipped or the whole archive is declared unreadable, and it rests on a mapping that
+      // deserves a test rather than a comment -- Win32 ERROR_FILE_NOT_FOUND arrives in
+      // std::system_category while POSIX ENOENT arrives in std::generic_category, and the skip
+      // only happens on both platforms because comparing an error_code against std::errc goes
+      // through the category's own mapping rather than through the raw value.
+      static bool isMissing(std::error_code const& ec);
 
     private:
       // A listed file, plus the sequence number decoded from its name. The sequence is an

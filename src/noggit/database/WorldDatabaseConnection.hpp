@@ -70,6 +70,21 @@ namespace Noggit::Database
       // Throws unless the connection is DEV_WRITE and still pointed at the writable schema.
       void execute(std::string const& sql);
 
+      // Runs a whole changeset: several statements, plus `--` comment lines.
+      //
+      // execute() sends its argument as a single statement, which is correct for a single
+      // statement and fails on a script -- the server rejects the batch and nothing is applied.
+      // That is the safe failure, but it makes the emitted changesets unapplicable, so this
+      // splits them and runs the statements in order on the one connection.
+      //
+      // Order and connection identity both matter: the changesets declare `SET @CGUID := ...`
+      // and refer to it later, and a session variable only survives on the connection that set
+      // it. Splitting across connections, or reordering, would break them.
+      //
+      // Same write guard as execute(): refused unless DEV_WRITE against the writable schema.
+      // Returns the number of statements run.
+      std::size_t executeScript(std::string const& sql);
+
       // Server version string, for the environment Doctor.
       std::string serverVersion() const;
 

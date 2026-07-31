@@ -215,6 +215,19 @@ public:
   std::vector<std::string> _textureFilenames;
   std::map<std::size_t, scoped_blp_texture_reference> _replaceTextures;
   std::vector<int> _specialTextures;
+
+  // The M2 texture `type` of each slot: 0 when the filename is embedded in the model, non-zero
+  // when the image is supplied at runtime instead. 11, 12 and 13 are the three monster skins that
+  // a creature's display id provides.
+  //
+  // Recorded because the loader otherwise destroys the information. For every replaceable slot it
+  // writes `_specialTextures[i] = -1` and points the filename at `tileset/generic/black.blp`
+  // (Model.cpp:353) -- which is why creatures render as black silhouettes, and, having flattened
+  // the type to -1, leaves nothing downstream able to tell which slots were replaceable at all.
+  //
+  // Nothing in the existing render path reads this, so keeping it changes no behaviour. It exists
+  // so the database spawn overlay can substitute the correct skin for those slots.
+  std::vector<int> _replaceable_texture_types;
   std::vector<bool> _useReplaceTextures;
   std::vector<int16_t> _texture_unit_lookup;
 

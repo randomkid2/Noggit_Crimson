@@ -551,13 +551,10 @@ std::string Noggit::Database::goCommandFor(GameObjectSpawn const& spawn)
   // disagree about which way the thing points.
   //
   // The default-constructed quaternion is the identity, which is indistinguishable from "nobody
-  // set this", so it defers to the orientation column. Comparing it by exact equality is correct
-  // here and is not the float-equality mistake the schema notes warn about: the question is
-  // whether a field was touched, not whether two rotations agree.
-  bool const rotation_supplied
-    (  spawn.rotation.r0 != 0.0 || spawn.rotation.r1 != 0.0
-    || spawn.rotation.r2 != 0.0 || spawn.rotation.r3 != 1.0
-    );
+  // set this", so it defers to the orientation column. The test is TileCoordinates' rather than
+  // one written out here, so this command cannot start disagreeing with the emitter about which
+  // rows count as authored -- the exact desynchronisation the shared helper exists to prevent.
+  bool const rotation_supplied (!TileCoordinates::isDefaultRotation(spawn.rotation));
 
   double const orientation
     ( rotation_supplied

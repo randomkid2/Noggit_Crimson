@@ -107,6 +107,17 @@ namespace
     return makeResult(name, CheckStatus::SKIPPED, std::move(reason), std::move(remedy));
   }
 
+  // ASCII fold by hand, NOT std::tolower.
+  //
+  // std::tolower is locale-sensitive, and Qt calls setlocale(LC_ALL, "") at startup, so the fold
+  // follows whatever locale the machine is configured with. Under a Turkish LC_CTYPE 'I' folds to
+  // dotless 'i' rather than 'i', so a schema name containing I -- and the configured writable
+  // schema is compared through this -- stops comparing equal to itself. The visible result is the
+  // loud "you are connected to a live database" alarm firing against the CORRECT schema, which is
+  // the one alarm that must never cry wolf.
+  //
+  // Schema and table names are ASCII, so an ASCII fold is complete for this purpose. Matches what
+  // ChangesetArchive::sanitiseLabel already does for the same reason.
   std::string lowercased(std::string const& s)
   {
     std::string out;
@@ -114,7 +125,7 @@ namespace
 
     for (char c : s)
     {
-      out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+      out.push_back((c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c);
     }
 
     return out;

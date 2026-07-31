@@ -197,7 +197,7 @@ namespace
 
   std::size_t errorCount(std::vector<ValidationIssue> const& issues)
   {
-    return countOf(issues, ValidationIssue::Severity::ERROR);
+    return countOf(issues, ValidationIssue::Severity::BLOCKING);
   }
 
   std::size_t warningCount(std::vector<ValidationIssue> const& issues)

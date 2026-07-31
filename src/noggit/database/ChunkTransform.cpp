@@ -19,35 +19,12 @@ using namespace Noggit::Database;
 
 namespace
 {
-  constexpr double TWO_PI = 6.283185307179586476925286766559;
-
-  // Largest yaw disagreement between a gameobject's `orientation` column and its rotation
-  // quaternion that is written off as float noise. Same value ChangesetBuilder uses, because the
-  // two are answering the same question about the same row and disagreeing about the threshold
-  // would mean one warns where the other does not.
-  constexpr double ORIENTATION_AGREEMENT_TOLERANCE = 1.0e-3;
-
-  void addIssue
-    ( std::vector<ValidationIssue>& issues
-    , ValidationIssue::Severity severity
-    , std::string message
-    )
-  {
-    ValidationIssue issue;
-    issue.severity = severity;
-    issue.message = std::move(message);
-    issues.push_back(std::move(issue));
-  }
-
-  void addError(std::vector<ValidationIssue>& issues, std::string message)
-  {
-    addIssue(issues, ValidationIssue::Severity::ERROR, std::move(message));
-  }
-
-  void addWarning(std::vector<ValidationIssue>& issues, std::string message)
-  {
-    addIssue(issues, ValidationIssue::Severity::WARNING, std::move(message));
-  }
+  // The issue-list helpers and the rotation vocabulary deliberately do NOT live here.
+  // SpawnValidation::addError/addWarning and TileCoordinates::isDefaultRotation, yawSeparation
+  // and ORIENTATION_AGREEMENT_TOLERANCE are shared with ChangesetBuilder, which decides the same
+  // things about the same rows. A copy kept here would be covered only by this file's own tests,
+  // so the emitter and this planner could start disagreeing about whether a quaternion was
+  // authored -- with nothing in the suite able to observe it.
 
   // Not std::to_string: that is specified as sprintf("%f"), so it reads LC_NUMERIC and produces
   // "4,712400" under a comma-decimal locale -- and Qt calls setlocale(LC_ALL, "") when a
@@ -149,25 +126,6 @@ namespace
     return out;
   }
 
-  // Exact comparison against the identity, matching the test ChangesetBuilder applies to decide
-  // whether a caller authored the quaternion or left it alone. This is not the float-equality
-  // mistake the schema notes warn about: the question is "was this field touched", not "are these
-  // two computed rotations the same". The two must agree, or an object the emitter treats as
-  // unauthored would be treated as authored here and its yaw read out of a field nobody set.
-  bool isDefaultRotation(TileCoordinates::Quaternion const& rotation)
-  {
-    return rotation.r0 == 0.0 && rotation.r1 == 0.0 && rotation.r2 == 0.0 && rotation.r3 == 1.0;
-  }
-
-  // Shortest angular distance between two normalised yaws, so 0.001 and 2pi - 0.001 are close
-  // rather than a full turn apart.
-  double yawSeparation(double a, double b)
-  {
-    double const separation (std::fabs(a - b));
-
-    return std::min(separation, TWO_PI - separation);
-  }
-
   // Reports what the move did to one position: whether it left the world, and whether it changed
   // tile. `what` names the entity, because an issue the caller cannot attribute to a row is not
   // actionable.
@@ -180,7 +138,7 @@ namespace
   {
     if (!positionIsUsable(after))
     {
-      addError
+      SpawnValidation::addError
         ( issues
         , what + " lands at " + positionText(after) + ", outside the world extent of +/-"
           + number(MAP_HALF_EXTENT) + ". The move is refused rather than clamped: a clamped"
@@ -203,7 +161,7 @@ namespace
       return;
     }
 
-    addWarning
+    SpawnValidation::addWarning
       ( issues
       , what + " crossed a tile boundary: " + tileText(from) + " -> " + tileText(to)
         + ". That is legal, but the destination ADT has to be loaded and saved by the terrain"
@@ -270,7 +228,7 @@ namespace
         // The core reads rotation0..3, not the orientation column, so an authored quaternion is
         // the authority on the current yaw. Taking the orientation column instead would rotate a
         // correctly-stored object away from where it was pointing.
-        bool const authored (!isDefaultRotation(spawn.rotation));
+        bool const authored (!TileCoordinates::isDefaultRotation(spawn.rotation));
 
         double const from_column (TileCoordinates::normaliseOrientation(spawn.orientation));
         double const base
@@ -280,7 +238,7 @@ namespace
         {
           if (spawn.rotation.r0 != 0.0 || spawn.rotation.r1 != 0.0)
           {
-            addWarning
+            SpawnValidation::addWarning
               ( plan.issues
               , what + " carries a tilt in rotation0/rotation1 (" + number(spawn.rotation.r0)
                 + ", " + number(spawn.rotation.r1) + "). A rotation about the vertical axis is"
@@ -289,9 +247,10 @@ namespace
               );
           }
 
-          if (yawSeparation(base, from_column) > ORIENTATION_AGREEMENT_TOLERANCE)
+          if (TileCoordinates::yawSeparation(base, from_column)
+              > TileCoordinates::ORIENTATION_AGREEMENT_TOLERANCE)
           {
-            addWarning
+            SpawnValidation::addWarning
               ( plan.issues
               , what + " had a rotation quaternion yielding yaw " + number(base)
                 + " while its orientation column said " + number(from_column)
@@ -360,7 +319,7 @@ namespace
     plan.source_tile = source.tile;
     plan.map = source.map;
 
-    addError(plan.issues, std::move(message));
+    SpawnValidation::addError(plan.issues, std::move(message));
 
     return plan;
   }
@@ -389,7 +348,7 @@ namespace Noggit::Database
 
     if (delta.dx == 0.0 && delta.dy == 0.0 && delta.dz == 0.0)
     {
-      addWarning
+      SpawnValidation::addWarning
         ( issues
         , "the translation delta is exactly zero, so this plan moves nothing. Committing it"
           " rewrites every affected row with the values it already holds."
@@ -437,7 +396,7 @@ namespace Noggit::Database
 
     if (yaw == 0.0)
     {
-      addWarning
+      SpawnValidation::addWarning
         ( issues
         , "the rotation of " + number(radians) + " radians is a whole number of turns, so this"
           " plan moves nothing. Content is passed through unchanged rather than run through the"

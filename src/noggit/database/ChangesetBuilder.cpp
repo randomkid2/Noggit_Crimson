@@ -54,12 +54,6 @@ namespace
   constexpr std::size_t RULE_WIDTH = 90;
 
   constexpr std::uint64_t MAX_UINT32 = 0xFFFFFFFFull;
-  constexpr double TWO_PI = 6.283185307179586;
-
-  // Largest yaw disagreement between `orientation` and `rotation0..3` that is written off as
-  // float noise rather than reported. A tenth of a degree is far below anything a reviewer
-  // could see in game.
-  constexpr double ORIENTATION_AGREEMENT_TOLERANCE = 1.0e-3;
 
   // creature_addon pose defaults.
   //
@@ -86,7 +80,7 @@ namespace
 
   char const* severityLabel(ValidationIssue::Severity severity)
   {
-    return severity == ValidationIssue::Severity::ERROR ? "ERROR" : "WARNING";
+    return severity == ValidationIssue::Severity::BLOCKING ? "ERROR" : "WARNING";
   }
 
   // Copies `source` into `sink`, prefixing every message with the spawn it concerns. Without
@@ -305,20 +299,12 @@ namespace
     return out;
   }
 
-  // Exact comparison against the default is deliberate here, and is not the float-equality
-  // mistake the schema notes warn about: the question is "did the caller leave this field
-  // untouched", not "are these two computed rotations the same".
-  bool isDefaultRotation(TileCoordinates::Quaternion const& rotation)
-  {
-    return rotation.r0 == 0.0 && rotation.r1 == 0.0 && rotation.r2 == 0.0 && rotation.r3 == 1.0;
-  }
-
   // rotation0..3 is a quaternion, not Euler angles. A caller that set only `orientation` gets
   // the quaternion derived from it; emitting the identity instead would leave every rotated
   // object facing north in game while looking correct in the editor.
   TileCoordinates::Quaternion resolvedRotation(GameObjectSpawn const& spawn)
   {
-    if (isDefaultRotation(spawn.rotation))
+    if (TileCoordinates::isDefaultRotation(spawn.rotation))
     {
       return TileCoordinates::quaternionForOrientation(spawn.orientation);
     }
@@ -331,7 +317,7 @@ namespace
   // object faces one way in the editor and another in game.
   std::string rotationDisagreement(GameObjectSpawn const& spawn)
   {
-    if (isDefaultRotation(spawn.rotation))
+    if (TileCoordinates::isDefaultRotation(spawn.rotation))
     {
       return {};
     }
@@ -339,10 +325,9 @@ namespace
     double const from_quaternion (TileCoordinates::orientationForQuaternion(spawn.rotation));
     double const from_orientation (TileCoordinates::normaliseOrientation(spawn.orientation));
 
-    double delta (std::fabs(from_quaternion - from_orientation));
-    delta = std::min(delta, TWO_PI - delta);
+    double const delta (TileCoordinates::yawSeparation(from_quaternion, from_orientation));
 
-    if (delta <= ORIENTATION_AGREEMENT_TOLERANCE)
+    if (delta <= TileCoordinates::ORIENTATION_AGREEMENT_TOLERANCE)
     {
       return {};
     }
@@ -602,7 +587,7 @@ void ChangesetBuilder::addCreature(CreatureSpawn const& spawn)
     {
       _issues.push_back
         ( makeIssue
-            ( ValidationIssue::Severity::ERROR
+            ( ValidationIssue::Severity::BLOCKING
             , context + ": added to this changeset twice. Two rows sharing a guid break"
                         " idempotency and collide on the primary key."
             )
@@ -632,7 +617,7 @@ void ChangesetBuilder::addCreature(CreatureSpawn const& spawn)
       {
         _issues.push_back
           ( makeIssue
-              ( ValidationIssue::Severity::ERROR
+              ( ValidationIssue::Severity::BLOCKING
               , context + ": follows a waypoint path but no path id was given and the"
                           " configured multiplier derives 0, which the core reads as"
                           " \"no path\"."
@@ -643,7 +628,7 @@ void ChangesetBuilder::addCreature(CreatureSpawn const& spawn)
       {
         _issues.push_back
           ( makeIssue
-              ( ValidationIssue::Severity::ERROR
+              ( ValidationIssue::Severity::BLOCKING
               , context + ": the conventional path id guid * "
                         + unsignedText(_options.path_id_multiplier) + " is "
                         + unsignedText(derived) + ", which does not fit the unsigned 32-bit"
@@ -673,7 +658,7 @@ void ChangesetBuilder::addGameObject(GameObjectSpawn const& spawn)
     {
       _issues.push_back
         ( makeIssue
-            ( ValidationIssue::Severity::ERROR
+            ( ValidationIssue::Severity::BLOCKING
             , context + ": added to this changeset twice. Two rows sharing a guid break"
                         " idempotency and collide on the primary key."
             )
@@ -705,7 +690,7 @@ void ChangesetBuilder::addWaypointPath(WaypointPath const& path)
     {
       _issues.push_back
         ( makeIssue
-            ( ValidationIssue::Severity::ERROR
+            ( ValidationIssue::Severity::BLOCKING
             , context + ": added to this changeset twice. The second set of nodes would be"
                         " appended to the first rather than replacing it."
             )
@@ -752,7 +737,7 @@ std::string ChangesetBuilder::build() const
 
     for (ValidationIssue const& issue : _issues)
     {
-      if (issue.severity == ValidationIssue::Severity::ERROR)
+      if (issue.severity == ValidationIssue::Severity::BLOCKING)
       {
         detail += "\n  - " + issue.message;
       }

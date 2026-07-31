@@ -26,6 +26,13 @@ struct TileIndex;
 class World;
 struct MinimapRenderSettings;
 
+// Forward-declared, so no database header reaches a rendering header. The renderer only ever
+// looks spawns up through this pointer -- it issues no query and touches no DBC.
+namespace Noggit::Database
+{
+  class SpawnSceneCache;
+}
+
 
 struct WorldRenderParams 
 {
@@ -67,6 +74,15 @@ struct WorldRenderParams
   bool render_select_m2_collission_bbox;
   bool render_select_wmo_aabb;
   bool render_select_wmo_groups_bounds;
+
+  // TrinityCore world-database spawns drawn as an overlay.
+  //
+  // Both default-initialised, unlike the members above, so that a null cache and a disabled
+  // overlay are the behaviour of a WorldRenderParams nobody has filled in. The overlay is drawn
+  // only when the toggle is on AND the pointer is non-null, so a build or a session with no
+  // database configured needs no #ifdef anywhere in the render path.
+  bool draw_db_spawns = false;
+  Noggit::Database::SpawnSceneCache* db_spawns = nullptr;
 };
 
 namespace Noggit::Rendering

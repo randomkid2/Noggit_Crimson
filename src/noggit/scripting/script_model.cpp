@@ -85,7 +85,12 @@ namespace Noggit
     void model::remove()
     {
       std::vector<SceneObject*> type{_object};
-      world()->deleteObjects(type, false);
+
+      // action=true, matching add_m2/add_wmo. Scatter scripts delete what they placed on a
+      // re-stroke (scripts/prop_placer.lua:46-57), so without this half of a scatter stroke was
+      // undoable and half was not -- which is worse than neither, because Ctrl+Z would restore
+      // the additions and leave the deletions permanent.
+      world()->deleteObjects(type, true);
     }
 
     void model::replace(std::string const& filename)

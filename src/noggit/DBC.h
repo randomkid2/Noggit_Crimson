@@ -377,6 +377,78 @@ public:
     static const size_t ObjectEffectPackageID = 18;        // int
 };
 
+// First hop of the two-hop lookup a creature spawn needs to reach a model.
+//
+// creature.modelid and creature_template.modelid1..4 hold a *display* id, not a model id, so
+// nothing can be drawn from the world DB alone: display id -> ModelID -> CreatureModelData ->
+// ModelName. Both hops are linear scans in DBCFile::getByID, so a renderer must cache the
+// result rather than resolve per frame.
+//
+// Layout verified against dist/definitions/CreatureDisplayInfo.dbd, build block
+// 3.0.1.8820-3.3.5.12340: 16 fields, every one four bytes wide (the three TextureVariation
+// entries and PortraitTextureName are string-table offsets). recordSize is therefore 64 and the
+// fieldCount * 4 == recordSize check in DBCFile::open (DBCFile.cpp:52) passes.
+//
+// Note there is no PortraitCreatureDisplayInfoID here. That column exists in the modern
+// definition between PortraitTextureName and SizeClass, but not in WotLK, so taking the field
+// order from a current wiki page shifts everything from SizeClass onward by one.
+class CreatureDisplayInfoDB : public DBCFile
+{
+public:
+  CreatureDisplayInfoDB() :
+    DBCFile("DBFilesClient\\CreatureDisplayInfo.dbc")
+  { }
+
+  /// Fields
+  static const size_t ID = 0;    // uint
+  static const size_t ModelID = 1;    // uint [CreatureModelData]
+  static const size_t SoundID = 2;    // uint
+  static const size_t ExtendedDisplayInfoID = 3;    // uint
+  // Only half of a creature's scale. What the client renders is this multiplied by
+  // CreatureModelDataDB::ModelScale; either factor alone is wrong for most creatures.
+  static const size_t CreatureModelScale = 4;    // float
+  static const size_t CreatureModelAlpha = 5;    // uint
+  static const size_t TextureVariation = 6;    // string[3] -- 6, 7, 8
+  static const size_t PortraitTextureName = 9;    // string
+  static const size_t SizeClass = 10;    // uint
+  static const size_t BloodID = 11;    // uint
+  static const size_t NPCSoundID = 12;    // uint
+  static const size_t ParticleColorID = 13;    // uint
+  static const size_t CreatureGeosetData = 14;    // uint
+  static const size_t ObjectEffectPackageID = 15;    // uint
+};
+
+// Second hop: the record that actually names a file.
+//
+// Layout verified against dist/definitions/CreatureModelData.dbd, build block
+// 3.1.0.9767-3.3.5.12340: 28 fields, all four bytes, so recordSize is 112 and DBCFile's
+// header check passes.
+//
+// ModelName is field 2, NOT field 1. Flags was inserted ahead of it in 3.0.1 and stays there
+// through 3.3.5. Reading field 1 as a string hands DBCFile::Record::getString a flags value as a
+// string-table offset: in RelWithDebInfo its bounds assert is compiled out, so the result is a
+// silent read of arbitrary bytes past the table rather than a diagnosable failure.
+//
+// The stored path is an .mdx name even though 3.3.5 ships .m2 files; the extension has to be
+// swapped by the caller, exactly as ModelName in GameObjectDisplayInfoDB does.
+class CreatureModelDataDB : public DBCFile
+{
+public:
+  CreatureModelDataDB() :
+    DBCFile("DBFilesClient\\CreatureModelData.dbc")
+  { }
+
+  /// Fields
+  static const size_t ID = 0;    // uint
+  static const size_t Flags = 1;    // uint -- precedes ModelName in WotLK
+  static const size_t ModelName = 2;    // string -- index 2, not 1
+  static const size_t SizeClass = 3;    // uint
+  static const size_t ModelScale = 4;    // float -- multiplies CreatureModelScale
+  static const size_t BloodID = 5;    // uint
+  static const size_t CollisionWidth = 14;    // float
+  static const size_t CollisionHeight = 15;    // float
+};
+
 void OpenDBs(std::shared_ptr<BlizzardArchive::ClientData> clientData);
 
 const char * getGroundEffectDoodad(unsigned int effectID, int DoodadNum);
@@ -401,3 +473,5 @@ extern ZoneIntroMusicTableDB gZoneIntroMusicTableDB;
 extern SoundEntriesDB gSoundEntriesDB;
 extern WMOAreaTableDB gWMOAreaTableDB;
 extern GameObjectDisplayInfoDB gGameObjectDisplayInfoDB;
+extern CreatureDisplayInfoDB gCreatureDisplayInfoDB;
+extern CreatureModelDataDB gCreatureModelDataDB;

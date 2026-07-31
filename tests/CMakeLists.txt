@@ -72,6 +72,16 @@ noggit_add_if_present(NOGGIT_DB_SOURCES
   "${NOGGIT_SRC_DIR}/noggit/database/ChangesetArchive.cpp"
   "${NOGGIT_SRC_DIR}/noggit/database/DoctorReport.cpp"
   "${NOGGIT_SRC_DIR}/noggit/database/SpawnPlacement.cpp"
+  # ModelPathFixup belongs here and not with DisplayResolver, which is the point of the split:
+  # the resolver needs DBC.h, ClientData and a client install, while the path rewrite is pure
+  # string work and is the half that can be tested exhaustively on a bare machine.
+  "${NOGGIT_SRC_DIR}/noggit/database/ModelPathFixup.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/database/GameTeleBuilder.cpp"
+  # Under src/noggit/, not src/noggit/database/, unlike everything else here: both are
+  # pure STL with no Qt, no archive and no database, so they belong in the group that
+  # builds on a bare machine even though they do not live in the database directory.
+  "${NOGGIT_SRC_DIR}/noggit/AssetScan.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/UidCollisionLog.cpp"
 )
 
 set(NOGGIT_DB_TESTS "")
@@ -86,6 +96,10 @@ noggit_add_if_present(NOGGIT_DB_TESTS
   "${CMAKE_CURRENT_SOURCE_DIR}/ChangesetArchiveTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/DoctorReportTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/SpawnPlacementTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/ModelPathFixupTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/GameTeleBuilderTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/AssetScanTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/UidCollisionLogTests.cpp"
 )
 
 if(MYSQLCPPCONN_INCLUDE AND MYSQLCPPCONN_LIBRARY)
@@ -166,6 +180,7 @@ enable_testing()
 set(NOGGIT_TEST_TAGS
   schema drift tile spawn validation changeset sqlformat safety
   spawnquery sql chunk gm archive doctor recovery roundtrip placement frame
+  modelpath display creature gameobject parse adt count tele assetscan uid
 )
 
 # Tags carried ONLY by connector-gated files. Registering these unconditionally is a trap:

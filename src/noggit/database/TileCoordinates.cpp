@@ -2,16 +2,13 @@
 
 #include <noggit/database/TileCoordinates.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 using namespace Noggit::Database;
 
 namespace
 {
-  // Written out rather than derived from std::acos(-1.0) so the value is a constant expression
-  // and identical in every translation unit. It rounds to the same double as 2 * M_PI.
-  constexpr double TWO_PI = 6.283185307179586476925286766559;
-
   // One tile outside the grid on either side. tileForPosition has to answer for any double a
   // caller can hand it -- a coordinate that failed to parse, an infinity out of a bad transform,
   // a NaN out of a degenerate matrix -- and converting such a value to int is undefined
@@ -143,6 +140,11 @@ double TileCoordinates::orientationForQuaternion(Quaternion const& rotation)
   return normaliseOrientation(2.0 * std::atan2(rotation.r2, rotation.r3));
 }
 
+bool TileCoordinates::isDefaultRotation(Quaternion const& rotation)
+{
+  return rotation.r0 == 0.0 && rotation.r1 == 0.0 && rotation.r2 == 0.0 && rotation.r3 == 1.0;
+}
+
 double TileCoordinates::normaliseOrientation(double orientation)
 {
   double normalised (std::fmod(orientation, TWO_PI));
@@ -173,4 +175,13 @@ double TileCoordinates::normaliseOrientation(double orientation)
   }
 
   return normalised;
+}
+
+double TileCoordinates::yawSeparation(double a, double b)
+{
+  double const separation (std::fabs(a - b));
+
+  // The wrapped branch is what makes this more than a subtraction: two yaws either side of the
+  // seam at 0 are a hair apart in the world and a full turn apart on the number line.
+  return std::min(separation, TWO_PI - separation);
 }

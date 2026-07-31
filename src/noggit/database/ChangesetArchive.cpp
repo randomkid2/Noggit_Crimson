@@ -8,13 +8,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <ios>
+#include <istream>
+#include <limits>
 #include <locale>
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -94,6 +98,76 @@ namespace
          + padded(time_of_day / SECONDS_PER_HOUR, 2)
          + padded((time_of_day / SECONDS_PER_MINUTE) % SECONDS_PER_MINUTE, 2)
          + padded(time_of_day % SECONDS_PER_MINUTE, 2);
+  }
+
+  // Stands in for any code unit of a file name that is not ASCII. See asciiView.
+  constexpr char NON_ASCII_PLACEHOLDER = '?';
+
+  // A file name reduced to the ASCII that the naming scheme and the safety checks are made of.
+  //
+  // Deliberately not path::string(). That converts through the platform's narrow encoding --
+  // the active code page on Windows -- which either loses the name or refuses to render it at
+  // all: on MSVC 19.4x under code page 1252 it throws for a name the page cannot express. Doing
+  // it here instead means a foreign name costs a placeholder character in a listing rather than
+  // an exception out of every entry point. See ArchiveEntry::file_name.
+  //
+  // Every native code unit above 0x7F becomes one placeholder byte instead, whatever the native
+  // encoding happens to be, and that substitution is exact for every character anything here
+  // looks for. In UTF-8 no ASCII character is ever encoded by a byte above 0x7F, and in UTF-16
+  // no ASCII character is ever encoded by a code unit above 0x7F -- so a separator, a colon, a
+  // dot or a control character in the view is really in the name, and one in the name is always
+  // in the view. Nothing this function produces is ever used to open, delete or address a file.
+  std::string asciiView(std::filesystem::path const& name)
+  {
+    using value_type = std::filesystem::path::value_type;
+
+    std::filesystem::path::string_type const& native (name.native());
+
+    std::string view;
+    view.reserve(native.size());
+
+    for (value_type const unit : native)
+    {
+      // Widened as unsigned: wchar_t is unsigned on Windows, but plain char -- the POSIX
+      // value_type -- is signed on every compiler that matters, so a UTF-8 continuation byte
+      // would otherwise compare as negative and slip under the 0x80 bound as if it were ASCII.
+      auto const code (static_cast<std::make_unsigned_t<value_type>>(unit));
+
+      view.push_back(code < 0x80 ? static_cast<char>(code) : NON_ASCII_PLACEHOLDER);
+    }
+
+    return view;
+  }
+
+  // A narrow rendering of a path for a MESSAGE, never a handle to anything.
+  //
+  // path::string() is the obvious choice and the wrong one twice over: it is lossy exactly
+  // where a foreign name needs spelling out, and on MSVC it throws for such a name -- from
+  // inside the construction of an error message, which would replace a diagnosable failure with
+  // an unrelated exception at the moment the user most needs to be told what went wrong.
+  // u8string() spells every native name exactly; the two fallbacks are there so that this
+  // function can never itself be the reason a failure goes unreported.
+  std::string describe(std::filesystem::path const& path)
+  {
+    try
+    {
+      std::u8string const utf8 (path.u8string());
+
+      return std::string(reinterpret_cast<char const*>(utf8.data()), utf8.size());
+    }
+    catch (std::exception const&)
+    {
+    }
+
+    try
+    {
+      return path.string();
+    }
+    catch (std::exception const&)
+    {
+    }
+
+    return "<a name this platform cannot render as text>";
   }
 
   bool isDigits(std::string const& s, std::size_t at, std::size_t count)
@@ -249,26 +323,32 @@ namespace
   // filesystem first -- canonicalising and comparing prefixes -- could only add failure modes of
   // its own, not safety. Symbolic links are handled where they actually matter, by the directory
   // scan, which never reports one.
-  void requireBareFileName(std::string const& file_name)
+  void requireBareFileName(std::filesystem::path const& file_name)
   {
+    // Every lexical test below runs over the ASCII view rather than over the native name.
+    // Everything being looked for -- a separator, a colon, a control character, a trailing dot
+    // or space, a reserved device name -- is ASCII, and asciiView neither invents one nor hides
+    // one, so the view answers these questions exactly while a narrow conversion would not.
+    std::string const name (asciiView(file_name));
+
     auto const refuse = [&file_name] (char const* why) -> void
     {
       throw ArchiveError
-        ("Refusing the changeset backup name '" + file_name + "': " + why
+        ("Refusing the changeset backup name '" + describe(file_name) + "': " + why
          + ". Only a bare file name, as returned by list(), addresses an archived changeset.");
     };
 
-    if (file_name.empty())
+    if (name.empty())
     {
       refuse("it is empty");
     }
 
-    if (file_name == "." || file_name == "..")
+    if (name == "." || name == "..")
     {
       refuse("it names a directory, not a file");
     }
 
-    for (char const c : file_name)
+    for (char const c : name)
     {
       unsigned char const byte (static_cast<unsigned char>(c));
 
@@ -293,7 +373,7 @@ namespace
     //
     // Trailing spaces and dots are stripped, which turns ".. " -- not equal to ".." and holding
     // no separator, so it passes every check above -- into the archive root's PARENT directory.
-    if (file_name.back() == ' ' || file_name.back() == '.')
+    if (name.back() == ' ' || name.back() == '.')
     {
       refuse("it ends in a space or a dot, which Windows strips before resolving the path");
     }
@@ -304,7 +384,7 @@ namespace
     // worst outcome this class has, given its whole purpose is that a lost changeset is
     // recoverable.
     {
-      std::string stem (file_name.substr(0, file_name.find('.')));
+      std::string stem (name.substr(0, name.find('.')));
 
       for (char& c : stem)
       {
@@ -327,22 +407,14 @@ namespace
     }
 
     // Belt and braces, in case a platform spells a separator in some way the loop above does not
-    // know about. Path construction itself can fail on a byte sequence the native encoding
-    // cannot represent, which is also a refusal rather than something to propagate.
-    bool single_component (false);
-
-    try
-    {
-      std::filesystem::path const as_path (file_name);
-
-      single_component = !as_path.has_root_path()
-                      && !as_path.has_parent_path()
-                      && as_path.filename() == as_path;
-    }
-    catch (std::exception const&)
-    {
-      refuse("it cannot be expressed as a path on this platform");
-    }
+    // know about. Asked of the path directly rather than of a path rebuilt from text: the
+    // caller already holds the native name, and re-encoding it to ask a question about it is
+    // how the narrow round trip got in here in the first place.
+    bool const single_component
+      (  !file_name.has_root_path()
+      && !file_name.has_parent_path()
+      && file_name.filename() == file_name
+      );
 
     if (!single_component)
     {
@@ -478,19 +550,28 @@ std::vector<ArchiveEntry> ChangesetArchive::list() const
     ( entries.begin(), entries.end()
     , [] (ArchiveEntry const& a, ArchiveEntry const& b)
       {
-        return a.file_name > b.file_name;
+        // On the native strings, not through path::operator>, which orders by path ELEMENT and
+        // would stop being a plain text comparison the moment a name grew a separator. These
+        // are single components by construction, so the two agree today; saying which one is
+        // meant is what keeps the ordering promise checkable.
+        return a.file_name.native() > b.file_name.native();
       }
     );
 
   return entries;
 }
 
-std::string ChangesetArchive::load(std::string const& file_name) const
+std::string ChangesetArchive::load(std::filesystem::path const& file_name) const
 {
   requireBareFileName(file_name);
   requireRoot();
 
   std::filesystem::path const path (_root / file_name);
+
+  // Built once and handed to readExactly, which knows how to read a file but not how to name
+  // one: the archive root is this object's business and does not belong in a free function's
+  // parameter list.
+  std::string const description ("'" + describe(file_name) + "' in '" + _root.string() + "'");
 
   std::error_code ec;
   std::uintmax_t const size (std::filesystem::file_size(path, ec));
@@ -498,36 +579,17 @@ std::string ChangesetArchive::load(std::string const& file_name) const
   if (ec)
   {
     throw ArchiveError
-      ("No changeset backup named '" + file_name + "' in '" + _root.string() + "': "
-       + ec.message());
+      ("No changeset backup named " + description + ": " + ec.message());
   }
 
   std::ifstream file (path, std::ios::in | std::ios::binary);
 
   if (!file)
   {
-    throw ArchiveError("Cannot open the changeset backup '" + path.string() + "'.");
+    throw ArchiveError("Cannot open the changeset backup " + description + ".");
   }
 
-  std::string content (static_cast<std::size_t>(size), '\0');
-
-  if (size > 0)
-  {
-    file.read(content.data(), static_cast<std::streamsize>(size));
-
-    // Length checked against the stat rather than trusting eof, and read() used rather than
-    // `buffer << file.rdbuf()`, which sets failbit on an empty file and would turn a legitimately
-    // empty changeset into an I/O error. Handing back fewer bytes than the file holds is the one
-    // way this class could actively mislead somebody mid-recovery, so it is an error.
-    if (static_cast<std::uintmax_t>(file.gcount()) != size)
-    {
-      throw ArchiveError
-        ("Short read from the changeset backup '" + path.string() + "': got "
-         + std::to_string(file.gcount()) + " of " + std::to_string(size) + " bytes.");
-    }
-  }
-
-  return content;
+  return readExactly(file, size, description);
 }
 
 std::size_t ChangesetArchive::prune(std::size_t keep_newest)
@@ -538,7 +600,7 @@ std::size_t ChangesetArchive::prune(std::size_t keep_newest)
 
   for (std::size_t index (keep_newest); index < entries.size(); ++index)
   {
-    std::string const& file_name (entries[index].file_name);
+    std::filesystem::path const& file_name (entries[index].file_name);
 
     // Every name here came out of a non-recursive scan of the root and parsed as one this class
     // writes, so it cannot address anything else. Checked again all the same: deletion is the
@@ -558,9 +620,9 @@ std::size_t ChangesetArchive::prune(std::size_t keep_newest)
     if (ec)
     {
       throw ArchiveError
-        ("Failed to prune the changeset backup '" + file_name + "' from '" + _root.string()
-         + "': " + ec.message() + ". " + std::to_string(removed) + " older backup(s) had already"
-         " been removed, so the archive is partly pruned.");
+        ("Failed to prune the changeset backup '" + describe(file_name) + "' from '"
+         + _root.string() + "': " + ec.message() + ". " + std::to_string(removed) + " older"
+         " backup(s) had already been removed, so the archive is partly pruned.");
     }
   }
 
@@ -645,6 +707,70 @@ std::string ChangesetArchive::sanitiseLabel(std::string const& label)
   return out.empty() ? std::string(DEFAULT_LABEL) : out;
 }
 
+std::string ChangesetArchive::readExactly
+  (std::istream& stream, std::uintmax_t expected_bytes, std::string const& description)
+{
+  // Refused rather than truncated by the cast below. A 32-bit build asked for a five-gigabyte
+  // changeset cannot answer, and answering with the low 32 bits of the length would be a silent
+  // partial read wearing a success.
+  if (expected_bytes >= static_cast<std::uintmax_t>(std::numeric_limits<std::size_t>::max()))
+  {
+    throw ArchiveError
+      ("The changeset backup " + description + " reports " + std::to_string(expected_bytes)
+       + " bytes, which this process cannot hold in memory.");
+  }
+
+  std::size_t const wanted (static_cast<std::size_t>(expected_bytes));
+
+  // One byte MORE than the file was measured to hold, and the read happens even when that
+  // measurement was zero.
+  //
+  // The stat and the read are two operations and the file can change between them in EITHER
+  // direction -- an archive on a share, a backup being rewritten by a second Noggit. Asking for
+  // exactly `wanted` bytes detects only shrinkage: a file that grew came back quietly
+  // truncated, which is the precise failure this check exists to rule out. One extra byte turns
+  // growth into a loud refusal, and costs one byte.
+  std::string buffer (wanted + 1u, '\0');
+
+  stream.read(buffer.data(), static_cast<std::streamsize>(wanted) + 1);
+
+  // gcount() rather than the stream's flags, and read() rather than `buffer << stream.rdbuf()`.
+  // Reading one byte past the end of a correctly sized file sets eofbit and failbit, and that
+  // is the SUCCESS case here; rdbuf() extraction sets failbit when it inserts nothing, which
+  // would turn a legitimately empty changeset into a phantom I/O error.
+  std::size_t const got (static_cast<std::size_t>(stream.gcount()));
+
+  if (got > wanted)
+  {
+    throw ArchiveError
+      ("The changeset backup " + description + " grew past the " + std::to_string(expected_bytes)
+       + " bytes it measured while it was being read. Handing back the part that was read would"
+       " be handing somebody a truncated changeset in the middle of a recovery, so it is"
+       " refused; read it again.");
+  }
+
+  if (got < wanted)
+  {
+    throw ArchiveError
+      ("Short read from the changeset backup " + description + ": got " + std::to_string(got)
+       + " of " + std::to_string(expected_bytes) + " bytes.");
+  }
+
+  buffer.resize(wanted);
+
+  return buffer;
+}
+
+bool ChangesetArchive::isMissing(std::error_code const& ec)
+{
+  // Compared against an errc rather than against a value. The same condition arrives in a
+  // different category on each platform -- Win32 ERROR_FILE_NOT_FOUND and ERROR_PATH_NOT_FOUND
+  // in std::system_category, POSIX ENOENT in std::generic_category -- and comparing an
+  // error_code with an errc is the one operation that routes through the category's own mapping
+  // and so answers the same question on both.
+  return ec == std::errc::no_such_file_or_directory;
+}
+
 std::vector<ChangesetArchive::StoredFile> ChangesetArchive::collect() const
 {
   requireRoot();
@@ -671,26 +797,43 @@ std::vector<ChangesetArchive::StoredFile> ChangesetArchive::collect() const
         continue;
       }
 
-      std::string const file_name (entry.path().filename().string());
+      // Kept as a path, never round-tripped through a narrow string. This is the value load()
+      // and prune() are handed later, and .string() on a name the active code page cannot
+      // express does not merely mangle it -- on MSVC it throws, from in here, which took the
+      // whole listing down and with it store()'s sequence scan. See ArchiveEntry::file_name.
+      // The ASCII view below is for the PARSER, which only ever reads the fixed-width prefix
+      // and the extension, both of which store() writes as ASCII.
+      std::filesystem::path file_name (entry.path().filename());
 
       ParsedName parsed;
 
-      if (!parseName(file_name, parsed))
+      if (!parseName(asciiView(file_name), parsed))
       {
         continue;
       }
 
       std::uintmax_t const size (entry.file_size(ec));
 
+      // A backup that went away between the directory scan and this stat is skipped rather than
+      // fatal. A second Noggit pruning the same archive is enough to cause it, and failing the
+      // whole listing would make store() -- which calls collect() to choose its next sequence
+      // number -- refuse to archive a changeset that had nothing whatever wrong with it. prune()
+      // already treats a file that is already gone this way, at its own remove() call.
+      if (isMissing(ec))
+      {
+        continue;
+      }
+
       if (ec)
       {
         throw ArchiveError
-          ("Cannot size the changeset backup '" + file_name + "' in '" + _root.string() + "': "
-           + ec.message() + ". Dropping it from the listing would hide a backup that exists.");
+          ("Cannot size the changeset backup '" + describe(file_name) + "' in '" + _root.string()
+           + "': " + ec.message()
+           + ". Dropping it from the listing would hide a backup that exists.");
       }
 
       StoredFile stored;
-      stored.entry.file_name = file_name;
+      stored.entry.file_name = std::move(file_name);
       stored.entry.label = parsed.label;
       stored.entry.timestamp = parsed.timestamp;
       stored.entry.size_bytes = size;
@@ -705,9 +848,10 @@ std::vector<ChangesetArchive::StoredFile> ChangesetArchive::collect() const
   }
   catch (std::exception const& e)
   {
-    // Iteration reports its own failures by throwing, and a path that the native encoding cannot
-    // represent can throw during conversion. Either way the caller gets this class's own
-    // exception type, so one catch covers the archive whatever went wrong underneath.
+    // Iteration reports its own failures by throwing -- an unreadable root, a directory that
+    // disappears under the iterator -- and a bad_alloc from a large listing lands here too.
+    // Either way the caller gets this class's own exception type, so one catch covers the
+    // archive whatever went wrong underneath.
     throw ArchiveError
       ("Cannot read the changeset archive '" + _root.string() + "': " + e.what());
   }

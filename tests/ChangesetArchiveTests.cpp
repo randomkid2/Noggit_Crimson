@@ -5,6 +5,7 @@
 #include <noggit/database/ChangesetArchive.hpp>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -163,9 +164,9 @@ namespace
       std::locale _previous;
   };
 
-  std::vector<std::string> fileNamesOf(std::vector<ArchiveEntry> const& entries)
+  std::vector<std::filesystem::path> fileNamesOf(std::vector<ArchiveEntry> const& entries)
   {
-    std::vector<std::string> names;
+    std::vector<std::filesystem::path> names;
 
     for (ArchiveEntry const& entry : entries)
     {
@@ -335,11 +336,11 @@ TEST_CASE("two stores in the same second do not collide", "[archive][recovery]")
   CHECK(third.filename().string() == "20260801-160000-002-aaa.sql");
   CHECK(second.filename().string() < third.filename().string());
 
-  std::vector<std::string> const names (fileNamesOf(archive.list()));
+  std::vector<std::filesystem::path> const names (fileNamesOf(archive.list()));
   REQUIRE(names.size() == 3u);
-  CHECK(names[0] == third.filename().string());
-  CHECK(names[1] == second.filename().string());
-  CHECK(names[2] == first.filename().string());
+  CHECK(names[0] == third.filename());
+  CHECK(names[1] == second.filename());
+  CHECK(names[2] == first.filename());
 }
 
 TEST_CASE("a hostile label cannot escape the root", "[archive][safety]")
@@ -489,12 +490,12 @@ TEST_CASE("prune keeps exactly the newest N", "[archive][recovery]")
     archive.store("payload " + std::to_string(i), "step" + std::to_string(i), 1000 + i);
   }
 
-  std::vector<std::string> const before (fileNamesOf(archive.list()));
+  std::vector<std::filesystem::path> const before (fileNamesOf(archive.list()));
   REQUIRE(before.size() == 5u);
 
   CHECK(archive.prune(2) == 3u);
 
-  std::vector<std::string> const after (fileNamesOf(archive.list()));
+  std::vector<std::filesystem::path> const after (fileNamesOf(archive.list()));
   REQUIRE(after.size() == 2u);
 
   // The two that survived are the two newest, in the same order list() reported them before.
@@ -594,7 +595,7 @@ TEST_CASE("a name occupied by something that is not a file is stepped over", "[a
 
   std::vector<ArchiveEntry> const entries (archive.list());
   REQUIRE(entries.size() == 1u);
-  CHECK(entries[0].file_name == written.filename().string());
+  CHECK(entries[0].file_name == written.filename());
 }
 
 TEST_CASE("timestamps round-trip through the file name", "[archive][recovery]")
@@ -886,4 +887,244 @@ TEST_CASE("store refuses rather than truncating a name another writer already cl
   CHECK(surviving == "-- first\n");
 
   std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("a backup whose name the narrow encoding cannot spell stays usable"
+         , "[archive][safety][recovery]")
+{
+  // Regression test for the first M4-M5 review follow-up.
+  //
+  // collect() used to store entry.path().filename().string(). On Windows that conversion runs
+  // through the active code page, and measured against the pre-fix code on MSVC 19.4x with code
+  // page 1252 it does not substitute anything -- it THROWS ("No mapping for the Unicode
+  // character exists in the target multi-byte code page"). So one backup copied in from a
+  // machine with another encoding, an unremarkable file name there, took down list(), prune()
+  // AND store(), which runs the same scan to choose its next sequence number. Noggit could not
+  // archive a changeset at all while that file sat in the root.
+  //
+  // The name is built from a UTF-8 literal rather than a wide one so the test says the same
+  // thing on both platforms, and the characters are CJK ideographs, which have no canonical
+  // decomposition and so cannot be silently renormalised by the filesystem on the way in.
+  // Spelled as escaped UTF-8 code units rather than as literal characters, because this file
+  // carries no byte order mark: MSVC would read non-ASCII source bytes in the active code page
+  // and silently change the very literal the test is about. The escapes are U+65E5 U+672C
+  // U+8A9E.
+  TempDirectory const temp;
+  ChangesetArchive archive (temp.path());
+
+  std::filesystem::path const foreign
+    (std::u8string (u8"20260801-160000-000-tile_\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E.sql"));
+
+  writeRaw(temp.path() / foreign, "-- from elsewhere\n");
+  REQUIRE(std::filesystem::exists(temp.path() / foreign));
+
+  // One ordinary backup beside it, so a fix that simply refused to list anything foreign would
+  // still have to explain why the archive is short.
+  archive.store("-- mine\n", "mine", STAMP_2026 + 1);
+
+  std::vector<ArchiveEntry> const entries (archive.list());
+  REQUIRE(entries.size() == 2u);
+
+  ArchiveEntry const* found (nullptr);
+
+  for (ArchiveEntry const& entry : entries)
+  {
+    if (entry.file_name == foreign)
+    {
+      found = &entry;
+    }
+  }
+
+  // The reported name is the name on disk, exactly. Before the fix this comparison could not be
+  // made at all -- list() threw before returning anything.
+  REQUIRE(found != nullptr);
+
+  CHECK(found->timestamp == STAMP_2026);
+  CHECK(found->size_bytes == 18u);
+
+  // The name list() reports is the one that opens the file -- the property that makes an entry
+  // a handle rather than a description.
+  CHECK(archive.load(found->file_name) == "-- from elsewhere\n");
+
+  // The label, by contrast, is explicitly a rendering: the readable part survives and every
+  // non-ASCII code unit shows as '?'. How MANY question marks is an encoding detail (three
+  // UTF-16 units on Windows, nine UTF-8 bytes elsewhere), so it is not asserted.
+  CHECK(contains(found->label, "tile_"));
+  CHECK(contains(found->label, "?"));
+
+  // And that rendering is not a handle. Rebuilding a name from the label -- which is what a
+  // caller does the moment it treats a displayed name as an address -- opens nothing: on
+  // Windows because '?' is not a legal file name character at all, and anywhere else because no
+  // such file exists. Asserted so the split between the two fields cannot quietly collapse back
+  // into one string.
+  CHECK_THROWS_AS
+    (archive.load("20260801-160000-000-" + found->label + ".sql"), ArchiveError);
+
+  // prune() must be able to delete it, and must take the ordinary backup with it. Before the fix
+  // prune() never got as far as remove(): the listing it starts from threw first, so an archive
+  // holding one foreign name could not be trimmed at all.
+  CHECK(archive.prune(0) == 2u);
+  CHECK_FALSE(std::filesystem::exists(temp.path() / foreign));
+  CHECK(archive.list().empty());
+}
+
+TEST_CASE("a changeset that grows while it is read is refused, not truncated"
+         , "[archive][recovery]")
+{
+  // Regression test for the second M4-M5 review follow-up.
+  //
+  // load() measured the file and then read exactly that many bytes, so its length check could
+  // only ever catch SHRINKAGE. A file that grew between the stat and the read -- an archive on
+  // a share, a backup being rewritten by a second Noggit -- came back silently truncated, which
+  // is the precise failure the check's own comment claimed to make impossible.
+  //
+  // Exercised through readExactly rather than through load() because it cannot be staged
+  // against a real directory: making a file change length between two calls inside load() needs
+  // a second writer and a won race, and a test that depends on winning a race is a test that
+  // reports a fix that is not there. A stream that holds more or fewer bytes than it claims
+  // asks the same question deterministically.
+
+  // The measurement was right: the payload comes back whole, and the extra byte the read now
+  // asks for is not left in the result.
+  {
+    std::istringstream exact ("0123456789");
+    CHECK(ChangesetArchive::readExactly(exact, 10, "'exact'") == "0123456789");
+  }
+
+  // An empty changeset is legitimate and must not become an I/O error, even though reading past
+  // its end sets both eofbit and failbit.
+  {
+    std::istringstream empty ("");
+    CHECK(ChangesetArchive::readExactly(empty, 0, "'empty'").empty());
+  }
+
+  // Bytes, not text: a NUL, a CR and UTF-8 all survive the one-byte-longer read unchanged.
+  {
+    std::string const payload (std::string("-- a\0b\r\n", 8) + "\xC3\xA9\n");
+    std::istringstream bytes (payload);
+    CHECK(ChangesetArchive::readExactly(bytes, payload.size(), "'bytes'") == payload);
+  }
+
+  // Grew. Before the fix each of these returned the first `expected_bytes` and reported success.
+  {
+    std::istringstream grown ("0123456789abcdef");
+    CHECK_THROWS_AS(ChangesetArchive::readExactly(grown, 10, "'grown'"), ArchiveError);
+  }
+
+  // Grew by exactly one byte, which is the boundary the extra byte of read exists to see.
+  {
+    std::istringstream grown_by_one ("0123456789a");
+    CHECK_THROWS_AS(ChangesetArchive::readExactly(grown_by_one, 10, "'one'"), ArchiveError);
+  }
+
+  // Grew from nothing, the case the old code could not see at all because it skipped the read
+  // entirely when the measured size was zero.
+  {
+    std::istringstream from_empty ("x");
+    CHECK_THROWS_AS(ChangesetArchive::readExactly(from_empty, 0, "'from_empty'"), ArchiveError);
+  }
+
+  // Shrank -- the direction the old guard did catch. Kept so the fix cannot have traded one
+  // failure for the other.
+  {
+    std::istringstream shrunk ("012");
+    CHECK_THROWS_AS(ChangesetArchive::readExactly(shrunk, 10, "'shrunk'"), ArchiveError);
+  }
+
+  // The two failures have to be distinguishable in the message. "Short read" pointed at a
+  // truncated file on disk and "grew" points at a file still being written; a user chasing a
+  // failed recovery does very different things with those two, so a shared message would be
+  // half the fix.
+  try
+  {
+    std::istringstream grown ("0123456789abcdef");
+    ChangesetArchive::readExactly(grown, 10, "'tile_49_31.sql'");
+    FAIL("a stream holding more than it was measured at did not throw");
+  }
+  catch (ArchiveError const& e)
+  {
+    std::string const message (e.what());
+    CHECK(contains(message, "tile_49_31.sql"));
+    CHECK(contains(message, "grew"));
+    CHECK(contains(message, "10"));
+  }
+
+  try
+  {
+    std::istringstream shrunk ("012");
+    ChangesetArchive::readExactly(shrunk, 10, "'tile_49_31.sql'");
+    FAIL("a stream holding less than it was measured at did not throw");
+  }
+  catch (ArchiveError const& e)
+  {
+    std::string const message (e.what());
+    CHECK(contains(message, "tile_49_31.sql"));
+    CHECK(contains(message, "Short read"));
+    CHECK(contains(message, "3"));
+    CHECK(contains(message, "10"));
+  }
+
+  // load() still reads a real file whole, so the seam did not change what the class does -- only
+  // where the check lives.
+  TempDirectory const temp;
+  ChangesetArchive archive (temp.path());
+
+  std::string const sql ("-- Noggit changeset\nSET @CGUID := 200000;\n");
+  std::filesystem::path const written (archive.store(sql, "grown", STAMP_2026));
+
+  CHECK(archive.load(written.filename()) == sql);
+}
+
+TEST_CASE("a backup that vanishes mid-scan is skipped, not fatal", "[archive][safety]")
+{
+  // Regression test for the third M4-M5 review follow-up.
+  //
+  // collect() failed the whole archive when it could not size one directory entry. A second
+  // Noggit pruning the same archive is enough to make a file disappear between the directory
+  // scan and the stat, and because store() calls collect() to choose its next sequence number,
+  // an unrelated backup vanishing made store() refuse to archive a changeset that had nothing
+  // wrong with it. prune() already treats an already-gone file as a no-op; collect() now agrees.
+  //
+  // Tested as the predicate rather than through list(), because the race cannot be staged: the
+  // deletion would have to land between two statements inside collect()'s loop, and on Windows
+  // it could not be observed even then -- std::filesystem::directory_entry caches the size from
+  // the directory enumeration, so the stat never reaches the disk. The part that can be wrong,
+  // and the part a platform can disagree about, is the classification itself.
+  CHECK(ChangesetArchive::isMissing
+          (std::make_error_code(std::errc::no_such_file_or_directory)));
+  CHECK(ChangesetArchive::isMissing(std::error_code(ENOENT, std::generic_category())));
+
+#ifdef _WIN32
+  // ERROR_FILE_NOT_FOUND (2) and ERROR_PATH_NOT_FOUND (3) arrive in std::system_category with
+  // Win32 values, not in std::generic_category with POSIX ones. Comparing the code against an
+  // errc routes through the category's own mapping, which is the only reason one predicate
+  // answers this question on both platforms -- and it is exactly the kind of claim that is
+  // asserted in a comment and turns out to be false.
+  CHECK(ChangesetArchive::isMissing(std::error_code(2, std::system_category())));
+  CHECK(ChangesetArchive::isMissing(std::error_code(3, std::system_category())));
+#endif
+
+  // A cleared code is not a missing file. Getting this wrong would skip every entry in the
+  // archive and report an empty listing for a directory full of backups -- the failure this
+  // class is least allowed to have.
+  CHECK_FALSE(ChangesetArchive::isMissing(std::error_code()));
+
+  // Everything else still fails the listing loudly. A backup that exists but cannot be read is
+  // not the same as one that is gone, and quietly dropping it would hide it from the user at
+  // the moment they went looking for it.
+  CHECK_FALSE(ChangesetArchive::isMissing(std::make_error_code(std::errc::permission_denied)));
+  CHECK_FALSE(ChangesetArchive::isMissing(std::make_error_code(std::errc::io_error)));
+  CHECK_FALSE
+    (ChangesetArchive::isMissing(std::make_error_code(std::errc::too_many_files_open)));
+  CHECK_FALSE(ChangesetArchive::isMissing(std::make_error_code(std::errc::is_a_directory)));
+
+  // The archive still works normally around the predicate: a directory holding only readable
+  // backups lists all of them, which is what a fix that skipped too eagerly would break.
+  TempDirectory const temp;
+  ChangesetArchive archive (temp.path());
+
+  archive.store("one", "first", 1000);
+  archive.store("two", "second", 2000);
+
+  CHECK(archive.list().size() == 2u);
 }

@@ -32,7 +32,11 @@ namespace Noggit {
         p.minScale = scale;
         p.maxScale = scale;
         global->get_view()->_world.get()->
-          addM2(filename,pos,scale,math::degrees::vec3(rotation), &p, false);
+          // action=true so the placement is recorded on the undo stack. It was false, which is
+          // why a scatter script could paint two hundred models that Ctrl+Z could not touch.
+          // Safe with no action open: world_model_instances_storage.cpp:51 checks
+          // NOGGIT_CUR_ACTION before recording, so this is inert outside a stroke.
+          addM2(filename,pos,scale,math::degrees::vec3(rotation), &p, true);
       });
 
       state->set_function("vec",[](float x, float y, float z){
@@ -56,7 +60,8 @@ namespace Noggit {
           , scale
           , math::degrees::vec3(rotation)
           , &p
-          , false);
+          // action=true, for the same reason as add_m2 above.
+          , true);
       });
 
       state->set_function("get_map_id",[global]()

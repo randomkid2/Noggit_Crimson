@@ -40,7 +40,7 @@ the same mirrors and does not:
 
 ```bash
 python -m pip install aqtinstall
-python -m aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 -O H:/Qt
+python -m aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 -O C:/Qt
 ```
 
 That completes in about 90 seconds and yields `Qt5Core`, `Qt5Widgets`, `Qt5Gui`, `Qt5OpenGL`,
@@ -51,10 +51,10 @@ Do **not** pass `-m qtmultimedia`: in 5.15.2 Multimedia ships in the base packag
 a module fails with "packages were not found while parsing XML of package information". Check what
 a version actually offers with `aqt list-qt windows desktop --modules 5.15.2 win64_msvc2019_64`.
 
-Then point CMake at it:
+Then point CMake at it — `<QtDir>` is whatever you passed to `-O` above:
 
 ```bash
-"-DCMAKE_PREFIX_PATH=H:/Qt/5.15.2/msvc2019_64"
+"-DCMAKE_PREFIX_PATH=<QtDir>/5.15.2/msvc2019_64"
 ```
 
 ## Qt version floor
@@ -128,7 +128,7 @@ CMake copies the Qt DLLs next to `noggit.exe` itself, but not the Qt *plugins* �
 platform plugin the binary exits immediately with no useful message. Deploy them once:
 
 ```bash
-H:/Qt/5.15.2/msvc2019_64/bin/windeployqt.exe --release --no-translations build/bin/RelWithDebInfo/noggit.exe
+<QtDir>/5.15.2/msvc2019_64/bin/windeployqt.exe --release --no-translations build/bin/RelWithDebInfo/noggit.exe
 ```
 
 For a `USE_SQL` build also copy the connector runtime next to the executable. Note it lives one
@@ -142,6 +142,30 @@ level **above** the `vs14/` directory that holds the import library:
 A healthy start writes `log.txt` beside the executable, reporting the build revision, the
 OpenGL version and renderer, and whether the listfile and DBC definitions were found. If the
 window never appears, read that file first — it names the missing piece.
+
+### What the binary actually needs at runtime
+
+Measured with `dumpbin /DEPENDENTS` on a `RelWithDebInfo` `USE_SQL=ON` build rather than taken
+from the README, because two of the commonly repeated instructions are wrong for this
+configuration:
+
+```
+OPENGL32 · USER32 · SHELL32 · GDI32 · dwmapi · d2d1 · ADVAPI32 · KERNEL32 · IMM32 ·
+WININET · WS2_32 · MSVCP140 · VCRUNTIME140(_1) · api-ms-win-crt-*     (system)
+Qt5Core · Qt5Gui · Qt5Widgets · Qt5Network · Qt5Xml · Qt5Multimedia · Qt5Quick
+mysqlcppconn-<n>-vs14                                                 (USE_SQL only)
+```
+
+- **No Lua DLL.** `sol2` fetches Lua and links it statically (`SOL2_BUILD_LUA=TRUE`,
+  `lua54.lib`), so there is nothing to copy. Instructions to place `lua51.dll` beside the
+  executable date from an older build system — the version is wrong and the file is not needed.
+- **No `Qt5OpenGL.dll`.** `src/external/NodeEditor` requires the `Qt5::OpenGL` *module* at
+  configure time, which is why Qt ≥ 5.10 is a hard floor, but nothing imports the library at
+  runtime: Qt 5.15 puts `QOpenGLWidget` in `Qt5Widgets`. Deploying it does no harm; omitting it
+  does none either.
+
+`windeployqt` gets all of the Qt entries right on its own. The connector DLL is the one it
+cannot know about.
 
 ## Dev database
 

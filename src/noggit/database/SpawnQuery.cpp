@@ -79,6 +79,41 @@ namespace Noggit::Database::SpawnQuery
     }
   }
 
+  std::size_t countTile
+    ( WorldDatabaseConnection const& connection
+    , SchemaModel const& schema
+    , std::uint16_t map
+    , TileIndex const& tile
+    )
+  {
+    if (!TileCoordinates::isValidTile(tile))
+    {
+      // Zero rather than a throw, unlike loadTile. This is a pre-flight estimate over whatever
+      // set of tiles happens to be loaded, and one index off the edge of the grid must not stop
+      // the caller counting the rest.
+      return 0;
+    }
+
+    TileBounds const bounds (TileCoordinates::boundsForTile(tile));
+
+    ResultRows const creatures (connection.query(creatureCountSql(schema, map, bounds)));
+    ResultRows const gameobjects (connection.query(gameObjectCountSql(schema, map, bounds)));
+
+    std::size_t total = 0;
+
+    if (!creatures.empty())
+    {
+      total += Detail::rowUInt32(creatures.front(), 0);
+    }
+
+    if (!gameobjects.empty())
+    {
+      total += Detail::rowUInt32(gameobjects.front(), 0);
+    }
+
+    return total;
+  }
+
   TileSpawns loadTile
     ( WorldDatabaseConnection const& connection
     , SchemaModel const& schema

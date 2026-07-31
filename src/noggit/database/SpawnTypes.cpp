@@ -3,8 +3,10 @@
 #include <noggit/database/SpawnTypes.hpp>
 #include <noggit/database/TileCoordinates.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <iomanip>
 #include <locale>
 #include <sstream>
@@ -29,27 +31,21 @@ namespace
   // creature.equipment_id: -1 random, 0 none, >0 a creature_equip_template ID.
   constexpr int MIN_EQUIPMENT_ID = -1;
 
-  void addIssue
-    ( std::vector<ValidationIssue>& issues
-    , ValidationIssue::Severity severity
-    , std::string message
-    )
-  {
-    ValidationIssue issue;
-    issue.severity = severity;
-    issue.message = std::move(message);
-    issues.push_back(std::move(issue));
-  }
-
-  void addError(std::vector<ValidationIssue>& issues, std::string message)
-  {
-    addIssue(issues, ValidationIssue::Severity::ERROR, std::move(message));
-  }
-
-  void addWarning(std::vector<ValidationIssue>& issues, std::string message)
-  {
-    addIssue(issues, ValidationIssue::Severity::WARNING, std::move(message));
-  }
+  // GAMEOBJECT_TYPE values with nothing the editor can draw, from docs/schema-335.md, which
+  // measured them rather than copying a published table: 6 TRAP and 18 RITUAL are invisible in
+  // the client, 11 TRANSPORT and 15 MO_TRANSPORT move (and the core refuses manual creation of
+  // the latter outright), and 12 AREADAMAGE and 13 CAMERA have no model at all.
+  //
+  // Six named values rather than a full GAMEOBJECT_TYPE enum, on purpose. docs/schema-335.md
+  // records that the numbering above 26 is unverified, so a complete enum written from a
+  // reference would be precisely the hardcode-from-documentation this project has already been
+  // bitten by four times. All six of these sit inside the verified 0..26 range.
+  constexpr std::uint32_t GAMEOBJECT_TYPE_TRAP = 6;
+  constexpr std::uint32_t GAMEOBJECT_TYPE_TRANSPORT = 11;
+  constexpr std::uint32_t GAMEOBJECT_TYPE_AREADAMAGE = 12;
+  constexpr std::uint32_t GAMEOBJECT_TYPE_CAMERA = 13;
+  constexpr std::uint32_t GAMEOBJECT_TYPE_MO_TRANSPORT = 15;
+  constexpr std::uint32_t GAMEOBJECT_TYPE_RITUAL = 18;
 
   // std::to_string always emits six decimals, which makes every message about a whole number
   // read as "5.000000". Trim to something a reviewer can scan.
@@ -117,6 +113,28 @@ namespace
   }
 }
 
+void SpawnValidation::addIssue
+  ( std::vector<ValidationIssue>& issues
+  , ValidationIssue::Severity severity
+  , std::string message
+  )
+{
+  ValidationIssue issue;
+  issue.severity = severity;
+  issue.message = std::move(message);
+  issues.push_back(std::move(issue));
+}
+
+void SpawnValidation::addError(std::vector<ValidationIssue>& issues, std::string message)
+{
+  addIssue(issues, ValidationIssue::Severity::BLOCKING, std::move(message));
+}
+
+void SpawnValidation::addWarning(std::vector<ValidationIssue>& issues, std::string message)
+{
+  addIssue(issues, ValidationIssue::Severity::WARNING, std::move(message));
+}
+
 bool WaypointPath::isContiguous() const
 {
   // An empty path is reported as non-contiguous rather than vacuously contiguous: the question
@@ -152,6 +170,95 @@ void WaypointPath::renumber()
   {
     node.point = ++point;
   }
+}
+
+CreatureTemplateInfo SpawnDisplay::resolveCreatureTemplateInfo
+  ( std::uint32_t spawn_model_id
+  , std::vector<std::uint32_t> const& template_candidates
+  , std::string template_name
+  )
+{
+  CreatureTemplateInfo info;
+  info.name = std::move(template_name);
+
+  // Distinct non-zero candidates, kept in the template's own order.
+  //
+  // Distinct rather than a raw count because modelid1 == modelid2 is one model listed twice: the
+  // core would roll the same display id either way, so there is no ambiguity to warn about, and
+  // reporting one would train the user to ignore the warning. Linear search rather than a set:
+  // there are at most four of these and the order is the whole point.
+  std::vector<std::uint32_t> distinct;
+  distinct.reserve(template_candidates.size());
+
+  for (std::uint32_t candidate : template_candidates)
+  {
+    if (candidate == 0)
+    {
+      continue;
+    }
+
+    if (std::find(distinct.begin(), distinct.end(), candidate) == distinct.end())
+    {
+      distinct.push_back(candidate);
+    }
+  }
+
+  info.template_model_count = distinct.size();
+
+  // creature.modelid wins whenever it is set. That is what the core does, and it is also the only
+  // one of the two values the editor can write, so showing the template's model for a spawn that
+  // overrides it would misrepresent what a changeset would actually change.
+  if (spawn_model_id != 0)
+  {
+    info.display_id = spawn_model_id;
+    info.display_id_origin = DisplayIdOrigin::SPAWN;
+    return info;
+  }
+
+  if (!distinct.empty())
+  {
+    // First non-zero, always. The core rolls one of the template's models per spawn at runtime;
+    // the editor has to be deterministic, so it takes the first and leaves
+    // templateOffersAlternatives() to say that the rest exist.
+    info.display_id = distinct.front();
+    info.display_id_origin = DisplayIdOrigin::TEMPLATE;
+    return info;
+  }
+
+  // Neither side named a model. display_id stays 0 and the origin stays UNRESOLVED, which is what
+  // tells the renderer to draw a marker instead of dropping the spawn.
+  return info;
+}
+
+bool SpawnDisplay::typeHasRenderableModel(std::uint32_t gameobject_type)
+{
+  switch (gameobject_type)
+  {
+    case GAMEOBJECT_TYPE_TRAP:
+    case GAMEOBJECT_TYPE_TRANSPORT:
+    case GAMEOBJECT_TYPE_AREADAMAGE:
+    case GAMEOBJECT_TYPE_CAMERA:
+    case GAMEOBJECT_TYPE_MO_TRANSPORT:
+    case GAMEOBJECT_TYPE_RITUAL:
+      return false;
+
+    default:
+      // Anything else is assumed renderable. An unknown type is far more likely to be a normal
+      // object on a schema generation this build has not seen than one of the six above, and a
+      // displayId of 0 already excludes the entries that genuinely have no model.
+      return true;
+  }
+}
+
+bool SpawnDisplay::isRenderable(CreatureSpawn const& spawn)
+{
+  return spawn.template_info.display_id != 0;
+}
+
+bool SpawnDisplay::isRenderable(GameObjectSpawn const& spawn)
+{
+  return spawn.template_info.display_id != 0
+    && typeHasRenderableModel(spawn.template_info.type);
 }
 
 std::vector<ValidationIssue> SpawnValidation::validate(CreatureSpawn const& spawn)
@@ -430,7 +537,7 @@ bool SpawnValidation::hasErrors(std::vector<ValidationIssue> const& issues)
 {
   for (ValidationIssue const& issue : issues)
   {
-    if (issue.severity == ValidationIssue::Severity::ERROR)
+    if (issue.severity == ValidationIssue::Severity::BLOCKING)
     {
       return true;
     }

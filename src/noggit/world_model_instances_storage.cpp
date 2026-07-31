@@ -4,7 +4,12 @@
 #include <noggit/World.h>
 #include <noggit/ActionManager.hpp>
 #include <noggit/Action.hpp>
+#include <noggit/AsyncObject.h>
+#include <noggit/SceneObject.hpp>
 #include <noggit/TileIndex.hpp>
+
+#include <string>
+#include <string_view>
 
 namespace Noggit
 {
@@ -57,7 +62,13 @@ namespace Noggit
 
     // the uid is already used for another model/wmo, use a new one
     _uid_duplicates_found = true;
-    instance.uid = _world->mapIndex.newGUID();
+
+    std::uint32_t const assigned_uid = _world->mapIndex.newGUID();
+    // Recorded before the uid is overwritten and before the move, both of which destroy what the
+    // record is about. The renumber itself is unchanged: newGUID() is still called exactly once
+    // per collision and its result is still what the instance is stored under.
+    unsafe_record_uid_collision(uid, assigned_uid, UidCollisionKind::M2, instance);
+    instance.uid = assigned_uid;
 
     return unsafe_add_model_instance_no_world_upd(std::move(instance), action);
   }
@@ -106,9 +117,54 @@ namespace Noggit
 
     // the uid is already used for another model/wmo, use a new one
     _uid_duplicates_found = true;
-    instance.uid = _world->mapIndex.newGUID();
+
+    std::uint32_t const assigned_uid = _world->mapIndex.newGUID();
+    unsafe_record_uid_collision(uid, assigned_uid, UidCollisionKind::WMO, instance);
+    instance.uid = assigned_uid;
 
     return unsafe_add_wmo_instance_no_world_upd(std::move(instance), action);
+  }
+
+  void world_model_instances_storage::unsafe_record_uid_collision
+    ( std::uint32_t previous_uid
+    , std::uint32_t assigned_uid
+    , UidCollisionKind kind
+    , SceneObject const& instance
+    )
+  {
+    // Read out of the FileKey directly rather than through FileKey::stringRepr(), which builds a
+    // std::string by value (Listfile.cpp:203-206) purely to have it copied again. The common case
+    // -- a key that carries a path -- then costs no allocation at all before the log's own copy.
+    // Only the fileDataID-only case has to render digits, and 3.3.5 keys always carry paths.
+    std::string_view model_name;
+    std::string file_data_id_text;
+
+    if (AsyncObject const* async_object = instance.instance_model())
+    {
+      auto const& file_key = async_object->file_key();
+
+      if (file_key.hasFilepath())
+      {
+        model_name = file_key.filepath();
+      }
+      else
+      {
+        file_data_id_text = std::to_string(file_key.fileDataID());
+        model_name = file_data_id_text;
+      }
+    }
+
+    // The instance is not attached to any tile yet at this point -- updateTilesModel/updateTilesWMO
+    // run after add_*_instance returns -- so getTiles() is empty and the position is the only
+    // source for the tile. Same derivation delete_instances_from_tile uses to match a tile.
+    TileIndex const tile (instance.pos);
+    UidCollisionTile const recorded_tile
+      { static_cast<std::uint32_t>(tile.x)
+      , static_cast<std::uint32_t>(tile.z)
+      , tile.is_valid()
+      };
+
+    _uid_collision_log.record(previous_uid, assigned_uid, kind, model_name, recorded_tile);
   }
 
   void world_model_instances_storage::delete_instances_from_tile(TileIndex const& tile, bool action)
@@ -367,6 +423,16 @@ namespace Noggit
   bool world_model_instances_storage::uid_duplicates_found() const
   {
     return _uid_duplicates_found.load();
+  }
+
+  UidCollisionLog const& world_model_instances_storage::uid_collision_log() const
+  {
+    return _uid_collision_log;
+  }
+
+  UidCollisionLog& world_model_instances_storage::uid_collision_log()
+  {
+    return _uid_collision_log;
   }
 
   void world_model_instances_storage::upload()

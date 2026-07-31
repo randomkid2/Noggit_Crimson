@@ -580,6 +580,18 @@ namespace Noggit
         _textureBrowserDock->hide();
     }
 
+    std::string TexturingTool::selectedTexturePath() const
+    {
+        // Both pointers are null until setupUi runs, and this can be reached from a menu that
+        // exists before the tool panel is built.
+        if (!_texturingTool || !_texturingTool->_current_texture)
+        {
+            return {};
+        }
+
+        return _texturingTool->_current_texture->filename();
+    }
+
     void TexturingTool::randomizeTexturingRotation()
     {
         auto image_mask_selector = _texturingTool->getImageMaskSelector();
