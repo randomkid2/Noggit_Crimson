@@ -18,16 +18,47 @@
 #include <QDial>
 #include <QDialog>
 #include <QDir>
+#include <QFileSystemWatcher>
 #include <QIcon>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QPixmap>
+#include <QScrollBar>
+#include <QSet>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QStandardItemModel>
+#include <QTimer>
+
+#include <functional>
 
 using namespace Noggit::Ui::Tools::AssetBrowser::Ui;
 using namespace Noggit::Ui;
+
+namespace
+{
+  // A single file copy raises several directory-change notifications (the entry
+  // appears, its size grows, the handle closes), and dropping a folder of models
+  // raises one such burst per file. Rebuilding the tree on each of them would be
+  // absurd, so every event restarts this timer and only the quiet period at the
+  // end of the copy actually triggers a rescan. One second is long enough to
+  // swallow a multi-file copy over a local disk, short enough that the asset is
+  // there by the time the user alt-tabs back to Noggit to look for it.
+  constexpr int RESCAN_DEBOUNCE_MS = 1000;
+
+  // QFileSystemWatcher costs one OS handle per watched directory, and Qt's
+  // Windows backend spawns a worker thread for every 60 or so handles because
+  // WaitForMultipleObjects tops out at MAXIMUM_WAIT_OBJECTS. A project folder
+  // holding a fully extracted client mirror has tens of thousands of
+  // directories, which would mean hundreds of threads: pathological, and the
+  // kind of thing that makes a watcher worse than no watcher. Past this budget
+  // we do not watch at all, say so in the log, and leave the user with the
+  // Rescan button.
+  constexpr int MAX_WATCHED_DIRECTORIES = 2048;
+
+  char const* const AUTO_RESCAN_SETTING = "assetBrowser/auto_rescan";
+}
 
 AssetBrowserWidget::AssetBrowserWidget(MapView* map_view, QWidget *parent)
 : QMainWindow(parent, Qt::Window)
@@ -197,6 +228,11 @@ AssetBrowserWidget::AssetBrowserWidget(MapView* map_view, QWidget *parent)
 
   _wmo_group_and_lod_regex = QRegularExpression(".+_\\d{3}(_lod.+)*.wmo");
 
+  // Must exist before the first updateModelData(): that call is what discovers
+  // the project's directory layout, and it hands the result straight to the
+  // watcher on its way out.
+  setupProjectWatcher();
+
   updateModelData();
 
 
@@ -208,6 +244,21 @@ void AssetBrowserWidget::setupConnectsCommon()
       ,[this]()
           {
               _sort_model->setFilterFixedString(ui->searchField->text());
+          }
+
+  );
+
+  // The manual escape hatch. Before this existed the only way to pick up a model
+  // dropped into the project folder mid-session was to toggle one of the type
+  // checkboxes twice, which nobody would guess, so people restarted Noggit.
+  connect(ui->rescanButton, &QPushButton::clicked
+      ,[this]()
+          {
+              // A deliberate rescan supersedes whatever the watcher had queued.
+              if (_rescan_debounce_timer)
+                _rescan_debounce_timer->stop();
+
+              updateModelData();
           }
 
   );
@@ -328,56 +379,56 @@ bool AssetBrowserWidget::validateBrowseMode(const QString& wow_file_path)
     case asset_browse_mode::detail_doodads:
     {
         if (wow_file_path.startsWith("world/nodxt/detail/", Qt::CaseInsensitive) 
-            && wow_file_path.endsWith(".m2"))
+            && wow_file_path.endsWith(".m2", Qt::CaseInsensitive))
             return true;
         return false;
     }
     case asset_browse_mode::skybox:
     {
         if (wow_file_path.startsWith("environments/stars", Qt::CaseInsensitive)
-            && wow_file_path.endsWith(".m2"))
+            && wow_file_path.endsWith(".m2", Qt::CaseInsensitive))
             return true;
         return false;
     }
     case asset_browse_mode::creatures:
     {
         if (wow_file_path.startsWith("creature", Qt::CaseInsensitive)
-            && wow_file_path.endsWith(".m2"))
+            && wow_file_path.endsWith(".m2", Qt::CaseInsensitive))
             return true;
         return false;
     }
     case asset_browse_mode::characters:
     {
         if (wow_file_path.startsWith("character", Qt::CaseInsensitive)
-            && wow_file_path.endsWith(".m2"))
+            && wow_file_path.endsWith(".m2", Qt::CaseInsensitive))
             return true;
         return false;
     }
     case asset_browse_mode::particles:
     {
         if (wow_file_path.startsWith("particles", Qt::CaseInsensitive)
-            && wow_file_path.endsWith(".m2"))
+            && wow_file_path.endsWith(".m2", Qt::CaseInsensitive))
             return true;
         return false;
     }
     case asset_browse_mode::cameras:
     {
         if (wow_file_path.startsWith("cameras", Qt::CaseInsensitive)
-            && wow_file_path.endsWith(".m2"))
+            && wow_file_path.endsWith(".m2", Qt::CaseInsensitive))
             return true;
         return false;
     }
     case asset_browse_mode::items:
     {
         if (wow_file_path.startsWith("item", Qt::CaseInsensitive)
-            && wow_file_path.endsWith(".m2"))
+            && wow_file_path.endsWith(".m2", Qt::CaseInsensitive))
             return true;
         return false;
     }
     case asset_browse_mode::spells:
     {
         if (wow_file_path.startsWith("SPELLS", Qt::CaseInsensitive)
-            && wow_file_path.endsWith(".m2"))
+            && wow_file_path.endsWith(".m2", Qt::CaseInsensitive))
             return true;
         return false;
     }
@@ -386,10 +437,39 @@ bool AssetBrowserWidget::validateBrowseMode(const QString& wow_file_path)
     }
 }
 
+// Single source of truth for the WMOs/Models checkboxes. The listfile pass and
+// the project-folder pass used to spell this condition out separately, and the
+// project-folder one simply forgot the checkboxes: unticking "Models (*.m2)"
+// hid every m2 from the archives but left the ones sitting in the project
+// folder on screen.
+bool AssetBrowserWidget::isAssetTypeEnabled(const QString& wow_file_path) const
+{
+  if (wow_file_path.endsWith(".wmo", Qt::CaseInsensitive))
+  {
+    // Group files (foo_000.wmo) and their LODs are pieces of a root WMO, not
+    // things you would ever place, so they never belong in the tree.
+    return ui->checkBox_WMOs->isChecked()
+        && !_wmo_group_and_lod_regex.match(wow_file_path).hasMatch();
+  }
+
+  if (wow_file_path.endsWith(".m2", Qt::CaseInsensitive))
+    return ui->checkBox_M2s->isChecked();
+
+  return false;
+}
+
 // Add WMOs and M2s from project directory recursively
 void AssetBrowserWidget::recurseDirectory(Model::TreeManager& tree_mgr, const QString& s_dir, const QString& project_dir)
 {
   QDir dir(s_dir);
+
+  if (!dir.exists())
+    return;
+
+  // Recorded on the way in, so the list comes out root-first and holds every
+  // directory that exists right now. refreshWatchedDirectories() consumes it.
+  _scanned_directories.append(dir.absolutePath());
+
   QFileInfoList list = dir.entryInfoList();
   for (int i = 0; i < list.count(); ++i)
   {
@@ -405,11 +485,10 @@ void AssetBrowserWidget::recurseDirectory(Model::TreeManager& tree_mgr, const QS
     }
     else
     {
-      if (!((q_path.endsWith(".wmo") && !_wmo_group_and_lod_regex.match(q_path).hasMatch())
-      || q_path.endsWith(".m2")))
-        continue;
+      QString rel_path = QDir(project_dir).relativeFilePath(q_path);
 
-      QString rel_path = QDir(project_dir).relativeFilePath(q_path.toStdString().c_str());
+      if (!isAssetTypeEnabled(rel_path))
+        continue;
 
       if (!validateBrowseMode(rel_path))
           continue;
@@ -421,7 +500,29 @@ void AssetBrowserWidget::recurseDirectory(Model::TreeManager& tree_mgr, const QS
 
 void AssetBrowserWidget::updateModelData()
 {
+  // Everything below is string enumeration and QStandardItem construction: the
+  // listfile map, a QDir walk, and TreeManager. No model or texture is loaded,
+  // no scoped_model_reference is touched, and no GL call is made -- which is
+  // what makes it safe to run off a file-system event as well as off a click.
+  // The one GL-adjacent thing in this widget is the preview render hung off
+  // QTreeView::expanded, and the expansion restore below is careful to keep it
+  // from firing.
+
+  // Rebuilding the model throws away the selection, the scroll offset and every
+  // expanded folder. That is merely annoying when the user asked for a rescan;
+  // it is unacceptable when the watcher fires unannounced under their cursor.
+  QStringList const previously_expanded = collectExpandedPaths();
+  int const previous_scroll = ui->listfileTree->verticalScrollBar()->value();
+  QString previously_selected;
+  {
+    QModelIndex const current = ui->listfileTree->selectionModel()->currentIndex();
+    if (current.isValid())
+      previously_selected = current.data(Qt::UserRole).toString();
+  }
+
   _model->clear();
+  _scanned_directories.clear();
+
   Model::TreeManager tree_mgr =  Model::TreeManager(_model);
   for (auto const& key_pair : Noggit::Application::NoggitApplication::instance()->clientData()->listfile()->pathToFileDataIDMap())
   {
@@ -429,9 +530,7 @@ void AssetBrowserWidget::updateModelData()
 
     QString const q_path = QString(key_pair.first.c_str());
 
-    if (!( (ui->checkBox_WMOs->isChecked() && q_path.endsWith(".wmo")  && !_wmo_group_and_lod_regex.match(q_path).hasMatch())
-        || (ui->checkBox_M2s->isChecked() && q_path.endsWith(".m2")) 
-        ))
+    if (!isAssetTypeEnabled(q_path))
       continue;
 
     if (!validateBrowseMode(q_path))
@@ -441,7 +540,6 @@ void AssetBrowserWidget::updateModelData()
   }
 
 
-  QSettings settings;
   QString project_dir = QString(Noggit::Project::CurrentProject::get()->ProjectPath.c_str());
   recurseDirectory(tree_mgr, project_dir, project_dir);
 
@@ -464,10 +562,293 @@ void AssetBrowserWidget::updateModelData()
   {
       ui->listfileTree->expandAll();
   }
+
+  {
+    // Signals stay blocked while we put the view back the way we found it.
+    // QTreeView::expanded is wired to the preview renderer, which loads the
+    // model behind each child row; letting a rescan re-trigger that would mean
+    // constructing model references off a file-system event, which is exactly
+    // what the async refcounting rules forbid. The consequence is that preview
+    // icons under a restored folder come back blank until the user collapses
+    // and re-expands it -- a fair trade for not touching the loader.
+    // The selection model is blocked for the same class of reason: re-emitting
+    // selectionChanged would make the viewport reload a model it already has.
+    QSignalBlocker const tree_blocker(ui->listfileTree);
+    QSignalBlocker const selection_blocker(ui->listfileTree->selectionModel());
+
+    for (QString const& path : previously_expanded)
+    {
+      QModelIndex const index = indexForPath(path);
+      if (index.isValid())
+        ui->listfileTree->setExpanded(index, true);
+    }
+
+    if (!previously_selected.isEmpty())
+    {
+      QModelIndex const index = indexForPath(previously_selected);
+      if (index.isValid())
+      {
+        ui->listfileTree->selectionModel()->setCurrentIndex(
+            index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+      }
+    }
+  }
+
+  // After the expansion restore, because expanding rows changes the scrollable
+  // range and the bar would otherwise clamp to the collapsed maximum.
+  ui->listfileTree->verticalScrollBar()->setValue(previous_scroll);
+
+  // The view learns which rows to paint as selected from the selection model's
+  // signals, which were blocked above; the state is right but nothing asked for
+  // a repaint.
+  ui->listfileTree->viewport()->update();
+
+  // New subdirectories only exist once the scan has seen them, so the watcher
+  // is re-pointed here rather than at setup time.
+  refreshWatchedDirectories();
+}
+
+QStringList AssetBrowserWidget::collectExpandedPaths() const
+{
+  // Only descends into rows that are themselves expanded. QTreeView remembers
+  // the state of rows hidden under a collapsed parent, so this is not the
+  // complete set -- but it is exactly the set the user can see, which is the
+  // set whose loss they would notice.
+  QStringList expanded;
+
+  std::function<void(QModelIndex const&)> walk = [&] (QModelIndex const& parent)
+  {
+    for (int i = 0; i < _sort_model->rowCount(parent); ++i)
+    {
+      QModelIndex const child = _sort_model->index(i, 0, parent);
+
+      if (!ui->listfileTree->isExpanded(child))
+        continue;
+
+      expanded << child.data(Qt::UserRole).toString();
+      walk(child);
+    }
+  };
+
+  walk(QModelIndex());
+
+  return expanded;
+}
+
+QModelIndex AssetBrowserWidget::indexForPath(const QString& path) const
+{
+  // TreeManager stores the cumulative lower-cased path on every node under
+  // Qt::UserRole, so a node can be found again by walking one path component at
+  // a time and comparing that role. Cost is depth * siblings, paid once per
+  // remembered folder -- there are a handful of those, not thousands.
+  QModelIndex parent;
+  QString accumulated;
+
+  for (QString const& part : path.split(QLatin1Char('/'), Qt::SkipEmptyParts))
+  {
+    accumulated = accumulated.isEmpty() ? part : accumulated + QLatin1Char('/') + part;
+
+    QModelIndex found;
+    for (int i = 0; i < _sort_model->rowCount(parent); ++i)
+    {
+      QModelIndex const child = _sort_model->index(i, 0, parent);
+      if (child.data(Qt::UserRole).toString() == accumulated)
+      {
+        found = child;
+        break;
+      }
+    }
+
+    if (!found.isValid())
+      return QModelIndex();
+
+    parent = found;
+  }
+
+  return parent;
+}
+
+void AssetBrowserWidget::setupProjectWatcher()
+{
+  // QFileSystemWatcher emits on the thread that owns it and this widget lives on
+  // the GUI thread, so the debounce timer and the tree rebuild it eventually
+  // triggers are all main-thread work -- unlike AsyncLoader::finishLoading,
+  // which is not. Parenting both objects to `this` also guarantees they cannot
+  // outlive the browser.
+  _project_watcher = new QFileSystemWatcher(this);
+
+  _rescan_debounce_timer = new QTimer(this);
+  _rescan_debounce_timer->setSingleShot(true);
+  _rescan_debounce_timer->setInterval(RESCAN_DEBOUNCE_MS);
+
+  {
+    // Restoring the persisted preference must not look like a user click, or it
+    // would kick off a watcher refresh before the first scan has run.
+    QSettings settings;
+    QSignalBlocker const blocker(ui->checkBox_AutoRescan);
+    ui->checkBox_AutoRescan->setChecked(settings.value(AUTO_RESCAN_SETTING, true).toBool());
+  }
+
+  connect(_project_watcher, &QFileSystemWatcher::directoryChanged, this
+      ,[this](const QString&)
+          {
+              if (!ui->checkBox_AutoRescan->isChecked())
+                return;
+
+              // start() on a running single-shot timer restarts it, so a burst
+              // of events collapses into one rescan after the burst ends.
+              _rescan_debounce_timer->start();
+          }
+  );
+
+  connect(_rescan_debounce_timer, &QTimer::timeout, this
+      ,[this]()
+          {
+              // Rebuilding a hidden tree is pure waste, and it is not a rare case: the widget is
+              // constructed for every MapView and immediately hidden, so the watcher is armed for
+              // the whole session whether or not the browser is ever opened. Worse, Noggit writes
+              // into the very tree being watched during ordinary editing -- every ADT save, and
+              // noggit_palettes.json on every palette change -- so an unguarded handler turns a
+              // normal texturing session into a rescan every second.
+              //
+              // The event is not dropped, only deferred: the flag below makes showEvent catch up,
+              // so opening the browser always shows what is on disk now.
+              if (!isVisible())
+              {
+                _rescan_pending_while_hidden = true;
+                return;
+              }
+
+              updateModelData();
+          }
+  );
+
+  connect(ui->checkBox_AutoRescan, &QCheckBox::toggled, this
+      ,[this](bool on)
+          {
+              QSettings settings;
+              settings.setValue(AUTO_RESCAN_SETTING, on);
+
+              if (!on)
+                _rescan_debounce_timer->stop();
+
+              refreshWatchedDirectories();
+          }
+  );
+}
+
+void AssetBrowserWidget::refreshWatchedDirectories()
+{
+  if (!_project_watcher)
+    return;
+
+  auto const unwatch_everything = [this] ()
+  {
+    QStringList const watched = _project_watcher->directories();
+    if (!watched.isEmpty())
+      _project_watcher->removePaths(watched);
+  };
+
+  if (!ui->checkBox_AutoRescan->isChecked())
+  {
+    unwatch_everything();
+    return;
+  }
+
+  // Watching only the project root would be useless: QFileSystemWatcher does not
+  // recurse, and assets live at arbitrary depth under a folder that mirrors the
+  // whole client path space (world/wmo/..., creature/..., item/...). There is no
+  // "asset-bearing root" to narrow down to. So we watch every directory the scan
+  // just walked -- which is also how a folder created since the last scan gets
+  // covered: its parent's change event causes the rescan that finds it.
+  if (_scanned_directories.size() > MAX_WATCHED_DIRECTORIES)
+  {
+    unwatch_everything();
+
+    if (!_watch_budget_exceeded)
+    {
+      _watch_budget_exceeded = true;
+
+      LogError << "Asset Browser: project folder contains " << _scanned_directories.size()
+               << " directories, over the watch budget of " << MAX_WATCHED_DIRECTORIES
+               << ". Automatic asset detection is disabled for this project because"
+                  " watching that many directories costs one OS handle each. Use the"
+                  " Rescan button after adding files on disk." << std::endl;
+
+      ui->checkBox_AutoRescan->setEnabled(false);
+      ui->checkBox_AutoRescan->setToolTip
+          ( "Disabled: this project folder has too many directories to watch"
+            " cheaply. Use the Rescan button after adding model files on disk."
+          );
+    }
+
+    return;
+  }
+
+  QStringList const currently_watched = _project_watcher->directories();
+
+  QSet<QString> const wanted_set(_scanned_directories.begin(), _scanned_directories.end());
+  QSet<QString> const watched_set(currently_watched.begin(), currently_watched.end());
+
+  QStringList to_remove;
+  for (QString const& path : currently_watched)
+  {
+    if (!wanted_set.contains(path))
+      to_remove << path;
+  }
+
+  QStringList to_add;
+  for (QString const& path : _scanned_directories)
+  {
+    if (!watched_set.contains(path))
+      to_add << path;
+  }
+
+  if (!to_remove.isEmpty())
+    _project_watcher->removePaths(to_remove);
+
+  if (!to_add.isEmpty())
+  {
+    QStringList const failed = _project_watcher->addPaths(to_add);
+
+    if (!failed.isEmpty())
+    {
+      LogError << "Asset Browser: failed to watch " << failed.size() << " of "
+               << to_add.size() << " project directories (first: "
+               << failed.first().toStdString()
+               << "). Changes under them will only be picked up by the Rescan button."
+               << std::endl;
+    }
+  }
+}
+
+void AssetBrowserWidget::showEvent(QShowEvent* event)
+{
+  QMainWindow::showEvent(event);
+
+  // A rescan the debounce timer deferred while this was hidden is paid now, once, instead of
+  // having been paid repeatedly against a tree nobody was looking at.
+  if (_rescan_pending_while_hidden)
+  {
+    _rescan_pending_while_hidden = false;
+    updateModelData();
+  }
 }
 
 AssetBrowserWidget::~AssetBrowserWidget()
 {
+  // Torn down before `ui` goes away: both handlers dereference ui->, and a timer
+  // that fired between the two deletes would read a freed form object.
+  if (_rescan_debounce_timer)
+    _rescan_debounce_timer->stop();
+
+  if (_project_watcher)
+  {
+    QStringList const watched = _project_watcher->directories();
+    if (!watched.isEmpty())
+      _project_watcher->removePaths(watched);
+  }
+
   delete ui;
   delete _preview_renderer;
 }

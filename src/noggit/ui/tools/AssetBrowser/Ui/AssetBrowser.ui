@@ -325,6 +325,35 @@
                      </property>
                     </spacer>
                    </item>
+                   <item>
+                    <widget class="QCheckBox" name="checkBox_AutoRescan">
+                     <property name="sizePolicy">
+                      <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+                       <horstretch>0</horstretch>
+                       <verstretch>0</verstretch>
+                      </sizepolicy>
+                     </property>
+                     <property name="toolTip">
+                      <string>Watch the project folder and rescan automatically a moment after files stop arriving. Turn this off if your project folder is huge and the rescan feels costly.</string>
+                     </property>
+                     <property name="text">
+                      <string>Auto-refresh</string>
+                     </property>
+                     <property name="checked">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QPushButton" name="rescanButton">
+                     <property name="toolTip">
+                      <string>Re-read the project folder and listfile - use after adding model files on disk.</string>
+                     </property>
+                     <property name="text">
+                      <string>Rescan</string>
+                     </property>
+                    </widget>
+                   </item>
                   </layout>
                  </widget>
                 </item>
