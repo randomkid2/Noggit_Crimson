@@ -27,9 +27,11 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QString>
 #include <QtCore/QStringList>
+#include <QtGui/QColor>
 #include <QtGui/QFontDatabase>
 #include <QtGui/QFontMetrics>
 #include <QtGui/QPainter>
+#include <QtGui/QPalette>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QStyle>
 
@@ -153,6 +155,14 @@ namespace
       , {0xf328, {"CLP",  QStyle::SP_CustomBase,          false}}  // clipboard
       , {0xf0c2, {"CLD",  QStyle::SP_CustomBase,          false}}  // cloud
       , {0xf013, {"CFG",  QStyle::SP_CustomBase,          false}}  // cog
+      // edit and pen (below) are the ON and OFF states of ExtendedSlider's tablet button, which
+      // every Radius / Inner Radius / Speed row carries -- fifteen instances across six tools.
+      // With no entry here fallbackLabel() fell through to the raw codepoint, so each of them
+      // rendered the literal text "f044"/"f304" inside a 22x22 box. No standard pixmap resembles
+      // a pen, and the two labels are deliberately different: they are one button's two states,
+      // so giving them the same text would hide that state from a user without the font.
+      , {0xf044, {"EDT",  QStyle::SP_CustomBase,          false}}  // edit (tablet active)
+      , {0xf12d, {"ERS",  QStyle::SP_CustomBase,          false}}  // eraser
       , {0xf06e, {"EYE",  QStyle::SP_CustomBase,          false}}  // eye
       , {0xf070, {"HID",  QStyle::SP_CustomBase,          false}}  // eyeslash
       , {0xf15b, {"FIL",  QStyle::SP_FileIcon,            true }}  // file
@@ -163,8 +173,10 @@ namespace
       , {0xf0eb, {"LGT",  QStyle::SP_CustomBase,          false}}  // lightbulb
       , {0xf279, {"MAP",  QStyle::SP_CustomBase,          false}}  // map
       , {0xf068, {"-",    QStyle::SP_CustomBase,          false}}  // minus
+      , {0xf6ff, {"NET",  QStyle::SP_DriveNetIcon,        true }}  // networkwired
       , {0xf53f, {"PAL",  QStyle::SP_CustomBase,          false}}  // palette
       , {0xf04c, {"II",   QStyle::SP_MediaPause,          true }}  // pause
+      , {0xf304, {"PEN",  QStyle::SP_CustomBase,          false}}  // pen (tablet inactive)
       , {0xf04b, {">",    QStyle::SP_MediaPlay,           true }}  // play
       , {0xf067, {"+",    QStyle::SP_CustomBase,          false}}  // plus
       , {0xf01e, {"RDO",  QStyle::SP_ArrowForward,        true }}  // redo
@@ -310,20 +322,7 @@ namespace Noggit
     {
     painter->save();
       {
-        auto temp_btn = new FontAwesomeButtonStyle();
-
-        temp_btn->ensurePolished();
-
-        if (state == QIcon::On)
-        {
-            painter->setPen(temp_btn->palette().color(QPalette::WindowText));
-        }
-        else if (state == QIcon::Off)
-        {
-            painter->setPen(temp_btn->palette().color(QPalette::Disabled, QPalette::WindowText));
-        }
-
-        delete temp_btn;
+        painter->setPen (iconPenColor (iconProbePalette<FontAwesomeButtonStyle>(), mode, state));
 
         // No Font Awesome file is shipped with this repository -- see the header comment.
         // When none is installed the icon degrades to a Qt standard icon or a text label

@@ -521,10 +521,10 @@ void Square::setup_buffers()
 
   void Line::initSpline()
   {
-      draw(glm::mat4x4{},
-          std::vector<glm::vec3>{ {}, {} },
-          glm::vec4{},
-          false);
+      // Used to force a throwaway two-point draw because draw() recreated the program and the
+      // buffers every time and the interpolated path needed them to exist first. setup_shader()
+      // now does exactly that, once.
+      setup_shader();
   }
 
   void Line::draw(glm::mat4x4 const& mvp
@@ -536,13 +536,21 @@ void Square::setup_buffers()
       if (points.size() < 2)
           return;
 
+      // Created once, then reused. This chain used to run setup_shader() on every draw, which
+      // recompiled line_vs/line_fs and called _vao.upload()/_buffers.upload() without deleting
+      // the previous names -- one VAO and two buffers leaked per draw, at frame rate in light
+      // mode. Only the vertex and index data actually varies, so only that is re-uploaded.
+      if (!_buffers_are_setup)
+      {
+          setup_shader();
+      }
+
       if (!spline || points.size() == 2)
       {
           setup_buffers(points);
       }
       else
       {
-          initSpline();
           setup_buffers_interpolated(points);
       }
 
@@ -558,18 +566,15 @@ void Square::setup_buffers()
 
   void Line::setup_buffers(std::vector<glm::vec3> const points)
   {
-      _vao.upload();
-      _buffers.upload();
-
-      std::vector<glm::vec3> vertices = points;
       std::vector<std::uint16_t> indices;
+      indices.reserve(points.size());
 
-      for (int i = 0; i < points.size(); ++i)
+      for (std::size_t i = 0; i < points.size(); ++i)
       {
-          indices.push_back(i);
+          indices.push_back(static_cast<std::uint16_t>(i));
       }
 
-      setup_shader(vertices, indices);
+      upload_geometry(points, indices);
   }
 
   void Line::setup_buffers_interpolated(std::vector<glm::vec3> const points)
@@ -615,12 +620,14 @@ void Square::setup_buffers()
           vertices.push_back(interpolate(1, p1, p2, m1, m2));
       }
 
-      for (int i = 0; i < vertices.size(); ++i)
+      indices.reserve(vertices.size());
+
+      for (std::size_t i = 0; i < vertices.size(); ++i)
       {
-          indices.push_back(i);
+          indices.push_back(static_cast<std::uint16_t>(i));
       }
 
-      setup_shader(vertices, indices);
+      upload_geometry(vertices, indices);
   }
 
   glm::vec3 Line::interpolate(float t, glm::vec3 p0, glm::vec3 p1, glm::vec3 m0, glm::vec3 m1)
@@ -634,9 +641,14 @@ void Square::setup_buffers()
       return (c0 * p0 + c1 * m0 + c2 * p1 + c3 * m1);
   }
 
-  void Line::setup_shader(std::vector<glm::vec3> vertices, std::vector<std::uint16_t> indices)
+  void Line::setup_shader()
   {
-      _indice_count = (int)indices.size();
+      if (_buffers_are_setup)
+          return;
+
+      _vao.upload();
+      _buffers.upload();
+
       _program.reset(new OpenGL::program(
           {
               { GL_VERTEX_SHADER, OpenGL::shader::src_from_qrc("line_vs") },
@@ -644,9 +656,9 @@ void Square::setup_buffers()
           }
       ));
 
-      gl.bufferData<GL_ARRAY_BUFFER, glm::vec3>(_vertices_vbo, vertices, GL_STATIC_DRAW);
-      gl.bufferData<GL_ELEMENT_ARRAY_BUFFER, std::uint16_t>(_indices_vbo, indices, GL_STATIC_DRAW);
-
+      // Wiring the VAO once is correct, not just cheaper: glVertexAttribPointer records the buffer
+      // NAME, and upload_geometry()'s glBufferData replaces the storage behind that name without
+      // changing it. The buffers have no data store yet here, which is legal.
       OpenGL::Scoped::index_buffer_manual_binder indices_binder(_indices_vbo);
       OpenGL::Scoped::use_program shader(*_program.get());
 
@@ -661,10 +673,27 @@ void Square::setup_buffers()
       _buffers_are_setup = true;
   }
 
+  void Line::upload_geometry(std::vector<glm::vec3> const& vertices
+      , std::vector<std::uint16_t> const& indices)
+  {
+      _indice_count = (int)indices.size();
+
+      gl.bufferData<GL_ARRAY_BUFFER, glm::vec3>(_vertices_vbo, vertices, GL_STATIC_DRAW);
+      gl.bufferData<GL_ELEMENT_ARRAY_BUFFER, std::uint16_t>(_indices_vbo, indices, GL_STATIC_DRAW);
+  }
+
   void Line::unload()
   {
-      _vao.unload();
-      _buffers.unload();
+      // deferred_upload_buffers::unload(), unlike its destructor, does not check the generated
+      // flag, and its name array is uninitialised -- so unloading a Line that was never drawn
+      // hands glDeleteBuffers indeterminate names. Guarded here because the GL objects are now
+      // created on first draw. The other primitives in this file have the same shape untouched.
+      if (_buffers_are_setup)
+      {
+          _vao.unload();
+          _buffers.unload();
+      }
+
       _program.reset();
 
       _buffers_are_setup = false;

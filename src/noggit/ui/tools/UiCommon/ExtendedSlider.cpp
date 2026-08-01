@@ -107,10 +107,7 @@ ExtendedSlider::ExtendedSlider(QWidget* parent)
           {
             const QSignalBlocker blocker(_ui.doubleSpinBox);
 
-            double spin_value = (_ui.doubleSpinBox->maximum() - _ui.doubleSpinBox->minimum())
-            * (v / static_cast<float>((_ui.slider->maximum() - _ui.slider->minimum())));
-
-            _ui.doubleSpinBox->setValue(spin_value);
+            _ui.doubleSpinBox->setValue(sliderToSpin(v));
             _ui.pressureBar->setValue(v);
 
             emit valueChanged(value());
@@ -121,8 +118,7 @@ ExtendedSlider::ExtendedSlider(QWidget* parent)
           {
               const QSignalBlocker blocker(_ui.slider);
 
-              int slider_value = (_ui.slider->maximum() - _ui.slider->minimum())
-                                  * (_ui.doubleSpinBox->value() / (_ui.doubleSpinBox->maximum() - _ui.doubleSpinBox->minimum()));
+              int const slider_value = spinToSlider(_ui.doubleSpinBox->value());
 
               _ui.slider->setValue(slider_value);
               _ui.pressureBar->setValue(slider_value);
@@ -132,11 +128,78 @@ ExtendedSlider::ExtendedSlider(QWidget* parent)
   connect(_tablet_manager, &Noggit::TabletManager::pressureChanged,
           [=](double pressure)
           {
-              int p_value = (_ui.slider->maximum() - _ui.slider->minimum())
-                             * (value() / (_ui.doubleSpinBox->maximum() - _ui.doubleSpinBox->minimum()));
-
-              _ui.pressureBar->setValue(p_value);
+              // The third copy of the spinbox -> slider mapping, and safe to fold into the
+              // shared one: the bar is always given the slider's range (setSliderRange, and
+              // the constructor above sets both to 0..100).
+              _ui.pressureBar->setValue(spinToSlider(value()));
           });
+}
+
+// The slider and the spinbox carry the same quantity on two scales, and the conversion between
+// them was written out three times: slider -> spin, spin -> slider, and a third copy in the
+// tablet-pressure handler. One pair of named functions now, so the directions cannot drift.
+//
+// The arithmetic also gained the offset of the spinbox minimum, which none of the three copies
+// had -- they mapped the slider's travel onto the spinbox's RANGE (max - min) and used the
+// result as an absolute value. THAT IS NOT A LIVE BUG AND NOTHING A USER CAN SEE CHANGES.
+// Every ExtendedSlider constructed in this tree has a spinbox minimum of exactly 0, and the
+// slider's own minimum is 0 as well (set in the constructor above; setSliderRange has no
+// caller), so the offset term is zero in both directions and the old and new forms compute the
+// same number. All eighteen construction sites, with the range each is given:
+//
+//   TerrainTool.cpp:96,102,119                0..1000, 0..1, 0..1000
+//   texturing_tool.cpp:87,96,104              0..1, 0..1000, 0..1
+//   FlattenTool.cpp:116,122                   0..1000, 0..10
+//   ShaderTool.cpp:39,47                      0..10000, 0..10
+//   ErosionToolSettings.cpp:142,149,166,175   0..200, 0..1, 0..MAX_REPOSE_ANGLE_DEGREES,
+//                                             0..MAX_STABLE_STRENGTH
+//   GroundEffectsTool.cpp:265                 0..1000
+//   BrushStack.ui:45,55,65                    maximum only; QDoubleSpinBox's default minimum
+//                                             is 0 and nothing overrides it
+//
+// texturing_tool.cpp:181 is NOT one of them, and any claim that it is should be treated as a
+// misreading of the same grep: `_spray_size_slider` (100..4000) is a plain QSlider driving a
+// plain QDoubleSpinBox, declared as QSlider* at texturing_tool.hpp:173. It has its own
+// conversion in that file and never reaches this class.
+//
+// So the offset is here for the next caller that sets a non-zero minimum, not for any that
+// exists. Saved presets are unaffected either way: TerrainTool::toJSON and its siblings store
+// rawValue(), the spinbox reading, not the slider position.
+//
+// The zero-span guards are new. Nothing sets a degenerate range today, but the old expressions
+// divided by (max - min) unguarded, and static_cast<int> of the resulting infinity is undefined
+// behaviour rather than a wrong pixel -- worth closing while the arithmetic is being touched.
+double ExtendedSlider::sliderToSpin(int slider_value) const
+{
+  int const slider_span (_ui.slider->maximum() - _ui.slider->minimum());
+
+  if (slider_span <= 0)
+  {
+    return _ui.doubleSpinBox->minimum();
+  }
+
+  double const spin_min (_ui.doubleSpinBox->minimum());
+  double const spin_span (_ui.doubleSpinBox->maximum() - spin_min);
+
+  return spin_min
+       + spin_span * ((slider_value - _ui.slider->minimum()) / static_cast<double>(slider_span));
+}
+
+int ExtendedSlider::spinToSlider(double spin_value) const
+{
+  double const spin_min (_ui.doubleSpinBox->minimum());
+  double const spin_span (_ui.doubleSpinBox->maximum() - spin_min);
+
+  if (spin_span <= 0.0)
+  {
+    return _ui.slider->minimum();
+  }
+
+  int const slider_min (_ui.slider->minimum());
+  int const slider_span (_ui.slider->maximum() - slider_min);
+
+  return slider_min
+       + static_cast<int>(slider_span * ((spin_value - spin_min) / spin_span));
 }
 
 void ExtendedSlider::setMinimum(double min)

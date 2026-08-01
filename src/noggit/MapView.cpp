@@ -2480,11 +2480,173 @@ std::string MapView::handleBridgeCommand(std::string const& line)
     return out.str();
   }
 
+  // Frame timing over the rolling window paintGL fills. Percentiles rather than a mean alone,
+  // because a mean of 16ms is indistinguishable between a steady 60 FPS and a 60 FPS that stalls
+  // for 90ms once a second -- and only one of those two feels bad to use.
+  //
+  // The sorting happens here, on a copy, once per invocation. Nothing about it runs per frame.
+  if (command == "perf")
+  {
+    std::size_t const retained (std::min (_perf_samples_recorded, PERF_WINDOW_CAPACITY));
+
+    if (retained == 0)
+    {
+      return "ERR no frames sampled yet (the window is empty; move the camera or wait a second)";
+    }
+
+    // Oldest retained sample. Until the ring has wrapped the window starts at zero; afterwards the
+    // write cursor is sitting on the oldest entry, about to overwrite it.
+    std::size_t const oldest
+      (_perf_samples_recorded <= PERF_WINDOW_CAPACITY ? 0 : _perf_write_index);
+
+    std::vector<float> work;
+    std::vector<float> intervals;
+
+    work.reserve (retained);
+    intervals.reserve (retained);
+
+    std::size_t rendered_count = 0;
+    std::size_t skipped_count = 0;
+
+    std::int64_t first_ns = 0;
+    std::int64_t last_ns = 0;
+
+    // -1 means "no drawn frame seen yet", so the first one does not produce an interval.
+    std::int64_t previous_rendered_ns = -1;
+
+    for (std::size_t i = 0; i < retained; ++i)
+    {
+      PerfSample const& sample = _perf_window[(oldest + i) % PERF_WINDOW_CAPACITY];
+
+      if (i == 0)
+      {
+        first_ns = sample.entered_ns;
+      }
+
+      last_ns = sample.entered_ns;
+
+      if (!sample.rendered)
+      {
+        ++skipped_count;
+        continue;
+      }
+
+      ++rendered_count;
+      work.push_back (sample.work_ms);
+
+      // Drawn frame to drawn frame, skipping over the paints that declined. This is the interval
+      // the eye sees; work_ms is only the part of it the editor spent building the frame, and the
+      // gap between the two is the FPS cap plus the buffer swap.
+      if (previous_rendered_ns >= 0)
+      {
+        intervals.push_back
+          (static_cast<float> (sample.entered_ns - previous_rendered_ns) / 1000000.0f);
+      }
+
+      previous_rendered_ns = sample.entered_ns;
+    }
+
+    std::sort (work.begin(), work.end());
+    std::sort (intervals.begin(), intervals.end());
+
+    // Nearest-rank, the definition that always returns a value that was actually measured. An
+    // interpolating percentile would invent a frame time no frame had, which is a poor property
+    // for a number whose job is to name a specific hitch.
+    auto const percentile = [] (std::vector<float> const& sorted, double p) -> double
+    {
+      if (sorted.empty())
+      {
+        return 0.0;
+      }
+
+      std::size_t rank
+        (static_cast<std::size_t> (std::ceil (p / 100.0 * static_cast<double> (sorted.size()))));
+
+      rank = std::max<std::size_t> (rank, 1);
+      rank = std::min (rank, sorted.size());
+
+      return sorted[rank - 1];
+    };
+
+    auto const mean = [] (std::vector<float> const& values) -> double
+    {
+      if (values.empty())
+      {
+        return 0.0;
+      }
+
+      double total = 0.0;
+
+      for (float value : values)
+      {
+        total += value;
+      }
+
+      return total / static_cast<double> (values.size());
+    };
+
+    double const span_ms (static_cast<double> (last_ns - first_ns) / 1000000.0);
+
+    std::ostringstream out;
+    out << std::fixed << std::setprecision (2);
+
+    out << "OK window=" << retained << '/' << PERF_WINDOW_CAPACITY
+        << " recorded=" << _perf_samples_recorded
+        << " rendered=" << rendered_count
+        << " skipped=" << skipped_count
+        << " span_ms=" << span_ms;
+
+    // Reported so nobody reads frame_p50 as a hardware result. The editor drives repaints from a
+    // QTimer at this rate, so the interval cannot go below 1000/fps_limit however fast the frame
+    // is built -- which makes work_* the metric with headroom in it, and frame_* the metric that
+    // shows hitches.
+    out << " fps_limit=" << _settings->value ("fps_limit", 60).toInt();
+
+    out << " work_mean_ms=" << mean (work)
+        << " work_p50_ms=" << percentile (work, 50.0)
+        << " work_p95_ms=" << percentile (work, 95.0)
+        << " work_p99_ms=" << percentile (work, 99.0)
+        << " work_min_ms=" << (work.empty() ? 0.0f : work.front())
+        << " work_max_ms=" << (work.empty() ? 0.0f : work.back());
+
+    out << " frame_mean_ms=" << mean (intervals)
+        << " frame_p50_ms=" << percentile (intervals, 50.0)
+        << " frame_p95_ms=" << percentile (intervals, 95.0)
+        << " frame_p99_ms=" << percentile (intervals, 99.0)
+        << " frame_min_ms=" << (intervals.empty() ? 0.0f : intervals.front())
+        << " frame_max_ms=" << (intervals.empty() ? 0.0f : intervals.back());
+
+    double const mean_interval (mean (intervals));
+
+    out << " fps_mean=" << (mean_interval > 0.0 ? 1000.0 / mean_interval : 0.0);
+
+    // The same four counts the status bar shows, read from the same places (MapView.cpp, the
+    // _status_culling line in tick) rather than recomputed here. Two sources for one number is how
+    // they end up disagreeing.
+    out << " loaded_tiles=" << _world->getNumLoadedTiles()
+        << " rendered_tiles=" << _world->getNumRenderedTiles()
+        << " loaded_objects=" << _world->getModelInstanceStorage().getTotalModelsCount()
+        << " rendered_objects=" << _world->getNumRenderedObjects();
+
+    return out.str();
+  }
+
+  // Scopes a measurement to one action: reset, do the thing, read perf. Without this every
+  // reading would be diluted by whatever the editor was doing beforehand, including the several
+  // seconds of tile streaming after a load.
+  if (command == "perfreset")
+  {
+    _perf_write_index = 0;
+    _perf_samples_recorded = 0;
+
+    return "OK frame window cleared";
+  }
+
   if (command == "help")
   {
     return "OK ping | status | camera <x> <y> <z> | goto <sx> <sy> <sz> | look <yaw> <pitch> | "
            "loadspawns [all [force]] | dbspawns on|off | screenshot <path> | menus | tools | "
-           "trigger <substring> | help";
+           "trigger <substring> | perf | perfreset | help";
   }
 
   return "ERR unknown command \"" + command + "\" (try help)";
@@ -5053,10 +5215,39 @@ MapView::MapView( math::degrees camera_yaw0
 
   _startup_time.start();
 
-  int _fps_limit = _settings->value("fps_limit", 60).toInt();
-  int _frametime = static_cast<int>((1.f / static_cast<float>(_fps_limit)) * 1000.f);
+  // The default was 60, and measurement showed that is where nearly all the frame budget went:
+  // 2.5 ms of work inside paintGL against a 15.9 ms frame, so 84% of every frame was spent
+  // waiting on this timer. No renderer optimisation can be seen while that holds -- halving the
+  // work produces an identical frame interval. 144 is a common high-refresh rate and remains a
+  // cap rather than a target; the setting is unchanged and anyone who wants 60 can set it.
+  // One-time migration off the old 60 default. Raising the default alone would have changed
+  // nothing for anyone who has ever opened this build before, because QSettings already holds
+  // their 60 -- and "the default is now 144" reads like a fix while doing literally nothing.
+  //
+  // Keyed on a marker rather than on the value, so this runs exactly once. Someone who genuinely
+  // wants 60 sets it after the migration and it stays; the marker is already written by then.
+  if (!_settings->value("fps_limit_default_migrated", false).toBool())
+  {
+    if (_settings->value("fps_limit", 60).toInt() == 60)
+    {
+      _settings->setValue("fps_limit", 144);
+    }
+
+    _settings->setValue("fps_limit_default_migrated", true);
+  }
+
+  int _fps_limit = _settings->value("fps_limit", 144).toInt();
+
+  // A stored 0 or a negative value used to divide by zero and then convert a non-finite float to
+  // int, which is undefined behaviour. Clamped rather than trusted.
+  _fps_limit = std::clamp(_fps_limit, 1, 1000);
+
+  int _frametime = std::max(1, static_cast<int>(1000.f / static_cast<float>(_fps_limit)));
   std::cout << "FPS limit is set to : " << _fps_limit << " (" << _frametime << ")" << std::endl;
 
+  // PreciseTimer, because Qt's default CoarseTimer allows 5% drift -- at these intervals that is
+  // most of a frame, and it is the difference between a steady cadence and visible unevenness.
+  _update_every_event_loop.setTimerType (Qt::PreciseTimer);
   _update_every_event_loop.start (_frametime);
   connect(&_update_every_event_loop, &QTimer::timeout,[=]
       { 
@@ -5235,11 +5426,25 @@ void MapView::paintGL()
   if (lock)
     return;
 
+  // Read before the early-return test below, so that a paint which draws nothing is still a
+  // sample. That is the whole point of the `rendered` flag: an idle editor gets a paint event on
+  // every timer tick and declines almost all of them, and treating those as sub-microsecond frames
+  // would make idling look like the fastest the editor ever runs.
+  //
+  // -1 rather than 0 when the clock has not been started. _startup_time.start() happens in the
+  // constructor, but paintGL is reachable from Qt before it and nsecsElapsed() on an unstarted
+  // QElapsedTimer is meaningless; recordPerfSample drops the sample instead of recording a frame
+  // that appears to have taken the age of the universe.
+  std::int64_t const perf_entered_ns (_startup_time.isValid() ? _startup_time.nsecsElapsed() : -1);
+
   // _force_single_render is checked alongside the ordinary flag so a bridge screenshot cannot be
   // starved by the animation repaint consuming _needs_redraw first. Cleared here, by the paint it
   // was set for.
   if (!_needs_redraw && !_force_single_render)
+  {
+    recordPerfSample (perf_entered_ns, perf_entered_ns, false);
     return;
+  }
 
   _needs_redraw = false;
   _force_single_render = false;
@@ -5403,7 +5608,30 @@ void MapView::paintGL()
     );
   }
 
+  // Closed here and only here on the drawing path. The two early returns above it -- a lost GL
+  // context, a tool refusing preRender -- exit before any drawing and are transitions rather than
+  // frames; sampling them would put durations in the window that measure something else entirely.
+  // Leaving them out costs a hole in _perf_samples_recorded, which is a far smaller lie.
+  recordPerfSample (perf_entered_ns, _startup_time.nsecsElapsed(), true);
+
   FrameMark
+}
+
+void MapView::recordPerfSample (std::int64_t entered_ns, std::int64_t left_ns, bool rendered)
+{
+  if (entered_ns < 0)
+  {
+    return;
+  }
+
+  PerfSample& sample = _perf_window[_perf_write_index];
+
+  sample.entered_ns = entered_ns;
+  sample.work_ms = static_cast<float> (left_ns - entered_ns) / 1000000.0f;
+  sample.rendered = rendered;
+
+  _perf_write_index = (_perf_write_index + 1) % PERF_WINDOW_CAPACITY;
+  ++_perf_samples_recorded;
 }
 
 void MapView::resizeGL (int width, int height)

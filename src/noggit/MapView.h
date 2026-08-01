@@ -18,6 +18,7 @@
 #include <QtCore/QTimer>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <forward_list>
 #include <vector>
@@ -606,6 +607,52 @@ private:
   std::list<qreal> _last_frame_durations;
 
   float _last_fps_update = 0.f;
+
+  // One sampled call to paintGL, for the dev bridge's `perf` command.
+  //
+  // This exists alongside _last_frame_durations above rather than reusing it, and the reason is
+  // that the status bar's list cannot answer the question `perf` is for. It is cleared once a
+  // second and only ever collapsed to a mean, and a mean is precisely the statistic that hides a
+  // 90ms hitch inside an otherwise unremarkable second -- while a hitch every second is exactly
+  // what "it feels bad" means. Percentiles need every sample kept.
+  struct PerfSample
+  {
+    // Monotonic nanoseconds since _startup_time.start(), taken on entry to paintGL. Stored as well
+    // as the duration because the interval between consecutive drawn frames -- the number that
+    // actually is the frame rate -- cannot be recovered from durations alone.
+    std::int64_t entered_ns;
+
+    // Wall time spent inside the body of paintGL, in milliseconds. CPU-side submission work only:
+    // the buffer swap happens after paintGL returns and so is not included, and GL commands are
+    // asynchronous, so this is not GPU time either. It is what the editor spends building a frame.
+    float work_ms;
+
+    // False when paintGL declined to draw. It early-returns whenever _needs_redraw is clear, and
+    // counting those as very fast frames would let an idle editor report a flattering mean.
+    bool rendered;
+  };
+
+  // 4096 samples is a little over a minute at the default 60 FPS cap: long enough that a scenario
+  // does not have to be measured in a hurry, small enough (64 KiB) to sort in the command handler
+  // without anyone noticing.
+  static constexpr std::size_t PERF_WINDOW_CAPACITY = 4096;
+
+  // Fixed storage, written in place, no locking. An instrument that allocates or blocks on the
+  // render path changes the thing it is measuring. paintGL and handleBridgeCommand both run on the
+  // GUI thread, so there is nothing to synchronise against and nothing is paid for.
+  std::array<PerfSample, PERF_WINDOW_CAPACITY> _perf_window {};
+
+  // Where the next sample goes. Wraps; the window is a ring.
+  std::size_t _perf_write_index = 0;
+
+  // Total samples taken since the last `perfreset`, which is *not* the number retained once the
+  // ring has wrapped. Both numbers are reported so a reader can tell a full window from a partial
+  // one, and can see when a scenario overran the buffer.
+  std::size_t _perf_samples_recorded = 0;
+
+  // Records one call to paintGL. entered_ns below zero means the clock was not running yet and the
+  // sample is dropped.
+  void recordPerfSample (std::int64_t entered_ns, std::int64_t left_ns, bool rendered);
 
   QTimer _update_every_event_loop;
 

@@ -47,13 +47,37 @@
  *   text          #C6CCD6   body -- default label and control text
  *   text.dim      #8A93A0   section titles, dock titles, captions, units
  *   text.off      #59606B   disabled; deliberately sub-threshold, that IS the
- *                           disabled signal
+ *                           disabled signal. Sub-threshold for TEXT on a panel
+ *                           is not sub-threshold for a 1px STROKE on a
+ *                           floating bar -- it measures 2.12:1 there -- so it
+ *                           does a second job as the edge of the HOVER plate on
+ *                           the view-toggle bar. Different role, different
+ *                           threshold; it is still never used as body text.
  *
  * ACCENT -- warm red. Selection, focus, checked state, the active tool. It is
  * the only saturated colour in the chrome; if it shows up anywhere that is not
  * "this is the thing you are acting on", that is a bug.
  *   accent        #E8543F
  *   accent.dim    #B33F2E   pressed
+ *
+ * Accent carries two DIFFERENT marks and the distinction is the whole of the
+ * view-toggle bar's design, so it is stated here rather than only there.
+ *
+ * As a FILL it means ONE checked thing out of a set: the exclusive left tool
+ * strip, a selected tab, a selected row -- "the thing you are acting on".
+ *
+ * As a 2px RULE along one edge it means a LATCHED TOGGLE is on. That is the
+ * mark the tab bar already uses (border-bottom) and the tool strip already
+ * uses (border-left), and it is what the view bar gets. The bar holds 20
+ * independent visibility switches (counted from the live add_tool_icon calls
+ * in ViewToolbar.cpp's second constructor; the 21st button on it is the
+ * history QPushButton, which is not checkable), of which 8 are ON at startup
+ * -- read off the BoolToggleProperty initialisers in MapView.h, not guessed.
+ * Filling 8 of 20 faces with accent would be noise; ruling 8 of 20 bottom
+ * edges is not, and it is the only mark in this palette that clears the 3:1
+ * floor for a graphical state indicator on a bg.overlay bar (3.69:1, where
+ * the best available NEUTRAL is 2.12:1). See the floating-bar block near the
+ * end of this file for the per-state numbers.
  *
  * STATUS -- meaning, never decoration.
  *   ok            #4FB477
@@ -65,7 +89,13 @@
  *
  * DERIVED. Three values the token table does not name but the sheet needs.
  * They are computed from the tokens above, not invented alongside them.
- *   stroke.hi     #454C59   hover outline; halfway stroke -> text.off
+ *   stroke.hi     #454C59   hover outline; halfway stroke -> text.off. It has a
+ *                           second job as the HOVER FILL on the floating bars,
+ *                           whose own surface is bg.overlay: it is the only
+ *                           neutral that separates from that bar by more than a
+ *                           rounding error -- 1.56:1 against #2A2F38, where the
+ *                           surface immediately above it is 1.18:1 and the one
+ *                           below 1.13:1, both invisible at icon-button size.
  *   bg.alt        #1E222A   alternating item-view row; halfway base -> raised
  *   ink           #16181D   text drawn ON an accent fill. 4.85:1 against
  *                           #E8543F; #EDF0F4 would be 3.19:1 and fail.
@@ -252,13 +282,29 @@ QDockWidget {
 }
 
 /* Dock titles are chrome, not content: same surface as the panel they head,
-   separated by a hairline rather than by being a lighter slab. */
+   separated by a hairline rather than by being a lighter slab.
+
+   They are NOT the same rank as a section heading, though, and until now they
+   were drawn in the same 11/600 text.dim as every QGroupBox title inside the
+   panel. The tool dock retitles itself to the active tool on every mode change
+   (MapView sets the dock's window title from the tool's name), so this line is
+   the app's answer to "which tool am I in" -- it has to out-rank the headings
+   below it or it reads as one more divider. 13/600 text.hi plus the 2px accent
+   bar, which is the same mark the exclusive tool strip uses, and for the same
+   reason: this is the thing you are acting on.
+
+   The bar is on the LEFT because a dock title is a horizontal band whose left
+   edge is where the eye starts; a bottom bar here would collide with the
+   hairline that already separates the title from the panel. */
 QDockWidget::title {
 	background-color: #1B1E24;
-	color: #8A93A0;
+	color: #EDF0F4;
 	border: none;
+	border-left: 2px solid #E8543F;
 	border-bottom: 1px solid #262B33;
-	padding: 8px 8px 7px 12px;
+	padding: 8px 8px 7px 10px;
+	font-size: 13px;
+	font-weight: 600;
 	text-align: left;
 }
 
@@ -426,9 +472,16 @@ QToolBar::handle:vertical {
 
 /* The status bar carries tile coordinates, client and server position, zone,
    in-game time, FPS and the loaded/rendered counts. It is chrome reporting on
-   content, so it takes the recessed surface and a hairline lid; the numbers
-   themselves are lifted to text.hi by the [state] rules below where the code
-   sets them. */
+   content, so it takes the recessed surface and a hairline lid.
+
+   The numbers are NOT differentiated from their captions today, and this sheet
+   cannot do it alone: the QLabel[state="value"] rule further down is the
+   mechanism, and nothing in src/ calls setProperty("state", ...) on anything,
+   so it has never fired. Whoever wires it up sets the property once at
+   construction (before the first polish, so no unpolish/polish dance is
+   needed) on the readouts that are actually glanced -- FPS, position, the
+   loaded/rendered counts. Until then this bar is uniform text.dim by
+   construction, not by choice. */
 QStatusBar {
 	background-color: #16181D;
 	color: #8A93A0;
@@ -591,7 +644,24 @@ QToolButton:pressed {
    contrast step, which at icon-button size is invisible, so the bar was left
    carrying the whole signal -- and a 2px vertical line between two icons reads
    as a SEPARATOR, not as state. The wash makes the button itself the mark and
-   demotes the bar to its edge. */
+   demotes the bar to its edge.
+
+   This rule is now the EXCLUSIVE-SELECTION look: the left tool strip, whose
+   actions share one QActionGroup, so exactly one of them is checked and accent
+   means "the tool you are editing with". The independent view toggles are
+   overridden by class near the end of the file.
+
+   The obvious way to write that override would have been
+       QToolBar:horizontal QToolButton:checked
+   and it does not work. QCss::Selector::pseudoClass() reads
+   basicSelectors.last() and nothing else, and QCss::StyleSelector
+   (qcssparser_p.h:654-687) exposes virtuals for a node's name, ids and
+   attributes but NONE for its pseudo-state -- there is no hook with which an
+   ancestor's :horizontal could ever be evaluated. Qt parses the selector,
+   silently drops the ancestor pseudo, and the rule then matches every toolbar
+   in the app including this one. Ancestors may be matched by class name, by
+   #objectName or by [attribute]; never by pseudo-state. check_qss.py fails the
+   sheet if one is reintroduced. */
 QToolButton:checked {
 	background-color: rgba(232, 84, 63, 0.26);
 	color: #EDF0F4;
@@ -1551,11 +1621,34 @@ QScrollArea > QWidget > QWidget {
 	background: transparent;
 }
 
-/* The right-hand tool dock. The horizontal padding here is what stops every
-   control in the panel from touching the dock edge. */
-QScrollArea#dockWidgetScrollArea {
+/* The right-hand tool dock. This used to claim it was what stopped every
+   control in the panel from touching the dock edge, and it was not: the only
+   thing in the tree that sets the object name "dockWidgetScrollArea" is the
+   Advanced Docking System (external/QtAdvancedDockingSystem/src/DockWidget.cpp),
+   which is linked but never instantiated -- see the ADS block at the bottom.
+   The rule has therefore never matched anything.
+
+   The scroll area the tool dock actually builds comes from
+   src/noggit/ui/tools/ToolPanel/ToolPanelScroll.ui, where it is named
+   "scrollArea" and its content widget "scrollAreaWidgetContents". Both names
+   are unique in this tree. All four layout margins in that form are 0, so the
+   panel has genuinely had no horizontal breathing room.
+
+   The ADS name is kept so the rule is still there if ADS is ever switched on.
+   HONEST LIMIT: whether Qt honours `padding` as a layout inset on a
+   QScrollArea / plain QWidget is not something this sheet can prove, and it
+   was not verified against a running editor. If it does nothing it costs
+   nothing -- but do not read this rule as evidence that the padding is
+   applied. The reliable fix is contentsMargins in the form. */
+QScrollArea#dockWidgetScrollArea,
+QScrollArea#scrollArea {
 	background: transparent;
 	border: none;
+	padding: 0px 4px;
+}
+
+QWidget#scrollAreaWidgetContents {
+	background: transparent;
 	padding: 0px 4px;
 }
 
@@ -1652,7 +1745,21 @@ QWidget#leftSecondaryToolbarHolder {
 }
 
 /* Floating bars sit on top of the render. QSS has no box-shadow; the border
-   and the lighter fill are what separate them from the viewport behind. */
+   and the lighter fill are what separate them from the viewport behind.
+
+   KNOWN DEAD, LEFT IN PLACE: Noggit--Ui--toolbar (the left tool strip) matches
+   nothing. Qt resolves a QSS type selector against metaObject()->className()
+   and its superclass chain, and Noggit::Ui::toolbar carries no Q_OBJECT macro
+   (src/noggit/ui/Toolbar.h) -- there is no moc_Toolbar.cpp among the 580
+   generated in build/noggit_autogen, so its className is literally "QToolBar".
+   The left strip consequently falls through to the plain QToolBar rule further
+   up and is drawn as a docked bar rather than a floating one.
+
+   Not fixed here on purpose. The fix is one line in a header that this change
+   does not own, and making the selector live by other means -- scoping it to
+   #leftToolbarHolder -- would silently change the look of the most prominent
+   chrome in the editor with no way to check the result by eye from a style
+   sheet. Recorded so the next person does not re-derive it. */
 Noggit--Ui--toolbar,
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar,
 QWidget#gizmoBar {
@@ -1661,6 +1768,191 @@ QWidget#gizmoBar {
 	border-radius: 4px;
 	padding: 4px;
 	spacing: 2px;
+}
+
+/* --- the view-toggle bar ------------------------------------------------- */
+
+/* The 20 checkable buttons across the top of the viewport: Doodads, WMOs, WMO
+   doodads, WMO exterior, Terrain, Water, Lines, Hole lines, Wireframe,
+   Contours, Climb, Vertex Color, Baked Shadows, Animations, Fog, Flight
+   bounds, Models with box, Hidden models, Show Minimap, Details info. Twenty
+   is a count of the live add_tool_icon calls in ViewToolbar's second
+   constructor, not an estimate -- three further calls in that file are
+   commented out, and the twenty-first button on the bar is the history
+   QPushButton, which is neither a QToolButton nor checkable.
+
+   EIGHT of the twenty are ON at startup, not "most": _draw_models, _draw_wmo,
+   _draw_wmo_doodads, _draw_wmo_exterior, _draw_terrain, _draw_water,
+   _draw_vertex_color and _draw_model_animations, read off the
+   BoolToggleProperty initialisers in MapView.h. The other twelve default OFF.
+   Two things had to be fixed here and that 8/20 split is why the first answer
+   to each of them was wrong.
+
+   ONE -- HOVER. The base QToolButton:hover fills with bg.overlay #2A2F38 and
+   this bar's own surface IS bg.overlay, so pointing at a button did literally
+   nothing: 1.000:1. The first re-basing of this block picked stroke #343A45,
+   which measures 1.176:1 -- and the base QToolButton:checked comment above
+   rejects a 1.13 step as invisible at icon-button size for the identical
+   case, so that was the same defect one shade along, not a fix for it. Hover
+   is now the stroke.hi plate at 1.556:1 carrying a 1px text.off edge at
+   2.119:1: two cues, both clear of the 1.13--1.18 band this sheet calls
+   invisible.
+
+   TWO -- ON. What stood here before this block existed was the base
+   QToolButton:checked look, and it was NOT a filled red box. The accent wash
+   rgba(232, 84, 63, 0.26) composites over this bar to #5B393A and measures
+   1.339:1; the signal was the base rule's 2px accent LEFT border at 3.694:1.
+   Replacing that with a stroke.hi plate (1.556:1) edged in text.off (2.119:1)
+   therefore did not remove a loud fill. It removed the only element on the
+   button that cleared 3:1 and capped the whole ON signal at 2.119:1.
+
+   That cap is worse than it looks, because the glyph no longer helps. The
+   icon engines used to paint an unchecked icon in the disabled colour and a
+   checked one in the normal colour; that was a legibility bug and has been
+   fixed to key off QIcon::Mode, so the glyph is #C6CCD6 whichever way the
+   toggle sits. `color` in the rules below cannot reach it either -- the
+   engines resolve their pen from their own probe widget, not from the button.
+   The border and background below ARE the entire ON signal.
+
+   So ON goes back to accent, but as an EDGE rather than a face: 2px of
+   border-bottom in #E8543F, 3.694:1 against the bar. That is the only mark in
+   this palette which clears the 3:1 floor for a graphical state indicator on
+   a bg.overlay surface -- the best available neutral, text.off, is 2.119:1
+   and stroke.hi is 1.556:1. Loudness is bounded by AREA instead of by
+   contrast, not by dulling the colour: the button renders 42x38 with a 22px
+   icon, so the mark covers 2 rows of 38, 5.3% of the face, against 100% for a
+   wash. Eight of those at rest reads as a broken rule along the foot of the
+   bar, not as eight red boxes.
+
+   38 is measured, not derived. The obvious arithmetic -- min-height 24, plus
+   1+2 border, plus 4+3 padding -- gives 34 and is wrong, because a 22px icon
+   makes the content box 28px and the min-height floor never binds. Every
+   number in this block was taken off a render: a throwaway Qt 5.15.2 program
+   declaring a class whose metaObject name really is
+   Noggit::Ui::Tools::ViewToolbar::Ui::ViewToolbar, applying this sheet,
+   forcing each state through the members QToolButton::initStyleOption reads
+   (WA_UnderMouse, setDown, setChecked) and sampling the pixels. All eight
+   combinations measured -- including hover AND pressed together, which is what
+   a real click produces and which the document-order tie-breaks below have to
+   resolve -- come back 42x38, so no transition reflows the bar.
+
+   The base QToolButton:checked comment objects that a 2px accent line between
+   two icons reads as a SEPARATOR rather than as state. That is an argument
+   about a LEFT border on a horizontal row, where the line lands in the gap
+   between neighbours. It does not transfer to a bottom border, which lands
+   under one button and touches none of the others. The left strip keeps its
+   wash; this is not a proposal to change it.
+
+   ON and HOVER are on deliberately different axes -- hover is the plate, ON
+   is the underline, and hovering something that is ON shows both. That is why
+   ON gets no plate of its own: if it did, a hovered OFF button and a resting
+   ON button would differ by a border colour alone.
+
+   GEOMETRY. Nothing below changes a button's box. The base rule reserves 2px
+   on the LEFT for the tool strip's accent bar; this bar has no left bar, so
+   it is narrowed to 1px and restated in every state, :disabled included. The
+   2px BOTTOM the underline needs is reserved as transparent in every state
+   for the same reason, and bottom padding drops 4px -> 3px to pay for it. The
+   render confirms that pays exactly: the button stays 38px tall, the same
+   height the base rule alone produces, and the icon sits 8px from the top in
+   every state including the two that draw a bottom border. Only the WIDTH
+   differs from the base rule, 42px against 43px, which is the deliberate 2px
+   -> 1px left-border narrowing and applies to all of this bar's buttons
+   equally.
+
+   Scoped by class name rather than by QToolBar:horizontal, which Qt would
+   parse and then throw away -- the reasoning is on the base QToolButton:checked
+   rule. The class is safe to scope on: the two other ViewToolbar instances
+   (the top secondary bar and the vertical left secondary bar) are filled
+   entirely with QWidgetActions -- check boxes, sliders, labels, push buttons --
+   and contain no QToolButton at all. */
+Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton {
+	background: transparent;
+	color: #C6CCD6;
+	padding: 4px 6px 3px 6px;
+	border: 1px solid transparent;
+	border-left: 1px solid transparent;
+	border-bottom: 2px solid transparent;
+}
+
+/* OFF, pointer on it. Plate 1.556:1 against the bar, edge 2.119:1. The edge
+   runs all the way round, bottom segment included, so the plate is closed and
+   the reserved 2px slot is never an empty gap; ON is then that one segment
+   going accent. */
+Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:hover {
+	background-color: #454C59;
+	color: #EDF0F4;
+	border: 1px solid #59606B;
+	border-left: 1px solid #59606B;
+	border-bottom: 2px solid #59606B;
+}
+
+/* ON, at rest. No fill: the underline is the mark, at 3.694:1 against the bar
+   above it and the bar below it. */
+Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:checked {
+	background: transparent;
+	color: #EDF0F4;
+	border: 1px solid transparent;
+	border-left: 1px solid transparent;
+	border-bottom: 2px solid #E8543F;
+}
+
+/* ON, pointer on it: both marks at once. Two pseudo-states, so this outranks
+   both single-state rules above it no matter which order Qt walks them in.
+   The underline now has the plate above it rather than the bar, 2.37:1, and
+   the bar still below it at 3.694:1. */
+Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:checked:hover {
+	background-color: #454C59;
+	color: #EDF0F4;
+	border: 1px solid #59606B;
+	border-left: 1px solid #59606B;
+	border-bottom: 2px solid #E8543F;
+}
+
+/* :pressed ties with :hover and :checked on specificity and wins on document
+   order; :checked:pressed ties with :checked:hover and wins the same way. Both
+   are spelled out rather than left to chance. The press is the one state on
+   this bar that fills, because it is momentary and because the click is the
+   moment the answer to "is this on" is about to change anyway. Glyph #C6CCD6
+   on accent.dim is 3.55:1, so it stays readable through the flash; the ON
+   underline is held at full accent so a press does not erase the state.
+   Measured 2.348:1 against the bar, where the base QToolButton:pressed rule
+   this bar used to inherit fills with bg.overlay and so rendered a press at
+   1.000:1 -- the third invisible state on this bar, and the one nobody had
+   noticed. */
+Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:pressed {
+	background-color: #B33F2E;
+	color: #EDF0F4;
+	border: 1px solid #B33F2E;
+	border-left: 1px solid #B33F2E;
+	border-bottom: 2px solid #B33F2E;
+}
+
+Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:checked:pressed {
+	background-color: #B33F2E;
+	color: #EDF0F4;
+	border: 1px solid #B33F2E;
+	border-left: 1px solid #B33F2E;
+	border-bottom: 2px solid #E8543F;
+}
+
+/* Last of the single-pseudo rules, so it beats :checked on document order and
+   a disabled toggle shows no state mark. Nothing on this bar is ever disabled
+   today; the rule exists so that if something starts disabling them, the
+   result is a greyed glyph rather than a half-live underline. */
+Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:disabled {
+	background: transparent;
+	color: #59606B;
+	border: 1px solid transparent;
+	border-left: 1px solid transparent;
+	border-bottom: 2px solid transparent;
+}
+
+/* The separators between the four groups on this bar sit on bg.overlay, where
+   the stroke colour the base rule uses is nearly the bar itself. */
+Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar::separator {
+	background-color: #454C59;
+	margin: 5px 4px;
 }
 
 QWidget#gizmoBar QPushButton {
@@ -1726,7 +2018,25 @@ QLabel[accessibleName="overlay_label"] {
 /* --- texture and asset browsers ----------------------------------------- */
 
 /* Selection here must not fill the cell: the cell IS the texture. An accent
-   outline reads as selected without hiding what was selected. */
+   outline reads as selected without hiding what was selected.
+
+   HALF OF THIS IS DEAD, and it is the same Q_OBJECT problem as the left tool
+   strip. Noggit::Ui::TextureList has the macro and is reachable;
+   Noggit::Ui::PaletteList (src/noggit/ui/texture_palette_small.hpp) does not --
+   only texture_palette_small in that file does -- so Qt sees the class as a
+   plain QListWidget and every PaletteList rule below is discarded. The small
+   texture palette therefore still selects with the generic item-view accent
+   wash from the item-views section, which fills the cell and hides the
+   texture: exactly what these rules exist to prevent.
+
+   It cannot be fixed from here. PaletteList sets no object name and no
+   accessible name (texture_palette_small.cpp:91 just news it up), so there is
+   no hook. One Q_OBJECT line in that header makes all four rules live.
+   Reproduce with:  python check_qss.py theme.qss . --moc <build>/noggit_autogen
+
+   The Noggit-Ui-- single-dash spellings are the ones the shipped Dark theme
+   used. They match nothing in any build and are kept only so that a reader
+   comparing the two sheets can see the pair; the checker names them too. */
 Noggit--Ui--PaletteList::item,
 Noggit-Ui--PaletteList::item,
 Noggit--Ui--TextureList::item,

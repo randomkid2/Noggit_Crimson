@@ -107,7 +107,12 @@ namespace Noggit
 
       QGroupBox* settings_group(new QGroupBox ("Settings", this));
       auto settings_layout (new QVBoxLayout (settings_group));
-      settings_layout->setContentsMargins(0, 12, 0, 12);
+      // The theme already pads the inside of every QGroupBox (12px top / 14px bottom, on top of
+      // the 20px margin that clears the title). The 0,12,0,12 that used to be here added a
+      // second inset inside the first, so each of this tool's group boxes spent ~24px of the
+      // panel on nothing. Zero it and let the sheet own the gutter; that keeps every tool's
+      // group boxes consistent with each other instead of only this one being roomier.
+      settings_layout->setContentsMargins(0, 0, 0, 0);
 
       _speed_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider(this);
       _speed_slider->setPrefix("Speed:");

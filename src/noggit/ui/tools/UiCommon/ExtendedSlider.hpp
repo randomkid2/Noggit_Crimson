@@ -35,6 +35,12 @@ namespace Noggit
       void valueChanged(double value);
 
     private:
+      // Slider position <-> spinbox value, kept in one place so the two directions cannot
+      // drift apart again. The comment on the definitions enumerates every construction site
+      // and says exactly which part of the arithmetic is defensive rather than a live fix.
+      double sliderToSpin(int slider_value) const;
+      int spinToSlider(double spin_value) const;
+
       ::Ui::ExtendedSliderUi _ui;
       bool _is_tablet_supported = true;
       bool _is_tablet_affecting = false;

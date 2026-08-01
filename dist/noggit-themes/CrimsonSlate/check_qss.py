@@ -25,6 +25,13 @@ EXTENDED beyond the first revision:
     palette, which catches a stray colour that was never in the token table
   * a --coverage MODE diffs the selector set against another sheet, so a
     rewrite can prove it did not drop a rule
+  * pseudo-states and sub-controls written on an ANCESTOR in a descendant
+    selector are reported as errors -- see check_ancestor_pseudos below for why
+    Qt cannot honour them
+  * an optional --moc DIR pass resolves every application class selector
+    (anything containing "--") against the class names moc actually generated,
+    which is the only way to catch a selector that is dead because its class
+    has no Q_OBJECT macro
 """
 import io
 import os
@@ -132,6 +139,138 @@ def ratio(a, b):
     return (hi + 0.05) / (lo + 0.05)
 
 
+COMBINATORS = '>+~'
+
+
+def split_selector_list(sel):
+    """Split "A:hover, B[x=\"a,b\"] C" on the commas that separate whole
+    selectors, leaving commas inside [ ] or quotes alone."""
+    out, cur, depth, quote = [], '', 0, None
+    for ch in sel:
+        if quote:
+            cur += ch
+            if ch == quote:
+                quote = None
+            continue
+        if ch in '"\'':
+            quote = ch
+            cur += ch
+            continue
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+        if ch == ',' and depth == 0:
+            if cur.strip():
+                out.append(cur.strip())
+            cur = ''
+            continue
+        cur += ch
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+def split_basic_selectors(sel):
+    """Split "A > B:hover C::item" into its QCss BasicSelector parts.
+
+    Whitespace and the three combinators separate parts, but not inside an
+    [attribute="..."] where a space or a quoted > is just data.
+    """
+    parts, cur, depth, quote = [], '', 0, None
+    for ch in sel:
+        if quote:
+            cur += ch
+            if ch == quote:
+                quote = None
+            continue
+        if ch in '"\'':
+            quote = ch
+            cur += ch
+            continue
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+        if depth == 0 and (ch.isspace() or ch in COMBINATORS):
+            if cur:
+                parts.append(cur)
+                cur = ''
+            continue
+        cur += ch
+    if cur:
+        parts.append(cur)
+    return parts
+
+
+def strip_attributes(part):
+    """Drop [ ... ] spans so a colon inside an attribute VALUE is not read as a
+    pseudo-state marker."""
+    out, depth = '', 0
+    for ch in part:
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+        elif depth == 0:
+            out += ch
+    return out
+
+
+def check_ancestor_pseudos(sel):
+    """Return a message if this selector puts a pseudo-state or a sub-control
+    anywhere but on its subject.
+
+    Qt cannot evaluate one. QCss::Selector::pseudoClass() and
+    QCss::Selector::pseudoElement() both read basicSelectors.last() and nothing
+    else, and QCss::StyleSelector -- the class that walks the widget tree --
+    declares virtuals for a node's NAME, its IDS and its ATTRIBUTES and no
+    virtual whatsoever for its state (Qt 5.15.2, QtGui/private/qcssparser_p.h,
+    the StyleSelector declaration). So there is no mechanism by which
+    "QToolBar:horizontal QToolButton:checked" could ever consult the toolbar's
+    orientation. Qt parses it, discards the :horizontal, and the rule then
+    matches QToolButtons under EVERY QToolBar -- which is worse than not
+    matching, because the sheet still looks correct.
+
+    Match ancestors on class name, #objectName or [attribute] instead.
+    """
+    parts = split_basic_selectors(sel)
+    if len(parts) < 2:
+        return None
+    for p in parts[:-1]:
+        if ':' in strip_attributes(p):
+            return ('pseudo-state/sub-control on the non-subject part %r of '
+                    '%r -- Qt drops it and the rule matches every ancestor of '
+                    'that type' % (p, sel))
+    return None
+
+
+def moc_class_names(moc_root):
+    """Every class name moc generated under moc_root.
+
+    moc emits  struct qt_meta_stringdata_Foo__Bar_t  where Foo__Bar is the
+    class name with "::" replaced by "__" -- which is the same substitution QSS
+    wants, except QSS spells it "--". A class with no Q_OBJECT produces no moc
+    file at all and therefore reports its nearest Q_OBJECT ancestor's name to
+    Qt, so a type selector naming it can never match.
+    """
+    names = set()
+    pat = re.compile(r'struct qt_meta_stringdata_([A-Za-z0-9_]+)_t\b')
+    for dirpath, _, files in os.walk(moc_root):
+        for f in files:
+            if not (f.startswith('moc_') and f.endswith('.cpp')):
+                continue
+            try:
+                text = io.open(os.path.join(dirpath, f),
+                               encoding='utf-8', errors='replace').read(4096)
+            except OSError:
+                continue
+            m = pat.search(text)
+            if m:
+                names.add(m.group(1).replace('__', '--'))
+    return names
+
+
 def selectors_of(path):
     body = strip_comments(io.open(path, encoding='utf-8').read())
     out = set()
@@ -143,7 +282,7 @@ def selectors_of(path):
     return out
 
 
-def main(path, image_root):
+def main(path, image_root, moc_root=None):
     src = io.open(path, encoding='utf-8').read()
     body = strip_comments(src)
 
@@ -174,10 +313,30 @@ def main(path, image_root):
 
     seen_props, seen_pseudo, seen_sub, urls = set(), set(), set(), []
     seen_hex, decl_count, rgba_count = set(), 0, 0
+    app_classes, descendant_rules = {}, 0
 
     for selector, decls in rules:
         sel = ' '.join(selector.split())
         ln = line_of.get(sel, 0)
+
+        # A rule's selector is a comma-separated LIST; every check below is per
+        # list entry, because "A::x, B::y" is two selectors and neither has an
+        # ancestor.
+        for one in split_selector_list(sel):
+            parts = split_basic_selectors(one)
+            if len(parts) > 1:
+                descendant_rules += 1
+            bad_place = check_ancestor_pseudos(one)
+            if bad_place:
+                errors.append('line %d: %s' % (ln, bad_place))
+
+            # Application classes are spelled with "--" for "::". Record the
+            # bare type name of each part so the optional moc pass can resolve
+            # them.
+            for p in parts:
+                name = strip_attributes(p).split(':')[0].split('#')[0]
+                if '--' in name:
+                    app_classes.setdefault(name, ln)
 
         for sub in re.findall(r'::([a-zA-Z-]+)', selector):
             seen_sub.add(sub)
@@ -271,6 +430,27 @@ def main(path, image_root):
             errors.append('line %d: url(%s) resolves to no file (tried %s)'
                           % (ln, u, ' and '.join(candidates)))
 
+    # ---- application class selectors against what moc really generated -----
+    moc_names = None
+    if moc_root:
+        moc_names = moc_class_names(moc_root)
+        if not moc_names:
+            warnings.append('--moc %s produced no class names; wrong directory?'
+                            % moc_root)
+        else:
+            for name, ln in sorted(app_classes.items()):
+                # ads-- and color_widgets-- come from linked third-party code
+                # that may not be built into this configuration at all, so an
+                # absence there is not evidence of a defect.
+                if name.startswith('ads--') or name.startswith('color_widgets--'):
+                    continue
+                if name not in moc_names:
+                    warnings.append(
+                        'line %d: type selector %r matches no moc-generated '
+                        'class -- either the name is wrong or the class has no '
+                        'Q_OBJECT, in which case Qt sees its base class name '
+                        'instead and the rule is dead' % (ln, name))
+
     img_dir = os.path.join(os.path.dirname(os.path.abspath(path)), 'images')
     on_disk = set(os.listdir(img_dir)) if os.path.isdir(img_dir) else set()
     orphans = sorted(on_disk - referenced)
@@ -285,6 +465,14 @@ def main(path, image_root):
                                               ' '.join(sorted(seen_pseudo))))
     print('distinct sub-controls : %d  %s' % (len(seen_sub),
                                               ' '.join(sorted(seen_sub))))
+    print('descendant selectors  : %d  (ancestor pseudo-states: %s)'
+          % (descendant_rules,
+             'none -- correct' if not any('non-subject part' in e
+                                          for e in errors) else 'PRESENT'))
+    print('app class selectors   : %d%s'
+          % (len(app_classes),
+             '' if moc_names is None
+             else '  (checked against %d moc classes)' % len(moc_names)))
     print('rgb()/rgba() calls    : %d' % rgba_count)
     print('url() references      : %d  (%d distinct files)'
           % (len(urls), len(referenced)))
@@ -352,4 +540,10 @@ if __name__ == '__main__':
         for s in added:
             print('      NEW      %s' % s)
         sys.exit(1 if dropped else 0)
-    sys.exit(main(sys.argv[1], sys.argv[2]))
+    argv = sys.argv[1:]
+    moc = None
+    if '--moc' in argv:
+        i = argv.index('--moc')
+        moc = argv[i + 1]
+        del argv[i:i + 2]
+    sys.exit(main(argv[0], argv[1], moc))

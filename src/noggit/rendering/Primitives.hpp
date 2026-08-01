@@ -158,7 +158,11 @@ namespace Noggit::Rendering::Primitives
 
       int _indice_count = 0;
 
-      void setup_shader(std::vector<glm::vec3> vertices, std::vector<std::uint16_t> indices);
+      // setup_shader() creates the GL objects and links the program exactly once;
+      // upload_geometry() re-fills the two buffers per draw.
+      void setup_shader();
+      void upload_geometry(std::vector<glm::vec3> const& vertices
+          , std::vector<std::uint16_t> const& indices);
       OpenGL::Scoped::deferred_upload_vertex_arrays<1> _vao;
       OpenGL::Scoped::deferred_upload_buffers<2> _buffers;
       GLuint const& _vertices_vbo = _buffers[0];

@@ -13,12 +13,57 @@
   <property name="windowTitle">
    <string>Form</string>
   </property>
+  <!--
+    Fifteen of these stack up in the tool dock (three in Raise/Lower alone), so the layout
+    metrics here are what decide how much of the panel is chrome. Two things were costing
+    height for nothing.
+
+    First, every layout took the Fusion defaults (9px margins, 6px spacing). A control that is
+    already inside a group box, itself inside a panel, does not need a third 9px inset; the
+    parent supplies the gutter. Margins are zeroed and the row gap is set explicitly.
+
+    Second, the slider and the pressure bar each sat in their own single item QHBoxLayout.
+    Those wrappers were pure overhead, and the pressureBar one was actively harmful: the bar is
+    hidden unless a tablet is driving the value (see ExtendedSlider.cpp), and while Qt skips a
+    hidden WIDGET in a layout, a nested LAYOUT holding it is not empty, so it kept claiming its
+    margins and spacing on every one of the fifteen instances. Both widgets are now direct
+    children of the vertical layout, which makes the hidden bar genuinely free.
+
+    No widget was renamed or removed; ExtendedSlider.cpp addresses the same five objects.
+  -->
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="spacing">
-    <number>-1</number>
+    <number>3</number>
+   </property>
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
    </property>
    <item>
     <layout class="QHBoxLayout" name="horizontalLayout">
+     <property name="spacing">
+      <number>6</number>
+     </property>
+     <property name="leftMargin">
+      <number>0</number>
+     </property>
+     <property name="topMargin">
+      <number>0</number>
+     </property>
+     <property name="rightMargin">
+      <number>0</number>
+     </property>
+     <property name="bottomMargin">
+      <number>0</number>
+     </property>
      <item>
       <widget class="QLabel" name="label">
        <property name="text">
@@ -40,14 +85,7 @@
       </spacer>
      </item>
      <item>
-      <layout class="QHBoxLayout" name="horizontalLayout_3">
-       <property name="spacing">
-        <number>-1</number>
-       </property>
-       <item>
-        <widget class="QDoubleSpinBox" name="doubleSpinBox"/>
-       </item>
-      </layout>
+      <widget class="QDoubleSpinBox" name="doubleSpinBox"/>
      </item>
      <item>
       <widget class="QPushButton" name="tabletControlMenuButton">
@@ -77,35 +115,27 @@
     </layout>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="horizontalLayout_2">
-     <item>
-      <widget class="QSlider" name="slider">
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
-       </property>
-      </widget>
-     </item>
-    </layout>
+    <widget class="QSlider" name="slider">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+    </widget>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="_2">
-     <item>
-      <widget class="QProgressBar" name="pressureBar">
-       <property name="maximumSize">
-        <size>
-         <width>16777215</width>
-         <height>5</height>
-        </size>
-       </property>
-       <property name="value">
-        <number>0</number>
-       </property>
-       <property name="textVisible">
-        <bool>false</bool>
-       </property>
-      </widget>
-     </item>
-    </layout>
+    <widget class="QProgressBar" name="pressureBar">
+     <property name="maximumSize">
+      <size>
+       <width>16777215</width>
+       <height>5</height>
+      </size>
+     </property>
+     <property name="value">
+      <number>0</number>
+     </property>
+     <property name="textVisible">
+      <bool>false</bool>
+     </property>
+    </widget>
    </item>
   </layout>
  </widget>

@@ -5,9 +5,11 @@
 
 #include <QWidget>
 #include <QtCore/QString>
+#include <QtGui/QColor>
 #include <QtGui/QFont>
 #include <QtGui/QIcon>
 #include <QtGui/QIconEngine>
+#include <QtGui/QPalette>
 
 #include <map>
 
@@ -1025,6 +1027,80 @@ namespace Noggit
     public:
       FontAwesomeIcon (FontAwesome::Icons const&);
     };
+
+    // ---- shared by both icon engines -------------------------------------------------------
+    //
+    // The icon colour is driven by a QSS rule that matches on accessibleName, so resolving it
+    // needs a widget that has been polished against the active stylesheet. Both engines used to
+    // construct one of the *ButtonStyle widgets above and ensurePolished() it on EVERY paint --
+    // a widget construction plus a full match against the ~2000-line sheet, per icon, per
+    // repaint. QIcon caches pixmaps only for its own QPixmapIconEngine, not for custom engines,
+    // so nothing absorbed that: one redraw of the tool strip plus the view toolbar is ~35 icons
+    // and therefore ~35 of each.
+    //
+    // One probe per widget type is enough for the whole process; it carries no per-icon state,
+    // only the accessibleName that selects the rule. It is built on first use rather than at
+    // static-init time (which would run before QApplication exists) and is deliberately never
+    // destroyed, because a static QWidget torn down after QApplication has gone is a crash at
+    // exit. Theme switching still works: QApplication::setStyleSheet repolishes
+    // QApplication::allWidgets(), which includes parentless widgets that were never shown.
+    template<typename ProbeWidget>
+    QPalette const& iconProbePalette()
+    {
+      static ProbeWidget* const probe
+        ( []
+          {
+            auto* widget (new ProbeWidget());
+            widget->ensurePolished();
+            return widget;
+          }()
+        );
+
+      return probe->palette();
+    }
+
+    // QIcon::Mode says whether a button is DISABLED; QIcon::State says whether it is CHECKED.
+    // Both matter, and both engines used to consult exactly one of them: State selected the
+    // colour and Mode was accepted and ignored, so a disabled *checked* button painted at full
+    // strength. Mode is an override here and State still chooses between the other two.
+    //
+    // It has to, because only two colours are reachable. The probe carries an accessibleName
+    // that a QSS rule matches, and QSS `color` writes WindowText, Text and ButtonText together
+    // -- so a theme can author one enabled colour and one `:disabled` colour on that selector
+    // and there is no third slot to spend. QIcon::Off must therefore share with Normal or with
+    // Disabled, and QIcon::Off is what Qt passes for an unchecked button AND for a button that
+    // is not checkable at all; the engine cannot tell those apart.
+    //
+    // Sharing with Disabled is what shipped and is what is kept. Measured over each theme's own
+    // button surface (WCAG contrast, sRGB), with the alternative in the last column:
+    //
+    //                        checked        unchecked      unchecked if Off shared Normal
+    //   Dark  QToolButton    #5281B9 4.03   #D7D7D7 10.25  #5281B9 3.65
+    //   Dark  QPushButton    #5281B9 3.32   #D7D7D7  9.31  #5281B9 3.32
+    //   McNet                 #C6CCD6 8.30   #59606B  2.11  #C6CCD6 8.30
+    //   CrimsonSlate          #C6CCD6 9.39   #59606B  2.39  #C6CCD6 9.39
+    //
+    // Sharing with Normal is not even a contrast win everywhere: in Dark it takes unchecked
+    // icons from 10.25 down to 3.65, because that theme's pair is a hue change (blue = checked)
+    // rather than a brightness ramp. It is a win only in the two sheets that wrote a true
+    // disabled grey into the `:disabled` slot -- and it pays for that by deleting the only
+    // checked marker Dark and McNet have on a QPushButton, neither styling `QPushButton:checked`
+    // at all. An icon you cannot tell is active is worse than one that is dim, so the state
+    // marker wins.
+    //
+    // The dim unchecked icons in the last two sheets are real and are a THEME defect this
+    // function cannot reach: the `:disabled` colour on the two Font*ButtonStyle selectors is
+    // read as "unchecked", so writing a genuine disabled grey there dims every non-checkable
+    // icon button in the application. One colour in the sheet fixes it -- CrimsonSlate's own
+    // text.dim #8A93A0 measures 4.88:1 on the panel and 4.33:1 on a floating bar.
+    inline QColor iconPenColor (QPalette const& palette, QIcon::Mode mode, QIcon::State state)
+    {
+      QPalette::ColorGroup const group
+        ( mode == QIcon::Disabled || state == QIcon::Off ? QPalette::Disabled : QPalette::Normal
+        );
+
+      return palette.color (group, QPalette::WindowText);
+    }
 
     class FontAwesomeIconEngine : public QIconEngine
     {

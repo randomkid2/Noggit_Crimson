@@ -809,7 +809,10 @@ bool Noggit::Rendering::TileRender::isOverridingOcclusionCulling() const
 
 void Noggit::Rendering::TileRender::setOverrideOcclusionCulling(bool state)
 {
-  _tile_frustum_culled = state;
+  // Was assigning _tile_frustum_culled, which the getter above does not read and which its one
+  // caller overwrites two lines later via setFrustumCulled(). The override only ever forces
+  // "not occluded", so restoring it can delay a cull, never cause one.
+  _tile_occlusion_cull_override = state;
 }
 
 [[nodiscard]]

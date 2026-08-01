@@ -448,15 +448,34 @@ void ViewToolbar::add_tool_icon(MapView* mapView,
         view_state->set(!view_state->get());
     });
 
+    // Hover is a high-frequency signal: sweeping the pointer across this bar fires once per
+    // button, nineteen times, and only one action on it (Climb) actually has a secondary bar.
+    // Every one of the other eighteen used to run clear() + hide() unconditionally, and hide()
+    // on the holder is a visibility change inside the viewport overlay layout, i.e. a relayout
+    // of the overlay for a bar that was not showing in the first place.
+    //
+    // The guard below is deliberately on "is anything actually up" rather than on "does this
+    // action have a bar". Those are not the same: moving off Climb onto a neighbour must still
+    // take Climb's bar down, and an early return keyed on the action would have left it
+    // stranded. This does exactly what the old code did, and skips only the no-op case.
     connect (action, &QAction::hovered, [mapView, sec_tool_bar, sec_action_bar] () {
-        sec_tool_bar->clear();
-        mapView->getSecondaryToolBar()->hide();
+        QWidget* const holder (mapView->getSecondaryToolBar());
 
-        if (sec_action_bar.size() > 0)
+        if (sec_action_bar.isEmpty())
         {
-            sec_tool_bar->setupWidget(sec_action_bar);
-            mapView->getSecondaryToolBar()->show();
+            if (holder->isVisible())
+            {
+                sec_tool_bar->clear();
+                holder->hide();
+            }
+
+            return;
         }
+
+        sec_tool_bar->clear();
+        holder->hide();
+        sec_tool_bar->setupWidget(sec_action_bar);
+        holder->show();
     });
 
     connect (view_state, &Noggit::BoolToggleProperty::changed, [action, view_state, mapView] () {
