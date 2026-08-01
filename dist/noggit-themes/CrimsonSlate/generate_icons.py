@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+# This file is part of Noggit3, licensed under GNU General Public License (version 3).
+"""Regenerate the Crimson Slate theme's PNG widget assets.
+
+Usage:  python generate_icons.py images
+        (run from dist/themes/CrimsonSlate/)
+
+The colour constants below are the same tokens documented at the top of
+theme.qss. Change them here and re-run to reskin every check box, radio,
+chevron and window glyph in one pass; nothing is hand-drawn.
+
+Pure stdlib: an SDF rasteriser at 4x supersample, box-downsampled, written
+out as 8-bit RGBA PNG via zlib. No Pillow, no ImageMagick, no network.
+"""
+import math
+import os
+import struct
+import sys
+import zlib
+
+SS = 4  # supersample factor
+
+# ---------------------------------------------------------------- palette ---
+INPUT      = (0x10, 0x12, 0x16)
+PANEL      = (0x1C, 0x1F, 0x24)
+RAISED     = (0x23, 0x27, 0x2E)
+HOVERBG    = (0x2A, 0x2F, 0x37)
+HAIRLINE   = (0x2E, 0x33, 0x3B)
+CONTROL    = (0x3A, 0x41, 0x4B)
+CONTROL_HI = (0x50, 0x59, 0x66)
+ACCENT     = (0x4D, 0x8F, 0xF0)
+ACCENT_HOV = (0x6E, 0xA6, 0xF5)
+INK        = (0x0E, 0x10, 0x13)
+TEXT_HI    = (0xE7, 0xEA, 0xEE)
+TEXT_BODY  = (0xC8, 0xCD, 0xD4)
+TEXT_DIM   = (0x94, 0x9B, 0xA5)
+TEXT_DIS   = (0x5A, 0x61, 0x6B)
+
+
+class Canvas:
+    def __init__(self, w, h):
+        self.w, self.h = w, h
+        self.px = [[0.0, 0.0, 0.0, 0.0] for _ in range(w * h)]
+
+    def blend(self, x, y, rgb, a):
+        if a <= 0.0:
+            return
+        if a > 1.0:
+            a = 1.0
+        p = self.px[y * self.w + x]
+        na = a + p[3] * (1.0 - a)
+        if na <= 0.0:
+            return
+        for i in range(3):
+            p[i] = (rgb[i] * a + p[i] * p[3] * (1.0 - a)) / na
+        p[3] = na
+
+    def fill_sdf(self, sdf, rgb, alpha=1.0):
+        """Fill every pixel whose sdf(x, y) < 0 (distance in pixel units)."""
+        for y in range(self.h):
+            for x in range(self.w):
+                d = sdf(x + 0.5, y + 0.5)
+                if d < 0.0:
+                    self.blend(x, y, rgb, alpha)
+
+    def downsample(self, factor):
+        ow, oh = self.w // factor, self.h // factor
+        out = Canvas(ow, oh)
+        n = factor * factor
+        for y in range(oh):
+            for x in range(ow):
+                r = g = b = a = 0.0
+                for sy in range(factor):
+                    for sx in range(factor):
+                        p = self.px[(y * factor + sy) * self.w + x * factor + sx]
+                        r += p[0] * p[3]
+                        g += p[1] * p[3]
+                        b += p[2] * p[3]
+                        a += p[3]
+                o = out.px[y * ow + x]
+                if a > 0.0:
+                    o[0], o[1], o[2] = r / a, g / a, b / a
+                o[3] = a / n
+        return out
+
+    def to_png(self, path):
+        raw = bytearray()
+        for y in range(self.h):
+            raw.append(0)  # filter type 0
+            for x in range(self.w):
+                p = self.px[y * self.w + x]
+                raw += bytes((
+                    max(0, min(255, int(round(p[0])))),
+                    max(0, min(255, int(round(p[1])))),
+                    max(0, min(255, int(round(p[2])))),
+                    max(0, min(255, int(round(p[3] * 255.0)))),
+                ))
+
+        def chunk(tag, data):
+            c = struct.pack('>I', len(data)) + tag + data
+            return c + struct.pack('>I', zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+        png = b'\x89PNG\r\n\x1a\n'
+        png += chunk(b'IHDR', struct.pack('>IIBBBBB', self.w, self.h, 8, 6, 0, 0, 0))
+        png += chunk(b'IDAT', zlib.compress(bytes(raw), 9))
+        png += chunk(b'IEND', b'')
+        with open(path, 'wb') as fh:
+            fh.write(png)
+
+
+# ------------------------------------------------------------------- sdfs ---
+def sdf_round_rect(cx, cy, hw, hh, r):
+    hw = max(hw - r, 0.0)
+    hh = max(hh - r, 0.0)
+
+    def f(x, y):
+        dx = abs(x - cx) - hw
+        dy = abs(y - cy) - hh
+        ox, oy = max(dx, 0.0), max(dy, 0.0)
+        return math.hypot(ox, oy) + min(max(dx, dy), 0.0) - r
+    return f
+
+
+def sdf_circle(cx, cy, r):
+    return lambda x, y: math.hypot(x - cx, y - cy) - r
+
+
+def sdf_polyline(points, half_width, round_caps=True):
+    def seg_dist(px, py, ax, ay, bx, by):
+        vx, vy = bx - ax, by - ay
+        wx, wy = px - ax, py - ay
+        L2 = vx * vx + vy * vy
+        t = 0.0 if L2 == 0.0 else max(0.0, min(1.0, (wx * vx + wy * vy) / L2))
+        return math.hypot(px - (ax + t * vx), py - (ay + t * vy))
+
+    def f(x, y):
+        d = min(seg_dist(x, y, *points[i], *points[i + 1])
+                for i in range(len(points) - 1))
+        return d - half_width
+    return f
+
+
+def sdf_union(*fns):
+    return lambda x, y: min(fn(x, y) for fn in fns)
+
+
+# ------------------------------------------------------------- primitives ---
+def new(w, h):
+    return Canvas(w * SS, h * SS)
+
+
+def save(c, name, outdir):
+    c.downsample(SS).to_png(os.path.join(outdir, name))
+    return name
+
+
+def box(c, size, fill, stroke, sw=1.5, inset=3.0, radius=3.0):
+    """Rounded square centred in a size x size logical canvas."""
+    s = SS
+    cx = cy = size * s / 2.0
+    half = (size / 2.0 - inset) * s
+    outer = sdf_round_rect(cx, cy, half, half, radius * s)
+    if stroke:
+        c.fill_sdf(outer, stroke)
+        inner = sdf_round_rect(cx, cy, half - sw * s, half - sw * s,
+                               max(radius * s - sw * s, 0.5))
+        if fill:
+            c.fill_sdf(inner, fill)
+    elif fill:
+        c.fill_sdf(outer, fill)
+
+
+def disc(c, size, fill, stroke, sw=1.5, inset=3.0):
+    s = SS
+    cx = cy = size * s / 2.0
+    r = (size / 2.0 - inset) * s
+    if stroke:
+        c.fill_sdf(sdf_circle(cx, cy, r), stroke)
+        if fill:
+            c.fill_sdf(sdf_circle(cx, cy, r - sw * s), fill)
+    elif fill:
+        c.fill_sdf(sdf_circle(cx, cy, r), fill)
+
+
+def stroke_path(c, pts, colour, width):
+    s = SS
+    c.fill_sdf(sdf_polyline([(x * s, y * s) for x, y in pts], width * s / 2.0),
+               colour)
+
+
+# ------------------------------------------------------------------ icons ---
+def build(outdir):
+    os.makedirs(outdir, exist_ok=True)
+    made = []
+    SZ = 32           # checkbox / radio logical size (drawn at 2x of a 16px box)
+    CHECK = [(10.5, 16.5), (14.2, 20.4), (21.8, 11.8)]
+
+    # ---- check boxes -------------------------------------------------------
+    specs = [
+        ('icon_checkbox_unchecked.png',          INPUT,   CONTROL,    None),
+        ('icon_checkbox_unchecked_hover.png',    INPUT,   CONTROL_HI, None),
+        ('icon_checkbox_unchecked_disabled.png', PANEL,   HAIRLINE,   None),
+        ('icon_checkbox_checked.png',            ACCENT,  ACCENT,     INK),
+        ('icon_checkbox_checked_hover.png',      ACCENT_HOV, ACCENT_HOV, INK),
+        ('icon_checkbox_checked_disabled.png',   HAIRLINE, HAIRLINE,  TEXT_DIS),
+    ]
+    for name, fill, stroke, mark in specs:
+        c = new(SZ, SZ)
+        box(c, SZ, fill, stroke)
+        if mark:
+            stroke_path(c, CHECK, mark, 3.2)
+        made.append(save(c, name, outdir))
+
+    for name, fill, stroke, mark in (
+            ('icon_checkbox_indeterminate.png',          INPUT, CONTROL,  ACCENT),
+            ('icon_checkbox_indeterminate_disabled.png', PANEL, HAIRLINE, TEXT_DIS)):
+        c = new(SZ, SZ)
+        box(c, SZ, fill, stroke)
+        stroke_path(c, [(10.0, 16.0), (22.0, 16.0)], mark, 3.2)
+        made.append(save(c, name, outdir))
+
+    # ---- radio buttons -----------------------------------------------------
+    radios = [
+        ('icon_radiobutton_unchecked.png',          INPUT,      CONTROL,    None),
+        ('icon_radiobutton_unchecked_hover.png',    INPUT,      CONTROL_HI, None),
+        ('icon_radiobutton_unchecked_disabled.png', PANEL,      HAIRLINE,   None),
+        ('icon_radiobutton_checked.png',            ACCENT,     ACCENT,     INK),
+        ('icon_radiobutton_checked_hover.png',      ACCENT_HOV, ACCENT_HOV, INK),
+        ('icon_radiobutton_checked_disabled.png',   HAIRLINE,   HAIRLINE,   TEXT_DIS),
+    ]
+    for name, fill, stroke, dot in radios:
+        c = new(SZ, SZ)
+        disc(c, SZ, fill, stroke)
+        if dot:
+            c.fill_sdf(sdf_circle(SZ * SS / 2.0, SZ * SS / 2.0, 5.0 * SS), dot)
+        made.append(save(c, name, outdir))
+
+    # ---- arrows (chevrons) -------------------------------------------------
+    # QIcon scales with KeepAspectRatio, so the canvas aspect must match the
+    # width/height declared in the QSS: 16x10 for up/down, 10x16 for right.
+    # The glyph fills the canvas, otherwise it vanishes at 8px.
+    def chevron(name, direction, colour):
+        if direction in ('down', 'up'):
+            c = new(16, 10)
+            pts = ([(2.4, 3.2), (8.0, 7.4), (13.6, 3.2)] if direction == 'down'
+                   else [(2.4, 6.8), (8.0, 2.6), (13.6, 6.8)])
+        else:
+            c = new(10, 16)
+            pts = [(3.2, 2.4), (7.4, 8.0), (3.2, 13.6)]
+        stroke_path(c, pts, colour, 2.2)
+        made.append(save(c, name, outdir))
+
+    chevron('down_arrow.png', 'down', TEXT_BODY)
+    chevron('down_arrow_disabled.png', 'down', TEXT_DIS)
+    chevron('up_arrow.png', 'up', TEXT_BODY)
+    chevron('up_arrow_disabled.png', 'up', TEXT_DIS)
+    chevron('right_arrow.png', 'right', TEXT_BODY)
+    chevron('right_arrow_disabled.png', 'right', TEXT_DIS)
+
+    # ---- tree branch chevrons (square, 20x20 -> shown at 10px) -------------
+    def branch(name, direction, colour):
+        c = new(20, 20)
+        if direction == 'closed':
+            pts = [(7.5, 5.0), (13.0, 10.0), (7.5, 15.0)]
+        else:
+            pts = [(5.0, 7.5), (10.0, 13.0), (15.0, 7.5)]
+        stroke_path(c, pts, colour, 2.2)
+        made.append(save(c, name, outdir))
+
+    branch('icon_branch_closed.png', 'closed', TEXT_DIM)
+    branch('icon_branch_open.png', 'open', TEXT_DIM)
+
+    # ---- dock / tab chrome glyphs -----------------------------------------
+    def close_icon(name, colour):
+        c = new(20, 20)
+        stroke_path(c, [(6.5, 6.5), (13.5, 13.5)], colour, 1.8)
+        stroke_path(c, [(13.5, 6.5), (6.5, 13.5)], colour, 1.8)
+        made.append(save(c, name, outdir))
+
+    close_icon('icon_close.png', TEXT_DIM)
+    close_icon('icon_close_hover.png', TEXT_HI)
+    close_icon('icon_window_close.png', TEXT_BODY)
+
+    # float / restore: two offset outlines
+    def restore_icon(name, colour):
+        c = new(20, 20)
+        stroke_path(c, [(8.0, 5.5), (14.5, 5.5), (14.5, 12.0)], colour, 1.6)
+        stroke_path(c, [(5.5, 8.0), (11.5, 8.0), (11.5, 14.5),
+                        (5.5, 14.5), (5.5, 8.0)], colour, 1.6)
+        made.append(save(c, name, outdir))
+
+    restore_icon('icon_restore.png', TEXT_DIM)
+    restore_icon('icon_undock.png', TEXT_DIM)
+
+    c = new(20, 20)
+    stroke_path(c, [(5.5, 5.5), (14.5, 5.5), (14.5, 14.5), (5.5, 14.5), (5.5, 5.5)],
+                TEXT_BODY, 1.6)
+    made.append(save(c, 'icon_window_maximize.png', outdir))
+
+    c = new(20, 20)
+    stroke_path(c, [(5.5, 10.0), (14.5, 10.0)], TEXT_BODY, 1.6)
+    made.append(save(c, 'icon_window_minimize.png', outdir))
+
+    # ---- size grip: three diagonal pips ------------------------------------
+    c = new(16, 16)
+    for off in (0, 4, 8):
+        stroke_path(c, [(13.0 - off, 14.0), (14.0, 13.0 - off)], CONTROL_HI, 1.6)
+    made.append(save(c, 'sizegrip.png', outdir))
+
+    # ---- toolbar / splitter grip dots --------------------------------------
+    c = new(8, 24)
+    for y in (7.0, 12.0, 17.0):
+        c.fill_sdf(sdf_circle(4.0 * SS, y * SS, 1.1 * SS), CONTROL)
+    made.append(save(c, 'handle_vertical.png', outdir))
+
+    c = new(24, 8)
+    for x in (7.0, 12.0, 17.0):
+        c.fill_sdf(sdf_circle(x * SS, 4.0 * SS, 1.1 * SS), CONTROL)
+    made.append(save(c, 'handle_horizontal.png', outdir))
+
+    # ---- menu check mark (no box, for QMenu::indicator) --------------------
+    for name, colour in (('icon_menu_check.png', ACCENT),
+                         ('icon_menu_check_disabled.png', TEXT_DIS)):
+        c = new(SZ, SZ)
+        stroke_path(c, CHECK, colour, 3.2)
+        made.append(save(c, name, outdir))
+
+    return made
+
+
+if __name__ == '__main__':
+    out = sys.argv[1]
+    names = build(out)
+    print('wrote %d files to %s' % (len(names), out))
+    for n in sorted(names):
+        print('  ', n)

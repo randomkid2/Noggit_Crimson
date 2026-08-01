@@ -1,0 +1,1879 @@
+/* ===========================================================================
+ * Crimson Slate -- a dark theme for Noggit Red
+ * ---------------------------------------------------------------------------
+ * Part of Noggit Red, licensed under the GNU General Public License v3.
+ *
+ * Drop-in theme: the settings panel lists any directory under themes/ that
+ * contains a theme.qss, and loads it with a path relative to the working
+ * directory. Every url() below is therefore written as
+ *   themes/CrimsonSlate/images/<file>.png
+ * and must stay that way -- do not make them absolute.
+ *
+ * The 34 PNGs in images/ are generated, not drawn. Edit the colour constants at
+ * the top of generate_icons.py (same tokens as below), then run
+ *   python generate_icons.py images
+ * from this directory. Stdlib only -- no Pillow, no ImageMagick, no network.
+ *
+ * ---------------------------------------------------------------------------
+ * PALETTE -- change these values and nothing else to retheme.
+ * ---------------------------------------------------------------------------
+ * Three rules the whole sheet follows:
+ *   1. Recessed and floating surfaces are DARKER than their parent (Blender's
+ *      convention, not Material's). A lighter popup competes with the render.
+ *   2. Elevation steps are tiny (1.07-1.23 contrast). The 1px hairlines do the
+ *      actual separating, so they are not decoration -- do not delete them.
+ *   3. Blue is the interaction accent, and only that. Crimson is brand and
+ *      destruction. Amber/orange belongs to the 3D viewport selection.
+ *
+ * SURFACES
+ *   surface.recessed  #0E1013   dock gutters, QMainWindow::separator, splitters
+ *   surface.window    #16181C   QMainWindow, menu bar, status bar, scroll troughs
+ *   surface.panel     #1C1F24   dock content, dialogs, scroll-area contents
+ *   surface.raised    #23272E   toolbars, dock titles, buttons, header sections
+ *   surface.input     #101216   line edits, spin boxes, combos, item views
+ *   surface.hover     #2A2F37   hover on raised surfaces and rows
+ *   surface.active    #323842   pressed / checked
+ *   surface.select    #2B3A52   selected row (desaturated accent, not accent)
+ *   surface.popup     #14161A   menus, tooltips, combo popups, viewport overlays
+ *
+ * STROKES
+ *   stroke.hairline   #2E333B   section dividers, panel edges
+ *   stroke.control    #3A414B   input and button outlines
+ *   stroke.hover      #4A525E   outline, hovered
+ *   stroke.focus      #5C9BFF   focus ring
+ *   stroke.popup      #343A44   1px popup border
+ *
+ * TEXT (contrast measured against surface.panel #1C1F24)
+ *   text.hi           #E7EAEE   13.7:1  headings, active tool, the edited value
+ *   text.body         #C8CDD4   10.3:1  default label and control text
+ *   text.dim          #949BA5    5.9:1  captions, units, dock and group titles
+ *   text.mute         #6E7681    3.6:1  NON-TEXT ONLY -- fails AA for body copy
+ *   text.disabled     #5A616B    2.6:1  deliberately sub-threshold; that IS the
+ *                                       disabled signal
+ *
+ * ACCENTS
+ *   accent            #4D8FF0   focus, checked toggle, slider fill, active tab
+ *                               underline, tool-rail bar, hyperlink -- and
+ *                               nowhere else
+ *   accent.hover      #6EA6F5
+ *   accent.press      #3A72C4   fills only, never text (3.45:1)
+ *   brand.crimson     #E4566B   app mark, title-bar hairline, DESTRUCTIVE ONLY
+ *   success           #4CAF6E   DB connected, changeset applied
+ *   warning           #E0A82E   pending changes, dev-schema notice
+ *   danger            #E4566B   error state
+ *
+ * Ink on a filled accent button is #0E1013 (5.90:1), NOT white (3.23:1, fails).
+ *
+ * ---------------------------------------------------------------------------
+ * NOT REACHABLE FROM QSS -- for whoever wires the 3D side up in C++.
+ * These are recorded here so the viewport and the chrome stay one design.
+ *   viewport.active     #F0A030   active object outline
+ *   viewport.select     #E8632A   selected object outline
+ *   spawn.creature      #3FD0A4   spawn.gameobject   #B98BE8
+ *   waypoint.node/line  #FFC145   (line at 60% alpha)
+ *   chunk.ghost         #4D8FF0   db.dirty  #E0A82E   db.deleted #E4566B @40%
+ *   layer budget 1-2    #4CAF6E @25%   3  #E0A82E @30%   4  #E4566B @35%
+ *
+ * ---------------------------------------------------------------------------
+ * TYPE SCALE. Family is Segoe UI; nothing is bundled (see ATTRIBUTION.md).
+ *   13/600  dialog and window titles
+ *   12/400  default control and label text   <- the global size below
+ *   11/600  dock titles, group titles, header sections, status bar
+ *   11/400  captions, units, badges
+ *   12 mono QPlainTextEdit / QTextEdit (reports, Lua log, SQL preview)
+ * If a fixed-size .ui form clips at 12px, change the one font-size in the
+ * QWidget rule below back to 11px; nothing else depends on it.
+ *
+ * ---------------------------------------------------------------------------
+ * The Font Awesome icon font is NOT shipped with this fork. Buttons that would
+ * be glyph-only fall back to short text tags ([CFG], [PAL], [SRV]). Nothing in
+ * this sheet fixes a control's width to an icon, and the frameless title bar
+ * buttons get real PNG icons via qproperty-icon below, so the window controls
+ * stay identifiable with no icon font installed at all.
+ * ======================================================================== */
+
+
+/* ---------------------------------------------------------------- global -- */
+
+QWidget {
+	background-color: #1C1F24;
+	color: #C8CDD4;
+	border: none;
+	font-family: "Segoe UI";
+	font-size: 12px;
+	outline: 0;
+	selection-background-color: #2B3A52;
+	selection-color: #E7EAEE;
+}
+
+QWidget:disabled {
+	color: #5A616B;
+}
+
+QDialog {
+	background-color: #1C1F24;
+}
+
+QMessageBox {
+	background-color: #1C1F24;
+}
+
+QMessageBox QLabel {
+	color: #C8CDD4;
+	font-size: 12px;
+}
+
+QLabel {
+	background: transparent;
+	color: #C8CDD4;
+	padding: 1px 0px;
+}
+
+QLabel:disabled {
+	color: #5A616B;
+}
+
+/* Hyperlinks are the fifth and last legitimate use of the accent. */
+QLabel[openExternalLinks="true"] {
+	color: #4D8FF0;
+}
+
+/* QFrame is a base class, so a bare QFrame rule would repaint every scroll
+   area, tree, list and text edit in the app -- that is the seam the old Dark
+   theme had. Only the two line shapes are targeted here. If your Qt build does
+   not match enum-valued property selectors these two rules are simply ignored
+   and separators stay as they are today. */
+QFrame[frameShape="4"] {
+	background-color: #2E333B;
+	border: none;
+	max-height: 1px;
+}
+
+QFrame[frameShape="5"] {
+	background-color: #2E333B;
+	border: none;
+	max-width: 1px;
+}
+
+
+/* ------------------------------------------------- window, docks, gutters -- */
+
+QMainWindow {
+	background-color: #16181C;
+}
+
+/* The dock resize grips. Unstyled these are drawn by Fusion and are the
+   lightest thing on screen. */
+QMainWindow::separator {
+	background-color: #0E1013;
+	width: 4px;
+	height: 4px;
+}
+
+QMainWindow::separator:hover {
+	background-color: #3A72C4;
+}
+
+QSplitter {
+	background: transparent;
+	border: none;
+}
+
+QSplitter::handle {
+	background-color: #0E1013;
+}
+
+QSplitter::handle:horizontal {
+	width: 4px;
+}
+
+QSplitter::handle:vertical {
+	height: 4px;
+}
+
+QSplitter::handle:hover {
+	background-color: #2A2F37;
+}
+
+QSplitter::handle:pressed {
+	background-color: #3A72C4;
+}
+
+QDockWidget {
+	background-color: #1C1F24;
+	color: #949BA5;
+	font-size: 11px;
+	font-weight: 600;
+	border: none;
+	titlebar-close-icon: url(themes/CrimsonSlate/images/icon_close.png);
+	titlebar-normal-icon: url(themes/CrimsonSlate/images/icon_restore.png);
+}
+
+QDockWidget::title {
+	background-color: #23272E;
+	color: #949BA5;
+	border: none;
+	border-bottom: 1px solid #2E333B;
+	padding: 6px 6px 6px 10px;
+	text-align: left;
+}
+
+QDockWidget::close-button,
+QDockWidget::float-button {
+	background: transparent;
+	border: none;
+	border-radius: 3px;
+	width: 20px;
+	height: 20px;
+	padding: 0px;
+	icon-size: 12px;
+}
+
+QDockWidget::close-button:hover,
+QDockWidget::float-button:hover {
+	background-color: #2A2F37;
+}
+
+QDockWidget::close-button:pressed,
+QDockWidget::float-button:pressed {
+	background-color: #323842;
+}
+
+
+/* ------------------------------------------------------- menus, menu bar -- */
+
+QMenuBar {
+	background-color: #16181C;
+	border: none;
+	border-bottom: 1px solid #2E333B;
+	padding: 2px 4px;
+	spacing: 2px;
+}
+
+QMenuBar::item {
+	background: transparent;
+	color: #C8CDD4;
+	padding: 4px 9px;
+	margin: 1px 1px;
+	border: none;
+	border-radius: 3px;
+}
+
+QMenuBar::item:selected {
+	background-color: #2A2F37;
+	color: #E7EAEE;
+}
+
+QMenuBar::item:pressed {
+	background-color: #323842;
+	color: #E7EAEE;
+}
+
+QMenuBar::item:disabled {
+	color: #5A616B;
+}
+
+/* Square corners on purpose: a rounded top-level popup leaves the corner
+   pixels showing whatever is behind the window on Windows. */
+QMenu {
+	background-color: #14161A;
+	color: #C8CDD4;
+	border: 1px solid #343A44;
+	border-radius: 0px;
+	padding: 4px 2px;
+}
+
+QMenu::item {
+	background: transparent;
+	color: #C8CDD4;
+	padding: 5px 26px 5px 26px;
+	margin: 1px 2px;
+	border: none;
+	border-radius: 3px;
+}
+
+QMenu::item:selected {
+	background-color: #2B3A52;
+	color: #E7EAEE;
+}
+
+QMenu::item:disabled {
+	background: transparent;
+	color: #5A616B;
+}
+
+QMenu::separator {
+	height: 1px;
+	background-color: #2E333B;
+	margin: 4px 10px;
+}
+
+QMenu::indicator {
+	width: 14px;
+	height: 14px;
+	left: 7px;
+}
+
+QMenu::indicator:non-exclusive:checked,
+QMenu::indicator:exclusive:checked {
+	image: url(themes/CrimsonSlate/images/icon_menu_check.png);
+}
+
+QMenu::indicator:non-exclusive:checked:disabled,
+QMenu::indicator:exclusive:checked:disabled {
+	image: url(themes/CrimsonSlate/images/icon_menu_check_disabled.png);
+}
+
+QMenu::right-arrow {
+	image: url(themes/CrimsonSlate/images/right_arrow.png);
+	width: 5px;
+	height: 8px;
+	margin-right: 8px;
+}
+
+QMenu::right-arrow:disabled {
+	image: url(themes/CrimsonSlate/images/right_arrow_disabled.png);
+}
+
+QMenu::scroller,
+QMenu::tearoff {
+	background-color: #14161A;
+}
+
+
+/* --------------------------------------------------------------- toolbar -- */
+
+QToolBar {
+	background-color: #23272E;
+	border: none;
+	border-bottom: 1px solid #2E333B;
+	spacing: 3px;
+	padding: 3px;
+}
+
+QToolBar:vertical {
+	border-bottom: none;
+	border-right: 1px solid #2E333B;
+}
+
+QToolBar::separator {
+	background-color: #2E333B;
+	width: 1px;
+	height: 1px;
+	margin: 4px 3px;
+}
+
+QToolBar::handle:horizontal {
+	image: url(themes/CrimsonSlate/images/handle_vertical.png);
+	width: 8px;
+	margin: 2px 1px;
+}
+
+QToolBar::handle:vertical {
+	image: url(themes/CrimsonSlate/images/handle_horizontal.png);
+	height: 8px;
+	margin: 1px 2px;
+}
+
+
+/* ----------------------------------------------------------- status bar -- */
+
+QStatusBar {
+	background-color: #16181C;
+	color: #949BA5;
+	border: none;
+	border-top: 1px solid #2E333B;
+	font-size: 11px;
+}
+
+QStatusBar::item {
+	border: none;
+}
+
+QStatusBar QLabel {
+	color: #949BA5;
+	font-size: 11px;
+	padding: 0px 6px;
+}
+
+QSizeGrip {
+	background: transparent;
+	image: url(themes/CrimsonSlate/images/sizegrip.png);
+	width: 14px;
+	height: 14px;
+}
+
+
+/* --------------------------------------------------------------- buttons -- */
+
+QPushButton {
+	background-color: #23272E;
+	color: #C8CDD4;
+	border: 1px solid #3A414B;
+	border-radius: 3px;
+	padding: 4px 12px;
+	min-height: 18px;
+}
+
+QPushButton:hover {
+	background-color: #2A2F37;
+	border: 1px solid #4A525E;
+	color: #E7EAEE;
+}
+
+QPushButton:pressed {
+	background-color: #323842;
+	border: 1px solid #3A414B;
+}
+
+QPushButton:checked {
+	background-color: #2B3A52;
+	border: 1px solid #4D8FF0;
+	color: #E7EAEE;
+}
+
+QPushButton:checked:hover {
+	background-color: #334561;
+	border: 1px solid #6EA6F5;
+}
+
+QPushButton:focus {
+	border: 1px solid #5C9BFF;
+}
+
+QPushButton:default {
+	border: 1px solid #4D8FF0;
+}
+
+QPushButton:disabled {
+	background-color: #1C1F24;
+	color: #5A616B;
+	border: 1px solid #2E333B;
+}
+
+QPushButton:flat {
+	background: transparent;
+	border: 1px solid transparent;
+}
+
+QPushButton:flat:hover {
+	background-color: #2A2F37;
+	border: 1px solid transparent;
+}
+
+QPushButton:flat:pressed {
+	background-color: #323842;
+}
+
+QPushButton::menu-indicator {
+	image: url(themes/CrimsonSlate/images/down_arrow.png);
+	width: 8px;
+	height: 5px;
+	subcontrol-origin: padding;
+	subcontrol-position: center right;
+	right: 6px;
+}
+
+QDialogButtonBox QPushButton {
+	min-width: 84px;
+	padding: 5px 16px;
+}
+
+/* Destructive actions are the only interactive control allowed to be crimson.
+   Wire it up in C++ with  btn->setProperty("state", "danger");  and, if the
+   button already existed, style()->unpolish(btn); style()->polish(btn); */
+QPushButton[state="danger"] {
+	background-color: #2A1D22;
+	color: #E4566B;
+	border: 1px solid #6E3340;
+}
+
+QPushButton[state="danger"]:hover {
+	background-color: #E4566B;
+	color: #14161A;
+	border: 1px solid #E4566B;
+}
+
+QPushButton[state="danger"]:pressed {
+	background-color: #C0455A;
+	color: #14161A;
+}
+
+
+/* ----------------------------------------------------------- tool buttons -- */
+
+/* The 3px left border is reserved as transparent in every state so that
+   switching to :checked does not reflow the icon by three pixels. */
+QToolButton {
+	background: transparent;
+	color: #C8CDD4;
+	border: 1px solid transparent;
+	border-left: 3px solid transparent;
+	border-radius: 3px;
+	padding: 3px 5px;
+	min-width: 22px;
+	min-height: 22px;
+}
+
+QToolButton:hover {
+	background-color: #2A2F37;
+	color: #E7EAEE;
+	border: 1px solid transparent;
+	border-left: 3px solid #3A72C4;
+}
+
+QToolButton:pressed {
+	background-color: #323842;
+	border-left: 3px solid #3A72C4;
+}
+
+QToolButton:checked {
+	background-color: #323842;
+	color: #E7EAEE;
+	border: 1px solid transparent;
+	border-left: 3px solid #4D8FF0;
+}
+
+QToolButton:checked:hover {
+	background-color: #2A2F37;
+	border-left: 3px solid #6EA6F5;
+}
+
+QToolButton:disabled {
+	background: transparent;
+	color: #5A616B;
+	border: 1px solid transparent;
+	border-left: 3px solid transparent;
+}
+
+QToolButton[popupMode="1"] {
+	padding-right: 18px;
+}
+
+QToolButton::menu-button {
+	background: transparent;
+	border: none;
+	border-left: 1px solid #2E333B;
+	width: 14px;
+}
+
+QToolButton::menu-button:hover {
+	background-color: #323842;
+}
+
+QToolButton::menu-arrow,
+QToolButton::menu-indicator {
+	image: url(themes/CrimsonSlate/images/down_arrow.png);
+	width: 8px;
+	height: 5px;
+}
+
+QToolButton::menu-arrow:disabled,
+QToolButton::menu-indicator:disabled {
+	image: url(themes/CrimsonSlate/images/down_arrow_disabled.png);
+}
+
+
+/* ---------------------------------------------------------------- inputs -- */
+
+QLineEdit,
+QTextEdit,
+QPlainTextEdit,
+QAbstractSpinBox,
+QComboBox {
+	background-color: #101216;
+	color: #E7EAEE;
+	border: 1px solid #3A414B;
+	border-radius: 2px;
+	padding: 3px 6px;
+	min-height: 18px;
+	selection-background-color: #2B3A52;
+	selection-color: #E7EAEE;
+}
+
+QLineEdit:hover,
+QTextEdit:hover,
+QPlainTextEdit:hover,
+QAbstractSpinBox:hover,
+QComboBox:hover {
+	border: 1px solid #4A525E;
+}
+
+QLineEdit:focus,
+QTextEdit:focus,
+QPlainTextEdit:focus,
+QAbstractSpinBox:focus,
+QComboBox:focus {
+	background-color: #14171C;
+	border: 1px solid #5C9BFF;
+}
+
+QLineEdit:disabled,
+QTextEdit:disabled,
+QPlainTextEdit:disabled,
+QAbstractSpinBox:disabled,
+QComboBox:disabled {
+	background-color: #1C1F24;
+	color: #5A616B;
+	border: 1px solid #2E333B;
+}
+
+QLineEdit:read-only {
+	background-color: #1C1F24;
+	color: #949BA5;
+	border: 1px solid #2E333B;
+}
+
+/* Reports, the Lua console log and any SQL preview want tabular figures. */
+QTextEdit,
+QPlainTextEdit {
+	font-family: "Consolas";
+	font-size: 12px;
+	padding: 6px;
+	border-radius: 3px;
+}
+
+/* Error and warning states on an input. Set from C++ with
+   setProperty("state", "error") / ("state", "warn") plus unpolish/polish;
+   the colour stays here, the semantics stay in the code. */
+QLineEdit[state="error"],
+QAbstractSpinBox[state="error"],
+QComboBox[state="error"] {
+	border: 1px solid #E4566B;
+}
+
+QLineEdit[state="warn"],
+QAbstractSpinBox[state="warn"],
+QComboBox[state="warn"] {
+	border: 1px solid #E0A82E;
+}
+
+QLabel[state="error"] {
+	color: #E4566B;
+}
+
+QLabel[state="warn"] {
+	color: #E0A82E;
+}
+
+QLabel[state="ok"] {
+	color: #4CAF6E;
+}
+
+
+/* ------------------------------------------------------------ spin boxes -- */
+
+QAbstractSpinBox {
+	padding-right: 18px;
+}
+
+QAbstractSpinBox::up-button {
+	subcontrol-origin: border;
+	subcontrol-position: top right;
+	background-color: #23272E;
+	border: none;
+	border-left: 1px solid #3A414B;
+	border-top-right-radius: 2px;
+	width: 15px;
+	margin: 1px 1px 0px 0px;
+}
+
+QAbstractSpinBox::down-button {
+	subcontrol-origin: border;
+	subcontrol-position: bottom right;
+	background-color: #23272E;
+	border: none;
+	border-left: 1px solid #3A414B;
+	border-bottom-right-radius: 2px;
+	width: 15px;
+	margin: 0px 1px 1px 0px;
+}
+
+QAbstractSpinBox::up-button:hover,
+QAbstractSpinBox::down-button:hover {
+	background-color: #2A2F37;
+}
+
+QAbstractSpinBox::up-button:pressed,
+QAbstractSpinBox::down-button:pressed {
+	background-color: #323842;
+}
+
+QAbstractSpinBox::up-button:disabled,
+QAbstractSpinBox::down-button:disabled {
+	background-color: #1C1F24;
+	border-left: 1px solid #2E333B;
+}
+
+QAbstractSpinBox::up-arrow {
+	image: url(themes/CrimsonSlate/images/up_arrow.png);
+	width: 8px;
+	height: 5px;
+}
+
+QAbstractSpinBox::down-arrow {
+	image: url(themes/CrimsonSlate/images/down_arrow.png);
+	width: 8px;
+	height: 5px;
+}
+
+QAbstractSpinBox::up-arrow:disabled,
+QAbstractSpinBox::up-arrow:off {
+	image: url(themes/CrimsonSlate/images/up_arrow_disabled.png);
+}
+
+QAbstractSpinBox::down-arrow:disabled,
+QAbstractSpinBox::down-arrow:off {
+	image: url(themes/CrimsonSlate/images/down_arrow_disabled.png);
+}
+
+
+/* -------------------------------------------------------------- combo box -- */
+
+QComboBox {
+	padding: 3px 24px 3px 6px;
+}
+
+QComboBox:on {
+	border: 1px solid #5C9BFF;
+}
+
+QComboBox::drop-down {
+	subcontrol-origin: border;
+	subcontrol-position: top right;
+	background-color: #23272E;
+	border: none;
+	border-left: 1px solid #3A414B;
+	border-top-right-radius: 2px;
+	border-bottom-right-radius: 2px;
+	width: 18px;
+	margin: 1px;
+}
+
+QComboBox::drop-down:hover {
+	background-color: #2A2F37;
+}
+
+QComboBox::drop-down:disabled {
+	background-color: #1C1F24;
+	border-left: 1px solid #2E333B;
+}
+
+QComboBox::down-arrow {
+	image: url(themes/CrimsonSlate/images/down_arrow.png);
+	width: 8px;
+	height: 5px;
+}
+
+QComboBox::down-arrow:on {
+	image: url(themes/CrimsonSlate/images/up_arrow.png);
+}
+
+QComboBox::down-arrow:disabled {
+	image: url(themes/CrimsonSlate/images/down_arrow_disabled.png);
+}
+
+/* The popup is a separate top-level widget and does not inherit the combo's
+   own rule, so it has to be styled by name. */
+QComboBox QAbstractItemView {
+	background-color: #14161A;
+	color: #C8CDD4;
+	border: 1px solid #343A44;
+	border-radius: 0px;
+	padding: 2px;
+	outline: 0;
+	selection-background-color: #2B3A52;
+	selection-color: #E7EAEE;
+}
+
+
+/* ------------------------------------------------- check boxes and radios -- */
+
+QCheckBox,
+QRadioButton {
+	background: transparent;
+	color: #C8CDD4;
+	spacing: 7px;
+	padding: 2px 0px;
+	border: none;
+}
+
+QCheckBox:hover,
+QRadioButton:hover {
+	color: #E7EAEE;
+}
+
+QCheckBox:disabled,
+QRadioButton:disabled {
+	color: #5A616B;
+}
+
+QCheckBox::indicator,
+QRadioButton::indicator,
+QGroupBox::indicator {
+	width: 15px;
+	height: 15px;
+}
+
+QCheckBox::indicator:unchecked,
+QGroupBox::indicator:unchecked {
+	image: url(themes/CrimsonSlate/images/icon_checkbox_unchecked.png);
+}
+
+QCheckBox::indicator:unchecked:hover,
+QGroupBox::indicator:unchecked:hover {
+	image: url(themes/CrimsonSlate/images/icon_checkbox_unchecked_hover.png);
+}
+
+QCheckBox::indicator:unchecked:disabled,
+QGroupBox::indicator:unchecked:disabled {
+	image: url(themes/CrimsonSlate/images/icon_checkbox_unchecked_disabled.png);
+}
+
+QCheckBox::indicator:checked,
+QGroupBox::indicator:checked {
+	image: url(themes/CrimsonSlate/images/icon_checkbox_checked.png);
+}
+
+QCheckBox::indicator:checked:hover,
+QGroupBox::indicator:checked:hover {
+	image: url(themes/CrimsonSlate/images/icon_checkbox_checked_hover.png);
+}
+
+QCheckBox::indicator:checked:disabled,
+QGroupBox::indicator:checked:disabled {
+	image: url(themes/CrimsonSlate/images/icon_checkbox_checked_disabled.png);
+}
+
+QCheckBox::indicator:indeterminate {
+	image: url(themes/CrimsonSlate/images/icon_checkbox_indeterminate.png);
+}
+
+QCheckBox::indicator:indeterminate:disabled {
+	image: url(themes/CrimsonSlate/images/icon_checkbox_indeterminate_disabled.png);
+}
+
+QRadioButton::indicator:unchecked {
+	image: url(themes/CrimsonSlate/images/icon_radiobutton_unchecked.png);
+}
+
+QRadioButton::indicator:unchecked:hover {
+	image: url(themes/CrimsonSlate/images/icon_radiobutton_unchecked_hover.png);
+}
+
+QRadioButton::indicator:unchecked:disabled {
+	image: url(themes/CrimsonSlate/images/icon_radiobutton_unchecked_disabled.png);
+}
+
+QRadioButton::indicator:checked {
+	image: url(themes/CrimsonSlate/images/icon_radiobutton_checked.png);
+}
+
+QRadioButton::indicator:checked:hover {
+	image: url(themes/CrimsonSlate/images/icon_radiobutton_checked_hover.png);
+}
+
+QRadioButton::indicator:checked:disabled {
+	image: url(themes/CrimsonSlate/images/icon_radiobutton_checked_disabled.png);
+}
+
+
+/* -------------------------------------------------------------- group box -- */
+
+/* Flattened. The old boxed group with a centred bold title cost ~14px of
+   vertical space per section across 74 group boxes and made every panel read
+   as a stack of boxes. Here the title is a small dim caption sitting in the
+   widget's top margin and a single hairline is the only divider. */
+QGroupBox {
+	background: transparent;
+	border: none;
+	border-top: 1px solid #2E333B;
+	border-radius: 0px;
+	margin-top: 17px;
+	margin-bottom: 2px;
+	padding: 8px 0px 4px 0px;
+	color: #949BA5;
+	font-size: 11px;
+	font-weight: 600;
+	spacing: 6px;
+}
+
+QGroupBox::title {
+	subcontrol-origin: margin;
+	subcontrol-position: top left;
+	background: transparent;
+	color: #949BA5;
+	left: 0px;
+	padding: 0px 6px 4px 0px;
+}
+
+QGroupBox::title:disabled {
+	color: #5A616B;
+}
+
+QGroupBox:disabled {
+	border-top: 1px solid #23272E;
+}
+
+/* A group box nested inside another one gets no line of its own, or the panel
+   turns into a ladder. */
+QGroupBox QGroupBox {
+	border-top: none;
+	margin-top: 14px;
+}
+
+
+/* ------------------------------------------------------------------- tabs -- */
+
+QTabWidget::pane {
+	background-color: #1C1F24;
+	border: 1px solid #2E333B;
+	border-radius: 0px;
+	top: -1px;
+}
+
+QTabWidget::tab-bar {
+	left: 0px;
+}
+
+QTabBar {
+	background: transparent;
+	border: none;
+	qproperty-drawBase: 0;
+}
+
+QTabBar::tab {
+	background: transparent;
+	color: #949BA5;
+	border: none;
+	border-bottom: 2px solid transparent;
+	padding: 6px 12px;
+	min-width: 46px;
+	font-size: 12px;
+}
+
+QTabBar::tab:hover {
+	background-color: #23272E;
+	color: #E7EAEE;
+}
+
+QTabBar::tab:selected {
+	background-color: #1C1F24;
+	color: #E7EAEE;
+	border-bottom: 2px solid #4D8FF0;
+	font-weight: 600;
+}
+
+QTabBar::tab:disabled {
+	color: #5A616B;
+}
+
+QTabBar::tab:left,
+QTabBar::tab:right {
+	border-bottom: none;
+	padding: 12px 6px;
+	min-width: 0px;
+	min-height: 46px;
+}
+
+QTabBar::tab:left {
+	border-right: 2px solid transparent;
+}
+
+QTabBar::tab:left:selected {
+	border-right: 2px solid #4D8FF0;
+}
+
+QTabBar::tab:right {
+	border-left: 2px solid transparent;
+}
+
+QTabBar::tab:right:selected {
+	border-left: 2px solid #4D8FF0;
+}
+
+QTabBar::close-button {
+	image: url(themes/CrimsonSlate/images/icon_close.png);
+	subcontrol-position: right;
+	margin: 2px;
+}
+
+QTabBar::close-button:hover {
+	image: url(themes/CrimsonSlate/images/icon_close_hover.png);
+}
+
+QTabBar QToolButton {
+	background-color: #23272E;
+	border: 1px solid #2E333B;
+	border-left: 1px solid #2E333B;
+}
+
+
+/* ---------------------------------------------------------------- toolbox -- */
+
+QToolBox {
+	background: transparent;
+	border: none;
+}
+
+QToolBox::tab {
+	background-color: #23272E;
+	color: #C8CDD4;
+	border: none;
+	border-left: 3px solid transparent;
+	border-bottom: 1px solid #16181C;
+	padding: 6px 8px;
+	font-size: 11px;
+	font-weight: 600;
+}
+
+QToolBox::tab:hover {
+	background-color: #2A2F37;
+	color: #E7EAEE;
+}
+
+QToolBox::tab:selected {
+	background-color: #2A2F37;
+	color: #E7EAEE;
+	border-left: 3px solid #4D8FF0;
+}
+
+QToolBox::tab:disabled {
+	color: #5A616B;
+}
+
+
+/* ------------------------------------------------------------- item views -- */
+
+QAbstractItemView {
+	background-color: #101216;
+	alternate-background-color: #16191F;
+	color: #C8CDD4;
+	border: 1px solid #2E333B;
+	border-radius: 3px;
+	padding: 2px;
+	outline: 0;
+	show-decoration-selected: 1;
+	selection-background-color: #2B3A52;
+	selection-color: #E7EAEE;
+}
+
+QAbstractItemView:disabled {
+	background-color: #1C1F24;
+	color: #5A616B;
+	border: 1px solid #23272E;
+}
+
+QAbstractItemView::item {
+	background: transparent;
+	border: none;
+	padding: 3px 4px;
+	min-height: 18px;
+}
+
+QAbstractItemView::item:hover {
+	background-color: #23272E;
+	color: #E7EAEE;
+}
+
+/* Four distinct selection states, not one. Without :!active a panel that has
+   lost focus still screams "this row is selected" as loudly as the one you are
+   actually working in. */
+QAbstractItemView::item:selected:active {
+	background-color: #2B3A52;
+	color: #E7EAEE;
+}
+
+QAbstractItemView::item:selected:!active {
+	background-color: #23272E;
+	color: #C8CDD4;
+}
+
+QAbstractItemView::item:selected:hover {
+	background-color: #334561;
+	color: #E7EAEE;
+}
+
+QAbstractItemView::item:disabled {
+	color: #5A616B;
+}
+
+QListView {
+	background-color: #101216;
+	border: 1px solid #2E333B;
+}
+
+QListView::item {
+	min-height: 18px;
+}
+
+QTreeView {
+	background-color: #101216;
+	border: 1px solid #2E333B;
+	paint-alternating-row-colors-for-empty-area: 0;
+}
+
+QTreeView::item {
+	padding: 3px 2px;
+}
+
+/* No dotted connector lines. The chevron alone is the affordance, which is
+   what every modern tree does and what survives at small sizes. */
+QTreeView::branch {
+	background: transparent;
+	border-image: none;
+	image: none;
+}
+
+QTreeView::branch:has-children:!has-siblings:closed,
+QTreeView::branch:closed:has-children:has-siblings {
+	border-image: none;
+	image: url(themes/CrimsonSlate/images/icon_branch_closed.png);
+}
+
+QTreeView::branch:open:has-children:!has-siblings,
+QTreeView::branch:open:has-children:has-siblings {
+	border-image: none;
+	image: url(themes/CrimsonSlate/images/icon_branch_open.png);
+}
+
+QTreeView::branch:selected {
+	background-color: #2B3A52;
+}
+
+QTableView {
+	background-color: #101216;
+	alternate-background-color: #16191F;
+	gridline-color: #2E333B;
+	border: 1px solid #2E333B;
+	selection-background-color: #2B3A52;
+	selection-color: #E7EAEE;
+}
+
+QTableView QTableCornerButton::section {
+	background-color: #23272E;
+	border: none;
+	border-right: 1px solid #2E333B;
+	border-bottom: 1px solid #2E333B;
+}
+
+QHeaderView {
+	background: transparent;
+	border: none;
+}
+
+QHeaderView::section {
+	background-color: #23272E;
+	color: #949BA5;
+	border: none;
+	border-right: 1px solid #2E333B;
+	border-bottom: 1px solid #2E333B;
+	padding: 5px 6px;
+	font-size: 11px;
+	font-weight: 600;
+}
+
+QHeaderView::section:hover {
+	background-color: #2A2F37;
+	color: #E7EAEE;
+}
+
+QHeaderView::section:checked {
+	background-color: #2B3A52;
+	color: #E7EAEE;
+}
+
+QHeaderView::section:disabled {
+	color: #5A616B;
+}
+
+QHeaderView::section:last,
+QHeaderView::section:only-one {
+	border-right: none;
+}
+
+QHeaderView::down-arrow {
+	image: url(themes/CrimsonSlate/images/down_arrow.png);
+	width: 8px;
+	height: 5px;
+	subcontrol-origin: content;
+	subcontrol-position: center right;
+	right: 4px;
+}
+
+QHeaderView::up-arrow {
+	image: url(themes/CrimsonSlate/images/up_arrow.png);
+	width: 8px;
+	height: 5px;
+	subcontrol-origin: content;
+	subcontrol-position: center right;
+	right: 4px;
+}
+
+
+/* ------------------------------------------------------------ scroll bars -- */
+
+QScrollBar:vertical {
+	background-color: #16181C;
+	border: none;
+	width: 12px;
+	margin: 0px;
+}
+
+QScrollBar:horizontal {
+	background-color: #16181C;
+	border: none;
+	height: 12px;
+	margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+	background-color: #3A414B;
+	border: none;
+	border-radius: 4px;
+	margin: 2px;
+	min-height: 26px;
+}
+
+QScrollBar::handle:horizontal {
+	background-color: #3A414B;
+	border: none;
+	border-radius: 4px;
+	margin: 2px;
+	min-width: 26px;
+}
+
+QScrollBar::handle:hover {
+	background-color: #4A525E;
+}
+
+QScrollBar::handle:pressed {
+	background-color: #4D8FF0;
+}
+
+QScrollBar::handle:disabled {
+	background-color: #23272E;
+}
+
+QScrollBar::add-line,
+QScrollBar::sub-line {
+	background: none;
+	border: none;
+	width: 0px;
+	height: 0px;
+}
+
+QScrollBar::add-page,
+QScrollBar::sub-page {
+	background: transparent;
+}
+
+QScrollBar::up-arrow,
+QScrollBar::down-arrow,
+QScrollBar::left-arrow,
+QScrollBar::right-arrow {
+	background: none;
+	image: none;
+	width: 0px;
+	height: 0px;
+}
+
+QAbstractScrollArea::corner {
+	background-color: #16181C;
+	border: none;
+}
+
+
+/* --------------------------------------------------------------- sliders -- */
+
+QSlider {
+	background: transparent;
+	border: none;
+}
+
+QSlider::groove:horizontal {
+	background-color: #101216;
+	border: 1px solid #2E333B;
+	border-radius: 2px;
+	height: 4px;
+	margin: 0px 2px;
+}
+
+QSlider::sub-page:horizontal {
+	background-color: #4D8FF0;
+	border: 1px solid #4D8FF0;
+	border-radius: 2px;
+}
+
+QSlider::add-page:horizontal {
+	background-color: #101216;
+	border: 1px solid #2E333B;
+	border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+	background-color: #C8CDD4;
+	border: 1px solid #16181C;
+	border-radius: 3px;
+	width: 9px;
+	height: 15px;
+	margin: -7px 0px;
+}
+
+QSlider::groove:vertical {
+	background-color: #101216;
+	border: 1px solid #2E333B;
+	border-radius: 2px;
+	width: 4px;
+	margin: 2px 0px;
+}
+
+QSlider::sub-page:vertical {
+	background-color: #101216;
+	border: 1px solid #2E333B;
+	border-radius: 2px;
+}
+
+QSlider::add-page:vertical {
+	background-color: #4D8FF0;
+	border: 1px solid #4D8FF0;
+	border-radius: 2px;
+}
+
+QSlider::handle:vertical {
+	background-color: #C8CDD4;
+	border: 1px solid #16181C;
+	border-radius: 3px;
+	height: 9px;
+	width: 15px;
+	margin: 0px -7px;
+}
+
+QSlider::handle:hover {
+	background-color: #E7EAEE;
+}
+
+QSlider::handle:pressed {
+	background-color: #4D8FF0;
+	border: 1px solid #16181C;
+}
+
+QSlider::handle:disabled {
+	background-color: #3A414B;
+	border: 1px solid #1C1F24;
+}
+
+QSlider::sub-page:horizontal:disabled,
+QSlider::add-page:vertical:disabled {
+	background-color: #3A414B;
+	border: 1px solid #2E333B;
+}
+
+
+/* ---------------------------------------------------------- progress bar -- */
+
+QProgressBar {
+	background-color: #101216;
+	color: #C8CDD4;
+	border: 1px solid #2E333B;
+	border-radius: 3px;
+	text-align: center;
+	font-size: 11px;
+	min-height: 16px;
+}
+
+QProgressBar::chunk {
+	background-color: #4D8FF0;
+	border: none;
+	border-radius: 2px;
+	margin: 1px;
+}
+
+QProgressBar:disabled {
+	color: #5A616B;
+	border: 1px solid #23272E;
+}
+
+QProgressBar::chunk:disabled {
+	background-color: #3A414B;
+}
+
+
+/* -------------------------------------------------------------- tool tip -- */
+
+/* The single most jarring thing about the old themes was a light system
+   tooltip on a dark app: neither of them had a QToolTip rule at all. */
+QToolTip {
+	background-color: #14161A;
+	color: #E7EAEE;
+	border: 1px solid #343A44;
+	border-radius: 0px;
+	padding: 4px 7px;
+	font-size: 12px;
+}
+
+
+/* ---------------------------------------------------- scroll area seams -- */
+
+/* QScrollArea, its viewport and its content widget are three separate widgets.
+   Left alone they pick up three different backgrounds and you get a visible
+   seam down the middle of every tool panel. Item views are QAbstractScrollArea,
+   not QScrollArea, so they keep their own inset surface above. */
+QScrollArea {
+	background: transparent;
+	border: none;
+}
+
+QScrollArea > QWidget > QWidget {
+	background: transparent;
+}
+
+QScrollArea#dockWidgetScrollArea {
+	background: transparent;
+	border: none;
+	padding: 0px;
+}
+
+
+/* ================================================================ Noggit == */
+/* Application-specific selectors. Class names use Qt's convention of "--" for
+   "::", so Noggit::Ui::PaletteList is Noggit--Ui--PaletteList. The old themes
+   spelled these with a single dash in the first position, which matches
+   nothing; both spellings are listed here so neither is silently dead.       */
+
+/* --- the frameless window title bar ------------------------------------- */
+
+QLabel[accessibleName="titlebar_icon"],
+QPushButton[accessibleName="titlebar_icon"] {
+	background: transparent;
+	border: none;
+	margin-left: 6px;
+	margin-right: 4px;
+}
+
+QPushButton[accessibleName="titlebar_minimize"],
+QPushButton[accessibleName="titlebar_maximize"],
+QPushButton[accessibleName="titlebar_close"] {
+	background: transparent;
+	border: none;
+	border-radius: 0px;
+	min-width: 34px;
+	padding: 0px;
+}
+
+QPushButton[accessibleName="titlebar_minimize"]:hover,
+QPushButton[accessibleName="titlebar_maximize"]:hover {
+	background-color: #2A2F37;
+}
+
+QPushButton[accessibleName="titlebar_minimize"]:pressed,
+QPushButton[accessibleName="titlebar_maximize"]:pressed {
+	background-color: #323842;
+}
+
+/* Close goes crimson on hover -- destruction, which is exactly what crimson is
+   reserved for. */
+QPushButton[accessibleName="titlebar_close"]:hover {
+	background-color: #E4566B;
+}
+
+QPushButton[accessibleName="titlebar_close"]:pressed {
+	background-color: #C0455A;
+}
+
+/* Real PNG icons rather than Font Awesome glyphs, so the window controls are
+   identifiable with no icon font installed. The maximize button never swaps
+   its icon in code (it only changes its tool tip), so a static icon is safe. */
+QPushButton[accessibleName="titlebar_minimize"] {
+	qproperty-icon: url(themes/CrimsonSlate/images/icon_window_minimize.png);
+	qproperty-iconSize: 12px 12px;
+}
+
+QPushButton[accessibleName="titlebar_maximize"] {
+	qproperty-icon: url(themes/CrimsonSlate/images/icon_window_maximize.png);
+	qproperty-iconSize: 11px 11px;
+}
+
+QPushButton[accessibleName="titlebar_close"] {
+	qproperty-icon: url(themes/CrimsonSlate/images/icon_window_close.png);
+	qproperty-iconSize: 12px 12px;
+}
+
+/* --- icon-font buttons --------------------------------------------------- */
+
+/* These two accessible names exist to tint the icon fonts. Font Awesome is not
+   shipped, so this often colours a short text fallback instead of a glyph;
+   either way it must be neutral, not accent-blue -- an icon is not a link. */
+QWidget[accessibleName="FontNoggitButtonStyle"],
+QWidget[accessibleName="FontAwesomeButtonStyle"] {
+	color: #C8CDD4;
+}
+
+QWidget[accessibleName="FontNoggitButtonStyle"]:disabled,
+QWidget[accessibleName="FontAwesomeButtonStyle"]:disabled {
+	color: #5A616B;
+}
+
+/* --- the viewport overlay ------------------------------------------------ */
+
+/* The overlay itself is translucent, but its layout holders are plain QWidgets
+   and would otherwise paint opaque slabs of panel colour over the 3D view. */
+QWidget#MapViewOverlay,
+QWidget#leftToolbarHolder,
+QWidget#upperToolbarHolder,
+QWidget#secondaryToolbarHolder,
+QWidget#leftSecondaryToolbarHolder {
+	background: transparent;
+}
+
+/* Floating bars sit on top of the render, so they take the popup surface and a
+   real border. QSS has no box-shadow; the border and the darker fill are what
+   separate them from the viewport. */
+Noggit--Ui--toolbar,
+Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar,
+QWidget#gizmoBar {
+	background-color: #14161A;
+	border: 1px solid #343A44;
+	border-radius: 6px;
+	padding: 3px;
+	spacing: 2px;
+}
+
+QWidget#gizmoBar QPushButton {
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 3px;
+	min-width: 28px;
+	min-height: 28px;
+	padding: 2px;
+	font-weight: 600;
+	font-size: 13px;
+}
+
+QWidget#gizmoBar QPushButton:hover {
+	background-color: #2A2F37;
+	border: 1px solid transparent;
+	color: #E7EAEE;
+}
+
+QWidget#gizmoBar QPushButton:checked {
+	background-color: #323842;
+	border: 1px solid #4D8FF0;
+	color: #E7EAEE;
+}
+
+QWidget#gizmoBar QPushButton:disabled {
+	background: transparent;
+	color: #5A616B;
+	border: 1px solid transparent;
+}
+
+QPushButton#cameraXButton,
+QPushButton#cameraYButton,
+QPushButton#cameraZButton,
+QPushButton#gizmoModeButton,
+QPushButton#gizmoRotateButton,
+QPushButton#gizmoScaleButton,
+QPushButton#gizmoTranslateButton,
+QPushButton#gizmoVisibleButton {
+	font-weight: 600;
+	font-size: 13px;
+	border-radius: 3px;
+}
+
+/* Overlay sliders and labels are drawn straight over the render. */
+QSlider[accessibleName="overlay_slider_vertical"] {
+	background: transparent;
+	padding: 12px 5px;
+}
+
+QSlider[accessibleName="overlay_slider_horizontal"] {
+	background: transparent;
+	padding: 5px 12px;
+}
+
+QLabel[accessibleName="overlay_label"] {
+	background: transparent;
+	color: #E7EAEE;
+	padding: 0px 10px;
+	font-weight: 600;
+}
+
+/* --- texture and asset browsers ----------------------------------------- */
+
+/* Selection here must not fill the cell: the cell IS the texture. An accent
+   outline reads as selected without hiding what was selected. */
+Noggit--Ui--PaletteList::item,
+Noggit-Ui--PaletteList::item,
+Noggit--Ui--TextureList::item,
+Noggit-Ui--TextureList::item {
+	background: transparent;
+	border: 1px solid transparent;
+	padding: 1px;
+}
+
+Noggit--Ui--PaletteList::item:hover,
+Noggit-Ui--PaletteList::item:hover,
+Noggit--Ui--TextureList::item:hover,
+Noggit-Ui--TextureList::item:hover {
+	background: transparent;
+	border: 1px solid #4A525E;
+}
+
+Noggit--Ui--PaletteList::item:selected,
+Noggit-Ui--PaletteList::item:selected,
+Noggit--Ui--TextureList::item:selected,
+Noggit-Ui--TextureList::item:selected {
+	background: transparent;
+	border: 1px solid #4D8FF0;
+	color: #E7EAEE;
+}
+
+QTreeView[accessibleName="ab_treeview"]::item {
+	background: transparent;
+	border: none;
+	border-left: 3px solid transparent;
+	padding: 3px 2px;
+}
+
+QTreeView[accessibleName="ab_treeview"]::item:hover {
+	background-color: #23272E;
+	color: #E7EAEE;
+}
+
+QTreeView[accessibleName="ab_treeview"]::item:selected {
+	background-color: #2B3A52;
+	border-left: 3px solid #4D8FF0;
+	color: #E7EAEE;
+}
+
+/* The texture brush level slider paints a black-to-white ramp; it is the one
+   control whose groove is data, not chrome. The widget sets this name with
+   setObjectName, while the old sheet only matched accessibleName -- which is
+   why this control has apparently never rendered as designed. Both spellings
+   are here. */
+QSlider#texturing_brush_level_slider::groove:vertical,
+QSlider[accessibleName="texturing_brush_level_slider"]::groove:vertical {
+	background-color: qlineargradient(x1:0.5, y1:0, x2:0.5, y2:1,
+	                                  stop:0 #F2F2F2, stop:1 #08090B);
+	border: 1px solid #2E333B;
+	border-radius: 2px;
+	width: 30px;
+	margin: 0px;
+}
+
+QSlider#texturing_brush_level_slider::handle:vertical,
+QSlider[accessibleName="texturing_brush_level_slider"]::handle:vertical {
+	background-color: #4D8FF0;
+	border: 1px solid #14161A;
+	border-radius: 2px;
+	height: 6px;
+	width: 34px;
+	margin: 0px -2px;
+}
+
+QSlider#texturing_brush_level_slider::add-page:vertical,
+QSlider#texturing_brush_level_slider::sub-page:vertical,
+QSlider[accessibleName="texturing_brush_level_slider"]::add-page:vertical,
+QSlider[accessibleName="texturing_brush_level_slider"]::sub-page:vertical {
+	background: transparent;
+	border: none;
+}
+
+/* --- main menu / project list ------------------------------------------- */
+
+QWidget[accessibleName="main_menu_minimap_holder"] {
+	background-color: #101216;
+	border: 1px solid #2E333B;
+	border-radius: 3px;
+}
+
+QLabel#project-title-label {
+	color: #E7EAEE;
+	font-weight: 600;
+}
+
+QLabel#project-information {
+	color: #949BA5;
+}
+
+QLabel#project-icon-label {
+	background: transparent;
+	padding: 0px;
+}
+
+QLabel#project-favorite,
+QLabel#project-pinned {
+	background: transparent;
+	color: #E0A82E;
+}
+
+QPushButton#importPathField_browse,
+QPushButton#wmvLogPathField_browse {
+	margin-left: 6px;
+}
+
+QPushButton#searchButton {
+	padding: 4px 9px;
+	margin-right: 4px;
+}
+
+/* The section headers ExpanderWidget builds. It also sets an inline sheet for
+   text-align and border, which wins over this rule for those two properties
+   only; colour and background still come from here. */
+QPushButton#__qt__passive_button {
+	background-color: #23272E;
+	color: #949BA5;
+	border: none;
+	border-top: 1px solid #2E333B;
+	border-radius: 0px;
+	padding: 6px 8px;
+	font-size: 11px;
+	font-weight: 600;
+	text-align: left;
+}
+
+QPushButton#__qt__passive_button:hover {
+	background-color: #2A2F37;
+	color: #E7EAEE;
+}
+
+/* --- map creation wizard ------------------------------------------------- */
+
+QPushButton[accessibleName="map_wizard_add_button"],
+QPushButton[accessibleName="map_wizard_remove_button"],
+QPushButton[accessibleName="map_wizard_save_button"],
+QPushButton[accessibleName="map_wizard_discard_button"] {
+	qproperty-iconSize: 14px 14px;
+	padding: 4px 10px;
+}
+
+QPushButton[accessibleName="map_wizard_remove_button"] {
+	margin-left: 6px;
+}
+
+QPushButton[accessibleName="map_wizard_save_button"] {
+	margin-right: 6px;
+}
+
+/* --- colour widgets ------------------------------------------------------ */
+
+color_widgets--ColorSelector {
+	min-width: 100px;
+	max-height: 28px;
+	border: 1px solid #3A414B;
+	border-radius: 3px;
+}
+
+color_widgets--ColorPreview {
+	border: 1px solid #3A414B;
+	border-radius: 3px;
+}
+
+color_widgets--ColorWheel {
+	background: transparent;
+	padding: 16px;
+}
+
+color_widgets--ColorLineEdit {
+	background-color: #101216;
+	border: 1px solid #3A414B;
+	border-radius: 2px;
+	padding: 3px 6px;
+}
+
+
+/* ------------------------------------------- advanced docking system (ADS) -- */
+
+/* Linked but not currently instantiated. Kept short so that if it ever is, it
+   does not appear unstyled. */
+
+ads--CDockContainerWidget,
+ads--CDockAreaWidget,
+ads--CDockWidget {
+	background-color: #1C1F24;
+	border: none;
+}
+
+ads--CDockContainerWidget ads--CDockSplitter::handle {
+	background-color: #0E1013;
+}
+
+ads--CDockAreaTitleBar {
+	background-color: #23272E;
+	border: none;
+	border-bottom: 1px solid #2E333B;
+}
+
+ads--CDockWidgetTab {
+	background: transparent;
+	color: #949BA5;
+	border: none;
+	border-bottom: 2px solid transparent;
+	padding: 4px 10px;
+	max-height: 26px;
+}
+
+ads--CDockWidgetTab:hover {
+	background-color: #2A2F37;
+	color: #E7EAEE;
+}
+
+ads--CDockWidgetTab[activeTab="true"] {
+	background-color: #1C1F24;
+	color: #E7EAEE;
+	border-bottom: 2px solid #4D8FF0;
+}
+
+ads--CDockWidgetTab QLabel {
+	color: #949BA5;
+	background: transparent;
+}
+
+ads--CDockWidgetTab[activeTab="true"] QLabel {
+	color: #E7EAEE;
+}
+
+ads--CTitleBarButton {
+	background: transparent;
+	border: none;
+	border-radius: 3px;
+	padding: 2px;
+}
+
+ads--CTitleBarButton:hover {
+	background-color: #2A2F37;
+}
+
+QToolButton#tabCloseButton,
+QToolButton#dockAreaCloseButton {
+	background: transparent;
+	border: none;
+	border-left: 3px solid transparent;
+	qproperty-icon: url(themes/CrimsonSlate/images/icon_close.png);
+	qproperty-iconSize: 10px 10px;
+}
+
+QToolButton#tabsMenuButton,
+QToolButton#detachGroupButton {
+	background: transparent;
+	border: none;
+	border-left: 3px solid transparent;
+	qproperty-icon: url(themes/CrimsonSlate/images/icon_undock.png);
+	qproperty-iconSize: 14px 14px;
+}
+
+QToolButton#tabsMenuButton::menu-indicator {
+	image: none;
+	width: 0px;
+	height: 0px;
+}
+
+QLabel#floatingTitleLabel,
+QLabel#dockWidgetTabLabel,
+QLabel#DockWidgetAreaLabel {
+	background: transparent;
+	color: #949BA5;
+	font-size: 11px;
+	font-weight: 600;
+}

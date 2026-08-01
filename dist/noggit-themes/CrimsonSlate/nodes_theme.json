@@ -1,0 +1,55 @@
+{
+  "_comment": {
+    "Crimson Slate node editor palette. Keys and structure mirror": 0,
+    "themes/Dark/nodes_theme.json exactly; only the values differ.": 0,
+    "$recessed = #0E1013; 14, 16, 19": 0,
+    "$input    = #101216; 16, 18, 22": 0,
+    "$panel    = #1C1F24; 28, 31, 36": 0,
+    "$raised   = #23272E; 35, 39, 46": 0,
+    "$hairline = #2E333B; 46, 51, 59": 0,
+    "$control  = #3A414B; 58, 65, 75": 0,
+    "$accent   = #4D8FF0; 77, 143, 240": 0,
+    "Connections use the reserved categorical teal, never the accent, so a": 0,
+    "selected connection and a normal one are never the same hue.": 0
+  },
+  "FlowViewStyle": {
+    "BackgroundColor": [16, 18, 22],
+    "FineGridColor": [28, 31, 36],
+    "CoarseGridColor": [35, 39, 46]
+  },
+  "NodeStyle": {
+    "NormalBoundaryColor": [58, 65, 75],
+    "SelectedBoundaryColor": [77, 143, 240],
+    "GradientColor0": [42, 47, 55],
+    "GradientColor1": [35, 39, 46],
+    "GradientColor2": [35, 39, 46],
+    "GradientColor3": [28, 31, 36],
+    "ShadowColor": [8, 9, 11],
+    "FontColor": "#C8CDD4",
+    "FontColorFaded": "#6E7681",
+    "ConnectionPointColor": [148, 155, 165],
+    "FilledConnectionPointColor": "#4D8FF0",
+    "ErrorColor": "#E4566B",
+    "WarningColor": "#E0A82E",
+
+    "PenWidth": 1.0,
+    "HoveredPenWidth": 1.8,
+
+    "ConnectionPointDiameter": 9.0,
+
+    "Opacity": 0.95
+  },
+  "ConnectionStyle": {
+    "ConstructionColor": "#6E7681",
+    "NormalColor": "#3FD0A4",
+    "SelectedColor": "#4D8FF0",
+    "SelectedHaloColor": "#F0A030",
+    "HoveredColor": "#6EA6F5",
+
+    "LineWidth": 3.0,
+    "ConstructionLineWidth": 2.0,
+    "PointDiameter": 9.0,
+
+    "UseDataDefinedColors": true
+  }
+}

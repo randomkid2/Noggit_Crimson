@@ -14,6 +14,11 @@
 !/include/**
 !/media/
 !/media/**
+# Themes belonging to this fork. NOT dist/themes -- that path is a submodule pointing at a
+# third-party repository, so anything added there is invisible to everyone who clones.
+!/dist/
+!/dist/noggit-themes/
+!/dist/noggit-themes/**
 !/resources/
 !/resources/**
 !/sql/

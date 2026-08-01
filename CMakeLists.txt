@@ -415,8 +415,20 @@ add_custom_command(TARGET noggit POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${PROJECT_SOURCE_DIR}/dist/themes"
         $<TARGET_FILE_DIR:noggit>/themes
-        COMMAND ${CMAKE_COMMAND} -E remove -f 
+        COMMAND ${CMAKE_COMMAND} -E remove -f
         $<TARGET_FILE_DIR:noggit>/themes/.git)
+
+# Themes belonging to this fork, copied into the same output directory so the settings panel's
+# scan of themes/*/theme.qss finds them alongside the inherited ones.
+#
+# They live in dist/noggit-themes/ rather than dist/themes/ because dist/themes IS A SUBMODULE
+# pointing at a third-party repository this project cannot push to. A theme added there would work
+# on the machine that wrote it and simply not exist for anyone who cloned, since the parent repo
+# tracks only the submodule's commit pointer.
+add_custom_command(TARGET noggit POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${PROJECT_SOURCE_DIR}/dist/noggit-themes"
+        $<TARGET_FILE_DIR:noggit>/themes)
 
 #add distribution listfile
 # add_custom_command(TARGET noggit POST_BUILD
