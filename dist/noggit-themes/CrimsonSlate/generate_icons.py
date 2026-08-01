@@ -3,7 +3,8 @@
 """Regenerate the Crimson Slate theme's PNG widget assets.
 
 Usage:  python generate_icons.py images
-        (run from dist/themes/CrimsonSlate/)
+        (run from dist/noggit-themes/CrimsonSlate/ -- dist/themes/ is a
+         third-party submodule and nothing written there is ours)
 
 The colour constants below are the same tokens documented at the top of
 theme.qss. Change them here and re-run to reskin every check box, radio,
@@ -21,20 +22,29 @@ import zlib
 SS = 4  # supersample factor
 
 # ---------------------------------------------------------------- palette ---
-INPUT      = (0x10, 0x12, 0x16)
-PANEL      = (0x1C, 0x1F, 0x24)
-RAISED     = (0x23, 0x27, 0x2E)
-HOVERBG    = (0x2A, 0x2F, 0x37)
-HAIRLINE   = (0x2E, 0x33, 0x3B)
-CONTROL    = (0x3A, 0x41, 0x4B)
-CONTROL_HI = (0x50, 0x59, 0x66)
-ACCENT     = (0x4D, 0x8F, 0xF0)
-ACCENT_HOV = (0x6E, 0xA6, 0xF5)
-INK        = (0x0E, 0x10, 0x13)
-TEXT_HI    = (0xE7, 0xEA, 0xEE)
-TEXT_BODY  = (0xC8, 0xCD, 0xD4)
-TEXT_DIM   = (0x94, 0x9B, 0xA5)
-TEXT_DIS   = (0x5A, 0x61, 0x6B)
+# These are the tokens documented at the top of theme.qss, plus the three
+# values derived from them (marked). Nothing here is a fourth palette: change a
+# token in theme.qss and change the same token here, or the PNG indicators will
+# drift away from the CSS-drawn controls beside them.
+SUNKEN     = (0x16, 0x18, 0x1D)   # bg.sunken
+PANEL      = (0x1B, 0x1E, 0x24)   # bg.base
+RAISED     = (0x22, 0x26, 0x2E)   # bg.raised
+HOVERBG    = (0x2A, 0x2F, 0x38)   # bg.overlay
+HAIRLINE   = (0x26, 0x2B, 0x33)   # stroke.soft
+CONTROL    = (0x34, 0x3A, 0x45)   # stroke
+CONTROL_HI = (0x45, 0x4C, 0x59)   # DERIVED  stroke.hi, hover outline
+ACCENT     = (0xE8, 0x54, 0x3F)   # accent
+ACCENT_HOV = (0xF1, 0x6A, 0x54)   # DERIVED  accent.hi, hover on a filled accent
+ACCENT_DIM = (0xB3, 0x3F, 0x2E)   # accent.dim
+INK        = (0x16, 0x18, 0x1D)   # bg.sunken, used as ink ON an accent fill
+TEXT_HI    = (0xED, 0xF0, 0xF4)   # text.hi
+TEXT_BODY  = (0xC6, 0xCC, 0xD6)   # text
+TEXT_DIM   = (0x8A, 0x93, 0xA0)   # text.dim
+TEXT_DIS   = (0x59, 0x60, 0x6B)   # text.off
+
+# The unchecked indicator sits on the panel and reads as an input, so it takes
+# the same surface every other input takes: bg.raised, not a sunken well.
+INPUT      = RAISED
 
 
 class Canvas:
@@ -154,7 +164,7 @@ def save(c, name, outdir):
     return name
 
 
-def box(c, size, fill, stroke, sw=1.5, inset=3.0, radius=3.0):
+def box(c, size, fill, stroke, sw=1.6, inset=2.5, radius=5.0):
     """Rounded square centred in a size x size logical canvas."""
     s = SS
     cx = cy = size * s / 2.0
@@ -170,7 +180,7 @@ def box(c, size, fill, stroke, sw=1.5, inset=3.0, radius=3.0):
         c.fill_sdf(outer, fill)
 
 
-def disc(c, size, fill, stroke, sw=1.5, inset=3.0):
+def disc(c, size, fill, stroke, sw=1.6, inset=2.5):
     s = SS
     cx = cy = size * s / 2.0
     r = (size / 2.0 - inset) * s

@@ -20,8 +20,15 @@
 
 #include <ui_SettingsPanel.h>
 
-#include <sstream>
-
+namespace Noggit::Application
+{
+  // Defined in src/noggit/application/ApplicationEntry.cpp, where startup calls the same three
+  // functions. The loading code used to live in the lambda below, which meant the application
+  // was styled only when this panel happened to be built and the combo happened to emit.
+  QString defaultThemeName();
+  QString themesDirectory();
+  void applyTheme (QString const& theme_name);
+}
 
 namespace Noggit
 {
@@ -127,12 +134,17 @@ namespace Noggit
 
       ui->_theme->addItem("System");
 
-      QDir theme_dir = QDir("./themes/");
+      // Resolved against the executable rather than the working directory, which is what the
+      // "./themes/" this used to scan depended on. Started from a shortcut or a debugger the
+      // list came back empty, the saved theme was therefore never selectable, and the
+      // application ran unstyled without a word in the log.
+      QDir const theme_dir (Noggit::Application::themesDirectory());
+
       if (theme_dir.exists())
       {
-        for (auto dir : theme_dir.entryList(QDir::AllDirs | QDir::NoDotAndDotDot))
+        for (auto const& dir : theme_dir.entryList(QDir::AllDirs | QDir::NoDotAndDotDot))
         {
-          if (QDir(theme_dir.path() + "/" + dir).exists("theme.qss"))
+          if (QDir(theme_dir.filePath(dir)).exists("theme.qss"))
           {
             ui->_theme->addItem(dir);
           }
@@ -140,35 +152,13 @@ namespace Noggit
       }
       else
       {
-        LogError
-            << "Failed to load themes. The \"themes/\" folder does not exist in Noggit directory. Using system theme."
-            << std::endl;
+        LogError << "Failed to load themes: " << theme_dir.absolutePath().toStdString()
+                 << " does not exist. Using system theme." << std::endl;
       }
 
-      connect(ui->_theme, &QComboBox::currentTextChanged, [&](QString s)
+      connect(ui->_theme, &QComboBox::currentTextChanged, [](QString const& s)
               {
-                if (s == "System")
-                {
-                  qApp->setStyleSheet("");
-                  return;
-                }
-
-                auto sstream = std::stringstream();
-                sstream << "./themes/" << s.toStdString() << "/theme.qss";
-
-                QFile file(sstream.str().c_str());
-                if (file.open(QFile::ReadOnly))
-                {
-                  QString style_sheet = QLatin1String(file.readAll());
-                  QString style_sheet_fixed = style_sheet.replace("@rpath", QCoreApplication::applicationDirPath());
-
-                  if (style_sheet_fixed.endsWith("/"))
-                    style_sheet_fixed.chop(1);
-                  else if (style_sheet_fixed.endsWith("\\"))
-                    style_sheet_fixed.chop(2);
-
-                  qApp->setStyleSheet(style_sheet_fixed);
-                }
+                Noggit::Application::applyTheme(s);
               }
       );
 
@@ -252,7 +242,34 @@ namespace Noggit
           _settings->value("additional_file_loading_log", false).toBool());
       ui->_keyboard_locale->setCurrentText(_settings->value("keyboard_locale", "QWERTY").toString());
       ui->_use_mclq_liquids_export->setChecked(_settings->value("use_mclq_liquids_export", false).toBool());
-      ui->_theme->setCurrentText(_settings->value("theme", "Dark").toString());
+      // setCurrentText() is a silent no-op on a non-editable combo when the item is absent, and
+      // emits nothing when the item is already current -- either way the stylesheet actually in
+      // force and the name the user is reading can disagree. Resolve against what was really
+      // found on disk, then apply explicitly in the case where no signal will do it.
+      {
+        QString theme_name
+          (_settings->value("theme", Noggit::Application::defaultThemeName()).toString());
+
+        if (ui->_theme->findText(theme_name) < 0)
+        {
+          LogError << "Saved theme \"" << theme_name.toStdString() << "\" was not found in "
+                   << Noggit::Application::themesDirectory().toStdString() << '.' << std::endl;
+
+          theme_name = ui->_theme->findText(Noggit::Application::defaultThemeName()) < 0
+                     ? QString("System")
+                     : Noggit::Application::defaultThemeName();
+        }
+
+        if (ui->_theme->currentText() == theme_name)
+        {
+          Noggit::Application::applyTheme(theme_name);
+        }
+        else
+        {
+          ui->_theme->setCurrentText(theme_name);
+        }
+      }
+
       ui->_modern_features->setChecked(_settings->value("modern_features", false).toBool());
 
       ui->assetBrowserBgCol->setColor(_settings->value("assetBrowser/background_color",
