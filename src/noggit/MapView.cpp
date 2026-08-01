@@ -101,6 +101,7 @@
 #include <mysql/mysql.h>
 
 #endif
+#include <QtCore/QDir>
 #include <QtCore/QSettings>
 
 #include <noggit/scripting/scripting_tool.hpp>
@@ -2443,6 +2444,38 @@ std::string MapView::handleBridgeCommand(std::string const& line)
 
     NOGGIT_ACTION_MGR->undo();
     out << ' ' << state("left_as");
+
+    return out.str();
+  }
+
+  // Reports whether a stylesheet is actually applied, which is not something you can tell by
+  // looking when two themes are both dark. The theme is applied as a side effect of the settings
+  // combo's currentTextChanged signal, and the directory scan behind it is CWD-relative -- so if
+  // the working directory is not the executable's, the combo holds only "System", setCurrentText
+  // silently no-ops on a missing item, no signal fires, and the application runs completely
+  // unstyled with nothing logged.
+  if (command == "theme")
+  {
+    QSettings settings;
+
+    std::ostringstream out;
+    out << "OK setting=" << settings.value("theme", "Dark").toString().toStdString()
+        << " cwd=" << QDir::currentPath().toStdString()
+        << " exedir=" << QCoreApplication::applicationDirPath().toStdString()
+        << " themes_dir_found=" << (QDir("./themes/").exists() ? "yes" : "no")
+        << " stylesheet_chars=" << qApp->styleSheet().length();
+
+    QDir const theme_dir ("./themes/");
+
+    out << " available=";
+
+    for (auto const& dir : theme_dir.entryList(QDir::AllDirs | QDir::NoDotAndDotDot))
+    {
+      if (QDir(theme_dir.path() + "/" + dir).exists("theme.qss"))
+      {
+        out << dir.toStdString() << ',';
+      }
+    }
 
     return out.str();
   }
