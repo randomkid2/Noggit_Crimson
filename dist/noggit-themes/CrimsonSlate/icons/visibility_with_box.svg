@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>visibility_with_box</title>
+  <path d="M12,16 L12,18"/>
+  <path d="M10,11 L12,8 L14,11"/>
+  <path d="M9,15 L12,11 L15,15"/>
+  <path d="M4,8 L4,4 L8,4"/>
+  <path d="M16,4 L20,4 L20,8"/>
+  <path d="M20,16 L20,20 L16,20"/>
+  <path d="M8,20 L4,20 L4,16"/>
+</svg>

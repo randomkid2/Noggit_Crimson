@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>tool_texture_paint</title>
+  <rect x="4" y="5" width="12" height="5" rx="2"/>
+  <path d="M16,7 L19,7 L19,17"/>
+  <path d="M4,14 L10,14"/>
+  <path d="M4,18 L12,18"/>
+</svg>

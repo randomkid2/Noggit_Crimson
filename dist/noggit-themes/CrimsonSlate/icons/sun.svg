@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>sun</title>
+  <circle cx="12" cy="12" r="4.5"/>
+  <path d="M18.5,12 L21,12 M16.596,16.596 L18.364,18.364 M12,18.5 L12,21 M7.404,16.596 L5.636,18.364 M5.5,12 L3,12 M7.404,7.404 L5.636,5.636 M12,5.5 L12,3 M16.596,7.404 L18.364,5.636"/>
+</svg>

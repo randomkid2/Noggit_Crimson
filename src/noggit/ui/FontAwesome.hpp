@@ -4,12 +4,14 @@
 #define NOGGIT_UI_FONTAWESOME_HPP
 
 #include <QWidget>
+#include <QtCore/QSize>
 #include <QtCore/QString>
 #include <QtGui/QColor>
 #include <QtGui/QFont>
 #include <QtGui/QIcon>
 #include <QtGui/QIconEngine>
 #include <QtGui/QPalette>
+#include <QtGui/QPixmap>
 
 #include <map>
 
@@ -987,6 +989,56 @@ namespace Noggit
       };
     };
 
+    // Which of the two icon enums a codepoint was read from.
+    //
+    // Both live in the Unicode Private Use Area and they OVERLAP there: FontNoggit::rmb is
+    // 0xf868 and FontAwesome::biking is 0xf84a, FontNoggit::TOOL_LIGHT is 0xf8d0 and
+    // FontAwesome::gripsmall is 0xf7a5. A codepoint on its own therefore does not identify an
+    // icon, and every table keyed by one has to be told which set it is reading -- otherwise a
+    // Noggit tool icon resolves to a Font Awesome name and paints the wrong picture, which is
+    // worse than painting none.
+    enum class IconSet
+    {
+      FontAwesome,
+      Noggit
+    };
+
+    // Artwork shipped by the active theme, in <exe dir>/themes/<theme>/icons/<name>.png.
+    //
+    // This is the first tier of the icon chain and the only one a theme can extend without a
+    // rebuild. Lookup is BY NAME -- "pen.png", "tool_raise_lower.png" -- because a theme author
+    // must not have to know that the pen is U+F304; the codepoint-to-name table is the one in
+    // FontAwesome.cpp and is the same table the text fallbacks are read from, so a name can
+    // never drift away from its label.
+    //
+    // The directory is resolved against QCoreApplication::applicationDirPath(), exactly as
+    // Noggit::Application::applyTheme resolves the stylesheet. Anything relative to the working
+    // directory breaks the moment Noggit is started from a shortcut or a debugger, which is a
+    // defect this tree has already had twice.
+    struct ThemeIcons
+    {
+      // The canonical file-name stem of a codepoint, or "" when it has none.
+      static QString name (IconSet set, char32_t codepoint);
+
+      // A null QPixmap when the active theme ships no artwork under that name. Monochrome
+      // artwork -- which is what the icon language calls for -- is tinted with pen_color so it
+      // still carries the checked/unchecked distinction; anything with real hue in it is drawn
+      // as the author made it. Results are cached per state, size, colour and device pixel
+      // ratio: no file is read, decoded or scaled more than once.
+      //
+      // QIcon::On additionally looks for "<name>_filled.png" first, which is how the icon set
+      // spells the member of an on/off pair that has to be told apart WITHOUT relying on
+      // colour -- the outlined star against the solid one. Absent that file the state falls
+      // back to the same drawing, which is what every other icon does.
+      static QPixmap pixmap ( IconSet set
+                            , char32_t codepoint
+                            , QIcon::State state
+                            , QSize const& size
+                            , qreal device_pixel_ratio
+                            , QColor const& pen_color
+                            );
+    };
+
     // Resolves the Font Awesome glyph font at runtime. The font file is deliberately NOT
     // part of this repository, so it may legitimately be missing; isAvailable() is then
     // false and callers must degrade instead of failing.
@@ -997,11 +1049,27 @@ namespace Noggit
       static QString family();
       static bool isAvailable();
 
+      // False when the resolved family carries no glyph for this codepoint. Font Awesome Free
+      // does not contain the Pro-only part of FontAwesome::Icons, and a font that is present
+      // but missing the glyph used to paint .notdef -- an empty box, indistinguishable from a
+      // broken button. Asking first lets those fall through to the text label instead.
+      static bool hasGlyph (QString const& family, char32_t codepoint);
+
+      // Whether anything is known about this codepoint at all -- a name, a label, a standard
+      // icon. It gates the hasGlyph() test above, and that gate is the whole safety argument
+      // for adding the test: the ~60 keybinding hints in the Noggit font (lmb, shift, a-z,
+      // f1-f12) are deliberately not in either table, so they can never be diverted away from
+      // the font that renders them correctly today. Only an icon we have something better to
+      // draw is allowed to leave the glyph path.
+      static bool hasFallback (IconSet set, char32_t codepoint);
+
       // Fallback for a codepoint when no glyph font is present.
       // fallbackIcon() returns a null QIcon when no sensible standard icon exists;
-      // fallbackLabel() always returns a short, non-empty text label.
-      static QIcon fallbackIcon (char32_t codepoint);
-      static QString fallbackLabel (char32_t codepoint);
+      // fallbackLabel() always returns a short, non-empty text label -- and NEVER the raw
+      // codepoint, which is what used to put the literal text "f304" on the tablet button of
+      // every ExtendedSlider row.
+      static QIcon fallbackIcon (IconSet set, char32_t codepoint);
+      static QString fallbackLabel (IconSet set, char32_t codepoint);
     };
 
     // Interface font resolved BY FAMILY NAME from the system font database. "Segoe UI" ships
@@ -1102,10 +1170,36 @@ namespace Noggit
       return palette.color (group, QPalette::WindowText);
     }
 
+    // Hover, which iconPenColor above has no slot left to express.
+    //
+    // Qt reports a hovered button as Mode::Active, and the two colours the theme can author are
+    // already spent on checked and unchecked -- so Active is DERIVED from whatever the state
+    // resolved to rather than read from the sheet. That keeps this additive in the strict
+    // sense: Active previously took the same branch as Normal and painted identically to it, so
+    // no state that was distinguishable before becomes less so, and the checked/unchecked pair
+    // is untouched. iconPenColor's group selection is deliberately not reachable from here.
+    //
+    // 125 rather than a fixed token because a theme is free to invert: on a light sheet the
+    // resolved colour is dark and lighter() still moves it away from the surface it sits on.
+    inline QColor iconPenColorForMode (QPalette const& palette, QIcon::Mode mode, QIcon::State state)
+    {
+      QColor const base (iconPenColor (palette, mode, state));
+
+      return mode == QIcon::Active ? base.lighter (125) : base;
+    }
+
+    // A genuinely disabled icon is drawn at this opacity on top of its resolved colour. It
+    // needs to be an opacity and not a colour: QIcon::Off already owns the theme's `:disabled`
+    // colour slot (see iconPenColor), so "unchecked" and "disabled" resolve to the same pen and
+    // the only separation left is one that costs no palette entry.
+    double const ICON_DISABLED_OPACITY = 0.45;
+
     class FontAwesomeIconEngine : public QIconEngine
     {
     public:
-      FontAwesomeIconEngine(const QString& text);
+      // The set defaults to FontAwesome so that every existing construction site keeps
+      // compiling and keeps meaning what it meant; FontNoggitIconEngine passes IconSet::Noggit.
+      FontAwesomeIconEngine(const QString& text, IconSet set = IconSet::FontAwesome);
 
       [[nodiscard]]
       FontAwesomeIconEngine* clone() const override;
@@ -1116,8 +1210,18 @@ namespace Noggit
 
 
     protected:
+      // Tiers 1 and 2 of the chain -- theme artwork, then a shape drawn from path data if a
+      // drawn-icon table is compiled in. True when the icon was painted and the caller must
+      // stop; false when it should carry on to the glyph font.
+      bool paintArtwork(QPainter* painter, QRect const& rect, QIcon::State state, QColor const& pen_color);
+
       // Drawn instead of the glyph when no Font Awesome font is installed.
       void paintFallback(QPainter* painter, QRect const& rect, QIcon::Mode mode, QIcon::State state);
+
+      // First character of _text, which is what both enums are stored as. 0 for an empty engine.
+      char32_t codepoint() const;
+
+      IconSet const _set;
 
     private:
       const QString _text;

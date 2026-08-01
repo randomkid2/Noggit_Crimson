@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>tool_water_editor</title>
+  <path d="M12,2 L12,8"/>
+  <path d="M9.5,5.5 L12,8 L14.5,5.5"/>
+  <path d="M4,13 C7,10 9,16 12,13 C15,10 17,16 20,13"/>
+  <path d="M4,18 C7,15 9,21 12,18 C15,15 17,21 20,18"/>
+</svg>

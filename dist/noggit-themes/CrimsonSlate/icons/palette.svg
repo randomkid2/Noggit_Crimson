@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>palette</title>
+  <path d="M12,3 C18,3 21,7 21,12 C21,15 18,17 16,16.5 C14.5,16.2 14,17.5 14.5,18.5 C15,19.7 14,21 12,21 C7,21 3,17 3,12 C3,7 6.5,3 12,3 Z"/>
+  <circle cx="8" cy="9" r="0.9" fill="currentColor" stroke="none"/>
+  <circle cx="12" cy="7" r="0.9" fill="currentColor" stroke="none"/>
+  <circle cx="16" cy="8" r="0.9" fill="currentColor" stroke="none"/>
+  <circle cx="18.5" cy="12" r="0.9" fill="currentColor" stroke="none"/>
+</svg>

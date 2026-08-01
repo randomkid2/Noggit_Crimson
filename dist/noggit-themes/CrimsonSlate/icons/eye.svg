@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>eye</title>
+  <path d="M3,12 C7,6 17,6 21,12"/>
+  <path d="M3,12 C7,18 17,18 21,12"/>
+  <circle cx="12" cy="12" r="4"/>
+  <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+</svg>

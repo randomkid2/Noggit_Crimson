@@ -142,6 +142,30 @@ namespace Noggit
         AREA_TRIGGER = 0xf8e0,
         AREA_TRIGGER_SPHERE = 0xf8e1,
 
+        // -- past the end of resources/noggit_font.ttf ----------------------------------------
+        //
+        // Everything above has a glyph in the shipped font. Everything below does NOT, and
+        // resolves through the drawn icon set or, until that covers it, through the short text
+        // label in FontAwesome.cpp's noggitIcons() table. That is why these can be added here
+        // without touching the font, and why adding one without a row in that table would put a
+        // "?" on a button.
+        //
+        // The first three exist because ChunkTool, ScriptingTool and ErosionTool ALL THREE
+        // return FontNoggit::INFO today -- three of the sixteen tools in the left strip are
+        // visually identical to each other and to the "Details info" toolbar toggle. Pointing
+        // those tools at these values is a one-line change in each of ChunkTool.cpp,
+        // ScriptingTool.cpp and ErosionTool.cpp; it is NOT made here, because this file owns
+        // what an icon is, not which tool asks for one.
+        TOOL_SCRIPTING = 0xf8e2,
+        TOOL_CHUNK = 0xf8e3,
+        TOOL_EROSION = 0xf8e4,
+
+        // 0xf8e5-0xf8ed are deliberately left free. The nine terrain falloff curves have
+        // artwork in the icon set under falloff_*, but they are reached through
+        // UiCommon::falloffCurveIcon(int) keyed by eTerrainType rather than through this enum,
+        // so an enumerator here would be a second name for one picture and nothing would
+        // construct it.
+
       };
     };
 

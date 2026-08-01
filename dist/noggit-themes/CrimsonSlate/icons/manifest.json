@@ -1,0 +1,2985 @@
+{
+  "by_codepoint": {
+    "0xf005": "star",
+    "0xf00c": "check",
+    "0xf00d": "times",
+    "0xf013": "cog",
+    "0xf01e": "redo",
+    "0xf028": "volumeup",
+    "0xf02e": "bookmark",
+    "0xf044": "edit",
+    "0xf04b": "play",
+    "0xf04c": "pause",
+    "0xf04d": "stop",
+    "0xf067": "plus",
+    "0xf068": "minus",
+    "0xf06e": "eye",
+    "0xf070": "eyeslash",
+    "0xf077": "chevronup",
+    "0xf078": "chevrondown",
+    "0xf07c": "folderopen",
+    "0xf0ad": "wrench",
+    "0xf0c2": "cloud",
+    "0xf0c7": "save",
+    "0xf0d7": "caretdown",
+    "0xf0da": "caretright",
+    "0xf0e2": "undo",
+    "0xf0eb": "tool_light",
+    "0xf100": "angledoubleleft",
+    "0xf101": "angledoubleright",
+    "0xf11b": "view_mode_game",
+    "0xf129": "info",
+    "0xf12d": "eraser",
+    "0xf15b": "file",
+    "0xf185": "sun",
+    "0xf1c6": "filearchive",
+    "0xf1f8": "trash",
+    "0xf233": "server",
+    "0xf279": "map",
+    "0xf2d0": "windowmaximize",
+    "0xf2d1": "windowminimize",
+    "0xf2ed": "trash",
+    "0xf304": "pen",
+    "0xf328": "clipboard",
+    "0xf410": "times",
+    "0xf53f": "palette",
+    "0xf6ff": "networkwired",
+    "0xf70c": "running",
+    "0xf89c": "tool_raise_lower",
+    "0xf89d": "tool_flatten_blur",
+    "0xf89e": "tool_texture_paint",
+    "0xf89f": "tool_hole_cutter",
+    "0xf8a0": "tool_area_designator",
+    "0xf8a1": "tool_impass_designator",
+    "0xf8a2": "tool_water_editor",
+    "0xf8a3": "tool_vertex_paint",
+    "0xf8a4": "tool_object_editor",
+    "0xf8a5": "tool_minimap_editor",
+    "0xf8a6": "tool_stamp",
+    "0xf8a9": "visibility_wmo",
+    "0xf8aa": "visibility_wmo_doodads",
+    "0xf8ab": "visibility_doodads",
+    "0xf8ac": "visibility_with_box",
+    "0xf8ae": "visibility_terrain",
+    "0xf8af": "visibility_lines",
+    "0xf8b0": "visibility_wireframe",
+    "0xf8b1": "visibility_contours",
+    "0xf8b2": "visibility_fog",
+    "0xf8b3": "visibility_water",
+    "0xf8b6": "visibility_hidden_models",
+    "0xf8b7": "visibility_hole_lines",
+    "0xf8b8": "visibility_animation",
+    "0xf8bb": "info",
+    "0xf8bc": "visibility_particles",
+    "0xf8bd": "time_normal",
+    "0xf8be": "time_pause",
+    "0xf8bf": "time_speed",
+    "0xf8c6": "ui_toggle",
+    "0xf8c7": "view_mode_2d",
+    "0xf8c8": "view_axis",
+    "0xf8c9": "gizmo_translate",
+    "0xf8ca": "gizmo_rotate",
+    "0xf8cb": "gizmo_scale",
+    "0xf8cc": "gizmo_visibility",
+    "0xf8cd": "gizmo_global",
+    "0xf8ce": "gizmo_local",
+    "0xf8cf": "gizmo_visibility_all",
+    "0xf8d0": "tool_light",
+    "0xf8d1": "visibility_vertex_painter",
+    "0xf8d2": "visibility_climb",
+    "0xf8d3": "visibility_baked_shadows",
+    "0xf8d8": "view_mode_game",
+    "0xf8df": "visibility_flight_bounds",
+    "0xf8e0": "area_trigger",
+    "0xf8e1": "area_trigger_sphere"
+  },
+  "generator": "dist/noggit-themes/CrimsonSlate/icons/generate_icon_set.py",
+  "grid": 24,
+  "icons": {
+    "angledoubleleft": {
+      "alias_of": null,
+      "codepoint": "0xf100",
+      "enumerator": "angledoubleleft",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "angledoubleleft.png",
+      "png_2x": "angledoubleleft@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,6 L7,12 L12,18",
+          "op": "stroke"
+        },
+        {
+          "d": "M19,6 L14,12 L19,18",
+          "op": "stroke"
+        }
+      ],
+      "svg": "angledoubleleft.svg",
+      "tooltip": "Previous"
+    },
+    "angledoubleright": {
+      "alias_of": null,
+      "codepoint": "0xf101",
+      "enumerator": "angledoubleright",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "angledoubleright.png",
+      "png_2x": "angledoubleright@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,6 L17,12 L12,18",
+          "op": "stroke"
+        },
+        {
+          "d": "M5,6 L10,12 L5,18",
+          "op": "stroke"
+        }
+      ],
+      "svg": "angledoubleright.svg",
+      "tooltip": "Next"
+    },
+    "area_trigger": {
+      "alias_of": null,
+      "codepoint": "0xf8e0",
+      "enumerator": "AREA_TRIGGER",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "area_trigger.png",
+      "png_2x": "area_trigger@2x.png",
+      "subpaths": [
+        {
+          "d": "R 4 7 16 10 3",
+          "dash": [
+            4,
+            3
+          ],
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 12 1.3",
+          "op": "fill"
+        },
+        {
+          "d": "M12,4 L12,7",
+          "op": "stroke"
+        }
+      ],
+      "svg": "area_trigger.svg",
+      "tooltip": "Area Trigger"
+    },
+    "area_trigger_sphere": {
+      "alias_of": null,
+      "codepoint": "0xf8e1",
+      "enumerator": "AREA_TRIGGER_SPHERE",
+      "font": "noggit",
+      "group": "gizmo",
+      "png_1x": "area_trigger_sphere.png",
+      "png_2x": "area_trigger_sphere@2x.png",
+      "subpaths": [
+        {
+          "d": "O 12 12 8",
+          "dash": [
+            4,
+            3
+          ],
+          "op": "stroke"
+        },
+        {
+          "d": "M12,9 C16.418,9 20,10.343 20,12 C20,13.657 16.418,15 12,15 C7.582,15 4,13.657 4,12 C4,10.343 7.582,9 12,9 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 12 1.3",
+          "op": "fill"
+        }
+      ],
+      "svg": "area_trigger_sphere.svg",
+      "tooltip": "Sphere trigger"
+    },
+    "bookmark": {
+      "alias_of": null,
+      "codepoint": "0xf02e",
+      "enumerator": "bookmark",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "bookmark.png",
+      "png_2x": "bookmark@2x.png",
+      "subpaths": [
+        {
+          "d": "M7,3 L17,3 L17,21 L12,16 L7,21 Z",
+          "op": "stroke"
+        }
+      ],
+      "svg": "bookmark.svg",
+      "tooltip": "Bookmark"
+    },
+    "caretdown": {
+      "alias_of": null,
+      "codepoint": "0xf0d7",
+      "enumerator": "caretdown",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "caretdown.png",
+      "png_2x": "caretdown@2x.png",
+      "subpaths": [
+        {
+          "d": "M7,10 L17,10 L12,16 Z",
+          "op": "fill"
+        }
+      ],
+      "svg": "caretdown.svg",
+      "tooltip": "Expand"
+    },
+    "caretright": {
+      "alias_of": null,
+      "codepoint": "0xf0da",
+      "enumerator": "caretright",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "caretright.png",
+      "png_2x": "caretright@2x.png",
+      "subpaths": [
+        {
+          "d": "M10,7 L16,12 L10,17 Z",
+          "op": "fill"
+        }
+      ],
+      "svg": "caretright.svg",
+      "tooltip": "Collapse"
+    },
+    "check": {
+      "alias_of": null,
+      "codepoint": "0xf00c",
+      "enumerator": "check",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "check.png",
+      "png_2x": "check@2x.png",
+      "subpaths": [
+        {
+          "d": "M5,13 L10,18 L19,6",
+          "op": "stroke"
+        }
+      ],
+      "svg": "check.svg",
+      "tooltip": "Confirm"
+    },
+    "chevrondown": {
+      "alias_of": null,
+      "codepoint": "0xf078",
+      "enumerator": "chevrondown",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "chevrondown.png",
+      "png_2x": "chevrondown@2x.png",
+      "subpaths": [
+        {
+          "d": "M6,9 L12,16 L18,9",
+          "op": "stroke"
+        }
+      ],
+      "svg": "chevrondown.svg",
+      "tooltip": "Down"
+    },
+    "chevronup": {
+      "alias_of": null,
+      "codepoint": "0xf077",
+      "enumerator": "chevronup",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "chevronup.png",
+      "png_2x": "chevronup@2x.png",
+      "subpaths": [
+        {
+          "d": "M6,15 L12,8 L18,15",
+          "op": "stroke"
+        }
+      ],
+      "svg": "chevronup.svg",
+      "tooltip": "Up"
+    },
+    "clipboard": {
+      "alias_of": null,
+      "codepoint": "0xf328",
+      "enumerator": "clipboard",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "clipboard.png",
+      "png_2x": "clipboard@2x.png",
+      "subpaths": [
+        {
+          "d": "R 5 5 14 16 2",
+          "op": "stroke"
+        },
+        {
+          "d": "R 9 3 6 5 1",
+          "op": "stroke"
+        },
+        {
+          "d": "M8,12 L16,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M8,16 L16,16",
+          "op": "stroke"
+        }
+      ],
+      "svg": "clipboard.svg",
+      "tooltip": "Clipboard"
+    },
+    "cloud": {
+      "alias_of": null,
+      "codepoint": "0xf0c2",
+      "enumerator": "cloud",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "cloud.png",
+      "png_2x": "cloud@2x.png",
+      "subpaths": [
+        {
+          "d": "M6.5,18 C3.5,18 2.5,14 5.5,12.8 C5.5,8.5 11,7 13,10.5 C16,8.5 20.5,11 20,14.5 C19.7,16.7 18.4,18 17,18 Z",
+          "op": "stroke"
+        }
+      ],
+      "svg": "cloud.svg",
+      "tooltip": "Cloud"
+    },
+    "cog": {
+      "alias_of": null,
+      "codepoint": "0xf013",
+      "enumerator": "cog",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "cog.png",
+      "png_2x": "cog@2x.png",
+      "subpaths": [
+        {
+          "d": "O 12 12 6.5",
+          "op": "stroke"
+        },
+        {
+          "d": "M18.5,12 L21,12 M15.25,17.629 L16.5,19.794 M8.75,17.629 L7.5,19.794 M5.5,12 L3,12 M8.75,6.371 L7.5,4.206 M15.25,6.371 L16.5,4.206",
+          "op": "stroke",
+          "width": 3.4
+        },
+        {
+          "d": "O 12 12 2",
+          "op": "fill"
+        }
+      ],
+      "svg": "cog.svg",
+      "tooltip": "Settings"
+    },
+    "edit": {
+      "alias_of": null,
+      "codepoint": "0xf044",
+      "enumerator": "edit",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "edit.png",
+      "png_2x": "edit@2x.png",
+      "subpaths": [
+        {
+          "d": "M5,18 L7,13 L16,4 L19,7 L10,16 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M14,6 L17,9",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,21 L20,21",
+          "op": "stroke"
+        }
+      ],
+      "svg": "edit.svg",
+      "tooltip": "Tablet pressure on"
+    },
+    "eraser": {
+      "alias_of": null,
+      "codepoint": "0xf12d",
+      "enumerator": "eraser",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "eraser.png",
+      "png_2x": "eraser@2x.png",
+      "subpaths": [
+        {
+          "d": "M6,13 L13,5 L19,10 L12,18 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M9,15.5 L16,7.5",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,21 L21,21",
+          "op": "stroke"
+        }
+      ],
+      "svg": "eraser.svg",
+      "tooltip": "Erase"
+    },
+    "eye": {
+      "alias_of": null,
+      "codepoint": "0xf06e",
+      "enumerator": "eye",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "eye.png",
+      "png_2x": "eye@2x.png",
+      "subpaths": [
+        {
+          "d": "M3,12 C7,6 17,6 21,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M3,12 C7,18 17,18 21,12",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 12 4",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 12 1.2",
+          "op": "fill"
+        }
+      ],
+      "svg": "eye.svg",
+      "tooltip": "Visible"
+    },
+    "eyeslash": {
+      "alias_of": null,
+      "codepoint": "0xf070",
+      "enumerator": "eyeslash",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "eyeslash.png",
+      "png_2x": "eyeslash@2x.png",
+      "subpaths": [
+        {
+          "d": "M3,12 C7,6 17,6 21,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M3,12 C7,18 17,18 21,12",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 12 4",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 12 1.2",
+          "op": "fill"
+        },
+        {
+          "d": "M4,20 L20,4",
+          "op": "erase_stroke",
+          "width": 6.0
+        },
+        {
+          "d": "M4,20 L20,4",
+          "op": "stroke"
+        }
+      ],
+      "svg": "eyeslash.svg",
+      "tooltip": "Hidden"
+    },
+    "falloff_flat": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": null,
+      "group": "falloff",
+      "png_1x": "falloff_flat.png",
+      "png_2x": "falloff_flat@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,4 L4,20 L20,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,8 L16,8 L16,20",
+          "op": "stroke"
+        }
+      ],
+      "svg": "falloff_flat.svg",
+      "tooltip": "Flat"
+    },
+    "falloff_gaussian": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": null,
+      "group": "falloff",
+      "png_1x": "falloff_gaussian.png",
+      "png_2x": "falloff_gaussian@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,4 L4,20 L20,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,20 C9,20 9,9 12,8 C15,9 15,20 20,20",
+          "op": "stroke"
+        }
+      ],
+      "svg": "falloff_gaussian.svg",
+      "tooltip": "Gaussian"
+    },
+    "falloff_linear": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": null,
+      "group": "falloff",
+      "png_1x": "falloff_linear.png",
+      "png_2x": "falloff_linear@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,4 L4,20 L20,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,8 L20,20",
+          "op": "stroke"
+        }
+      ],
+      "svg": "falloff_linear.svg",
+      "tooltip": "Linear"
+    },
+    "falloff_polynomial": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": null,
+      "group": "falloff",
+      "png_1x": "falloff_polynomial.png",
+      "png_2x": "falloff_polynomial@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,4 L4,20 L20,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,8 C13,8 17,12 20,20",
+          "op": "stroke"
+        }
+      ],
+      "svg": "falloff_polynomial.svg",
+      "tooltip": "Polynomial"
+    },
+    "falloff_quadratic": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": null,
+      "group": "falloff",
+      "png_1x": "falloff_quadratic.png",
+      "png_2x": "falloff_quadratic@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,4 L4,20 L20,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,8 Q4,20 20,20",
+          "op": "stroke"
+        }
+      ],
+      "svg": "falloff_quadratic.svg",
+      "tooltip": "Quadratic"
+    },
+    "falloff_script": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": null,
+      "group": "falloff",
+      "png_1x": "falloff_script.png",
+      "png_2x": "falloff_script@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,4 L4,20 L20,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,9 L7,12 L10,15",
+          "op": "stroke"
+        },
+        {
+          "d": "M14,9 L17,12 L14,15",
+          "op": "stroke"
+        },
+        {
+          "d": "M14,8 L10,17",
+          "op": "stroke"
+        }
+      ],
+      "svg": "falloff_script.svg",
+      "tooltip": "Script"
+    },
+    "falloff_smooth": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": null,
+      "group": "falloff",
+      "png_1x": "falloff_smooth.png",
+      "png_2x": "falloff_smooth@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,4 L4,20 L20,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,8 C10,8 14,20 20,20",
+          "op": "stroke"
+        }
+      ],
+      "svg": "falloff_smooth.svg",
+      "tooltip": "Smooth"
+    },
+    "falloff_trigonom": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": null,
+      "group": "falloff",
+      "png_1x": "falloff_trigonom.png",
+      "png_2x": "falloff_trigonom@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,4 L4,20 L20,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,20 C8,20 8,8 12,8 C16,8 16,20 20,20",
+          "op": "stroke"
+        }
+      ],
+      "svg": "falloff_trigonom.svg",
+      "tooltip": "Trigonom"
+    },
+    "falloff_vertex": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": null,
+      "group": "falloff",
+      "png_1x": "falloff_vertex.png",
+      "png_2x": "falloff_vertex@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,4 L4,20 L20,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M5,17 L12,8 L19,17",
+          "op": "stroke"
+        },
+        {
+          "d": "O 5 17 1.25",
+          "op": "fill"
+        },
+        {
+          "d": "O 12 8 1.25",
+          "op": "fill"
+        },
+        {
+          "d": "O 19 17 1.25",
+          "op": "fill"
+        }
+      ],
+      "svg": "falloff_vertex.svg",
+      "tooltip": "Vertex"
+    },
+    "file": {
+      "alias_of": null,
+      "codepoint": "0xf15b",
+      "enumerator": "file",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "file.png",
+      "png_2x": "file@2x.png",
+      "subpaths": [
+        {
+          "d": "M6,4 L14,4 L18,8 L18,20 L6,20 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M14,4 L14,8 L18,8",
+          "op": "stroke"
+        }
+      ],
+      "svg": "file.svg",
+      "tooltip": "File"
+    },
+    "filearchive": {
+      "alias_of": null,
+      "codepoint": "0xf1c6",
+      "enumerator": "filearchive",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "filearchive.png",
+      "png_2x": "filearchive@2x.png",
+      "subpaths": [
+        {
+          "d": "M6,4 L14,4 L18,8 L18,20 L6,20 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M14,4 L14,8 L18,8",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,7 L10,17",
+          "dash": [
+            2,
+            2
+          ],
+          "op": "stroke"
+        }
+      ],
+      "svg": "filearchive.svg",
+      "tooltip": "Archive"
+    },
+    "folderopen": {
+      "alias_of": null,
+      "codepoint": "0xf07c",
+      "enumerator": "folderopen",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "folderopen.png",
+      "png_2x": "folderopen@2x.png",
+      "subpaths": [
+        {
+          "d": "M3,19 L3,6 L9,6 L11,9 L19,9 L19,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M3,19 L6,12 L21,12 L18,19 Z",
+          "op": "stroke"
+        }
+      ],
+      "svg": "folderopen.svg",
+      "tooltip": "Open folder"
+    },
+    "gamepad": {
+      "alias_of": "view_mode_game",
+      "codepoint": "0xf11b",
+      "enumerator": "gamepad",
+      "font": "awesome",
+      "group": "view-mode",
+      "png_1x": "view_mode_game.png",
+      "png_2x": "view_mode_game@2x.png",
+      "subpaths": [
+        {
+          "d": "R 2 8 20 9 4",
+          "op": "stroke"
+        },
+        {
+          "d": "M5,13 L11,13",
+          "op": "stroke"
+        },
+        {
+          "d": "M8,10 L8,16",
+          "op": "stroke"
+        },
+        {
+          "d": "O 16 11 1.3",
+          "op": "fill"
+        },
+        {
+          "d": "O 18 14 1.3",
+          "op": "fill"
+        }
+      ],
+      "svg": "view_mode_game.svg",
+      "tooltip": "Gamepad"
+    },
+    "gizmo_global": {
+      "alias_of": null,
+      "codepoint": "0xf8cd",
+      "enumerator": "GIZMO_GLOBAL",
+      "font": "noggit",
+      "group": "gizmo",
+      "png_1x": "gizmo_global.png",
+      "png_2x": "gizmo_global@2x.png",
+      "subpaths": [
+        {
+          "d": "O 12 12 8",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,9 C16.418,9 20,10.343 20,12 C20,13.657 16.418,15 12,15 C7.582,15 4,13.657 4,12 C4,10.343 7.582,9 12,9 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,4 C13.657,4 15,7.582 15,12 C15,16.418 13.657,20 12,20 C10.343,20 9,16.418 9,12 C9,7.582 10.343,4 12,4 Z",
+          "op": "stroke"
+        }
+      ],
+      "svg": "gizmo_global.svg",
+      "tooltip": "World space"
+    },
+    "gizmo_local": {
+      "alias_of": null,
+      "codepoint": "0xf8ce",
+      "enumerator": "GIZMO_LOCAL",
+      "font": "noggit",
+      "group": "gizmo",
+      "png_1x": "gizmo_local.png",
+      "png_2x": "gizmo_local@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,6 L20,11 L12,16 L4,11 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M7,14 L17,9",
+          "op": "stroke"
+        },
+        {
+          "d": "M14.435,8.574 L17,9 L15.802,11.308",
+          "op": "stroke"
+        }
+      ],
+      "svg": "gizmo_local.svg",
+      "tooltip": "Local space"
+    },
+    "gizmo_rotate": {
+      "alias_of": null,
+      "codepoint": "0xf8ca",
+      "enumerator": "GIZMO_ROTATE",
+      "font": "noggit",
+      "group": "gizmo",
+      "png_1x": "gizmo_rotate.png",
+      "png_2x": "gizmo_rotate@2x.png",
+      "subpaths": [
+        {
+          "d": "M18.928,8 C20.739,11.136 20.217,15.097 17.657,17.657 C15.097,20.217 11.136,20.739 8,18.928 C4.864,17.118 3.335,13.427 4.273,9.929 C5.21,6.432 8.379,4 12,4",
+          "op": "stroke"
+        },
+        {
+          "d": "M9.897,2.472 L12,4 L9.897,5.528",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 12 1.3",
+          "op": "fill"
+        }
+      ],
+      "svg": "gizmo_rotate.svg",
+      "tooltip": "Rotate"
+    },
+    "gizmo_scale": {
+      "alias_of": null,
+      "codepoint": "0xf8cb",
+      "enumerator": "GIZMO_SCALE",
+      "font": "noggit",
+      "group": "gizmo",
+      "png_1x": "gizmo_scale.png",
+      "png_2x": "gizmo_scale@2x.png",
+      "subpaths": [
+        {
+          "d": "M6,18 L18,6",
+          "op": "stroke"
+        },
+        {
+          "d": "M15,9 L15,3 L21,3 L21,9 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "R 4 16 4 4 0.5",
+          "op": "fill"
+        }
+      ],
+      "svg": "gizmo_scale.svg",
+      "tooltip": "Scale"
+    },
+    "gizmo_translate": {
+      "alias_of": null,
+      "codepoint": "0xf8c9",
+      "enumerator": "GIZMO_TRANSLATE",
+      "font": "noggit",
+      "group": "gizmo",
+      "png_1x": "gizmo_translate.png",
+      "png_2x": "gizmo_translate@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,3 L12,21",
+          "op": "stroke"
+        },
+        {
+          "d": "M3,12 L21,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M9.5,5.5 L12,3 L14.5,5.5",
+          "op": "stroke"
+        },
+        {
+          "d": "M9.5,18.5 L12,21 L14.5,18.5",
+          "op": "stroke"
+        },
+        {
+          "d": "M5.5,9.5 L3,12 L5.5,14.5",
+          "op": "stroke"
+        },
+        {
+          "d": "M18.5,9.5 L21,12 L18.5,14.5",
+          "op": "stroke"
+        }
+      ],
+      "svg": "gizmo_translate.svg",
+      "tooltip": "Translate"
+    },
+    "gizmo_visibility": {
+      "alias_of": null,
+      "codepoint": "0xf8cc",
+      "enumerator": "GIZMO_VISIBILITY",
+      "font": "noggit",
+      "group": "gizmo",
+      "png_1x": "gizmo_visibility.png",
+      "png_2x": "gizmo_visibility@2x.png",
+      "subpaths": [
+        {
+          "d": "M2,12 C5,7 13,7 16,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M2,12 C5,17 13,17 16,12",
+          "op": "stroke"
+        },
+        {
+          "d": "O 9 12 3",
+          "op": "stroke"
+        },
+        {
+          "d": "O 9 12 1.1",
+          "op": "fill"
+        },
+        {
+          "d": "M18,9 L21,12 L18,15",
+          "op": "stroke"
+        }
+      ],
+      "svg": "gizmo_visibility.svg",
+      "tooltip": "Gizmo visibility"
+    },
+    "gizmo_visibility_all": {
+      "alias_of": null,
+      "codepoint": "0xf8cf",
+      "enumerator": "GIZMO_VISIBILITY_ALL",
+      "font": "noggit",
+      "group": "gizmo",
+      "png_1x": "gizmo_visibility_all.png",
+      "png_2x": "gizmo_visibility_all@2x.png",
+      "subpaths": [
+        {
+          "d": "M7,4.5 L10.5,8 L7,11.5 L3.5,8 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M17,4.5 L20.5,8 L17,11.5 L13.5,8 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,13.5 L15.5,17 L12,20.5 L8.5,17 Z",
+          "op": "stroke"
+        }
+      ],
+      "svg": "gizmo_visibility_all.svg",
+      "tooltip": "Show all gizmos"
+    },
+    "info": {
+      "alias_of": null,
+      "codepoint": "0xf8bb",
+      "enumerator": "INFO",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "info.png",
+      "png_2x": "info@2x.png",
+      "subpaths": [
+        {
+          "d": "O 12 12 8",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 7.5 1.25",
+          "op": "fill"
+        },
+        {
+          "d": "M12,11 L12,17",
+          "op": "stroke"
+        }
+      ],
+      "svg": "info.svg",
+      "tooltip": "Details info"
+    },
+    "info_fa": {
+      "alias_of": "info",
+      "codepoint": "0xf129",
+      "enumerator": "info",
+      "font": "awesome",
+      "group": "view-toolbar",
+      "png_1x": "info.png",
+      "png_2x": "info@2x.png",
+      "subpaths": [
+        {
+          "d": "O 12 12 8",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 7.5 1.25",
+          "op": "fill"
+        },
+        {
+          "d": "M12,11 L12,17",
+          "op": "stroke"
+        }
+      ],
+      "svg": "info.svg",
+      "tooltip": "Information"
+    },
+    "lightbulb": {
+      "alias_of": "tool_light",
+      "codepoint": "0xf0eb",
+      "enumerator": "lightbulb",
+      "font": "awesome",
+      "group": "tool-strip",
+      "png_1x": "tool_light.png",
+      "png_2x": "tool_light@2x.png",
+      "subpaths": [
+        {
+          "d": "O 12 9 4",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,16 L14,16",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,19 L14,19",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,2 L12,3.5",
+          "op": "stroke"
+        },
+        {
+          "d": "M8,5 L6.5,3.5",
+          "op": "stroke"
+        },
+        {
+          "d": "M16,5 L17.5,3.5",
+          "op": "stroke"
+        }
+      ],
+      "svg": "tool_light.svg",
+      "tooltip": "Light"
+    },
+    "lock": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": null,
+      "group": "affordance",
+      "png_1x": "lock.png",
+      "png_2x": "lock@2x.png",
+      "subpaths": [
+        {
+          "d": "R 4 11 16 10 2",
+          "op": "stroke"
+        },
+        {
+          "d": "M7.5,11 C7.5,8.515 9.515,6.5 12,6.5 C14.485,6.5 16.5,8.515 16.5,11",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 15 1.3",
+          "op": "fill"
+        },
+        {
+          "d": "M12,16 L12,19",
+          "op": "stroke"
+        }
+      ],
+      "svg": "lock.svg",
+      "tooltip": "Locked"
+    },
+    "map": {
+      "alias_of": null,
+      "codepoint": "0xf279",
+      "enumerator": "map",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "map.png",
+      "png_2x": "map@2x.png",
+      "subpaths": [
+        {
+          "d": "M3,7 L9,5 L15,7 L21,5 L21,17 L15,19 L9,17 L3,19 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M9,5 L9,17",
+          "op": "stroke"
+        },
+        {
+          "d": "M15,7 L15,19",
+          "op": "stroke"
+        }
+      ],
+      "svg": "map.svg",
+      "tooltip": "Map"
+    },
+    "minus": {
+      "alias_of": null,
+      "codepoint": "0xf068",
+      "enumerator": "minus",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "minus.png",
+      "png_2x": "minus@2x.png",
+      "subpaths": [
+        {
+          "d": "M5,12 L19,12",
+          "op": "stroke"
+        }
+      ],
+      "svg": "minus.svg",
+      "tooltip": "Remove"
+    },
+    "networkwired": {
+      "alias_of": null,
+      "codepoint": "0xf6ff",
+      "enumerator": "networkwired",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "networkwired.png",
+      "png_2x": "networkwired@2x.png",
+      "subpaths": [
+        {
+          "d": "R 9 3 6 5 1",
+          "op": "stroke"
+        },
+        {
+          "d": "R 3 16 6 5 1",
+          "op": "stroke"
+        },
+        {
+          "d": "R 15 16 6 5 1",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,8 L12,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M6,12 L18,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M6,12 L6,16",
+          "op": "stroke"
+        },
+        {
+          "d": "M18,12 L18,16",
+          "op": "stroke"
+        }
+      ],
+      "svg": "networkwired.svg",
+      "tooltip": "Connection"
+    },
+    "palette": {
+      "alias_of": null,
+      "codepoint": "0xf53f",
+      "enumerator": "palette",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "palette.png",
+      "png_2x": "palette@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,3 C18,3 21,7 21,12 C21,15 18,17 16,16.5 C14.5,16.2 14,17.5 14.5,18.5 C15,19.7 14,21 12,21 C7,21 3,17 3,12 C3,7 6.5,3 12,3 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "O 8 9 0.9",
+          "op": "fill"
+        },
+        {
+          "d": "O 12 7 0.9",
+          "op": "fill"
+        },
+        {
+          "d": "O 16 8 0.9",
+          "op": "fill"
+        },
+        {
+          "d": "O 18.5 12 0.9",
+          "op": "fill"
+        }
+      ],
+      "svg": "palette.svg",
+      "tooltip": "Palette"
+    },
+    "pause": {
+      "alias_of": null,
+      "codepoint": "0xf04c",
+      "enumerator": "pause",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "pause.png",
+      "png_2x": "pause@2x.png",
+      "subpaths": [
+        {
+          "d": "R 8 5 3 14 1",
+          "op": "fill"
+        },
+        {
+          "d": "R 13 5 3 14 1",
+          "op": "fill"
+        }
+      ],
+      "svg": "pause.svg",
+      "tooltip": "Pause"
+    },
+    "pen": {
+      "alias_of": null,
+      "codepoint": "0xf304",
+      "enumerator": "pen",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "pen.png",
+      "png_2x": "pen@2x.png",
+      "subpaths": [
+        {
+          "d": "M5,18 L7,13 L16,4 L19,7 L10,16 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M14,6 L17,9",
+          "op": "stroke"
+        }
+      ],
+      "svg": "pen.svg",
+      "tooltip": "Tablet pressure off"
+    },
+    "play": {
+      "alias_of": null,
+      "codepoint": "0xf04b",
+      "enumerator": "play",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "play.png",
+      "png_2x": "play@2x.png",
+      "subpaths": [
+        {
+          "d": "M8,5 L19,12 L8,19 Z",
+          "op": "fill"
+        }
+      ],
+      "svg": "play.svg",
+      "tooltip": "Play"
+    },
+    "plus": {
+      "alias_of": null,
+      "codepoint": "0xf067",
+      "enumerator": "plus",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "plus.png",
+      "png_2x": "plus@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,5 L12,19",
+          "op": "stroke"
+        },
+        {
+          "d": "M5,12 L19,12",
+          "op": "stroke"
+        }
+      ],
+      "svg": "plus.svg",
+      "tooltip": "Add"
+    },
+    "redo": {
+      "alias_of": null,
+      "codepoint": "0xf01e",
+      "enumerator": "redo",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "redo.png",
+      "png_2x": "redo@2x.png",
+      "subpaths": [
+        {
+          "d": "M19,12 C19,15.866 15.866,19 12,19 C8.134,19 5,15.866 5,12 C5,8.134 8.134,5 12,5",
+          "op": "stroke"
+        },
+        {
+          "d": "M9.249,3.002 L12,5 L9.249,6.998",
+          "op": "stroke"
+        }
+      ],
+      "svg": "redo.svg",
+      "tooltip": "Redo"
+    },
+    "reset": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": null,
+      "group": "affordance",
+      "png_1x": "reset.png",
+      "png_2x": "reset@2x.png",
+      "subpaths": [
+        {
+          "d": "M15.5,5.938 C18.244,7.522 19.581,10.751 18.761,13.812 C17.941,16.872 15.168,19 12,19 C8.832,19 6.059,16.872 5.239,13.812 C4.419,10.751 5.756,7.522 8.5,5.938",
+          "op": "stroke"
+        },
+        {
+          "d": "M5.914,5.666 L8.5,5.938 L7.442,8.313",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 12 1.3",
+          "op": "fill"
+        }
+      ],
+      "svg": "reset.svg",
+      "tooltip": "Reset"
+    },
+    "running": {
+      "alias_of": null,
+      "codepoint": "0xf70c",
+      "enumerator": "running",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "running.png",
+      "png_2x": "running@2x.png",
+      "subpaths": [
+        {
+          "d": "O 15 5 2",
+          "op": "fill"
+        },
+        {
+          "d": "M14,8 L10,13",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,13 L13,19",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,13 L5,17",
+          "op": "stroke"
+        },
+        {
+          "d": "M13,9 L18,11",
+          "op": "stroke"
+        },
+        {
+          "d": "M13,9 L8,7",
+          "op": "stroke"
+        }
+      ],
+      "svg": "running.svg",
+      "tooltip": "Simulate"
+    },
+    "save": {
+      "alias_of": null,
+      "codepoint": "0xf0c7",
+      "enumerator": "save",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "save.png",
+      "png_2x": "save@2x.png",
+      "subpaths": [
+        {
+          "d": "R 4 4 16 16 2",
+          "op": "stroke"
+        },
+        {
+          "d": "R 8 4 8 5 0",
+          "op": "fill"
+        },
+        {
+          "d": "R 8 13 8 7 1",
+          "op": "stroke"
+        }
+      ],
+      "svg": "save.svg",
+      "tooltip": "Save"
+    },
+    "server": {
+      "alias_of": null,
+      "codepoint": "0xf233",
+      "enumerator": "server",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "server.png",
+      "png_2x": "server@2x.png",
+      "subpaths": [
+        {
+          "d": "R 3 4 18 5 2",
+          "op": "stroke"
+        },
+        {
+          "d": "R 3 10 18 5 2",
+          "op": "stroke"
+        },
+        {
+          "d": "R 3 16 18 5 2",
+          "op": "stroke"
+        },
+        {
+          "d": "O 6.5 6.5 0.9",
+          "op": "fill"
+        },
+        {
+          "d": "O 6.5 12.5 0.9",
+          "op": "fill"
+        },
+        {
+          "d": "O 6.5 18.5 0.9",
+          "op": "fill"
+        }
+      ],
+      "svg": "server.svg",
+      "tooltip": "Server"
+    },
+    "show_minimap": {
+      "alias_of": "tool_minimap_editor",
+      "codepoint": "0xf8a5",
+      "enumerator": "TOOL_MINIMAP_EDITOR",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_minimap_editor.png",
+      "png_2x": "tool_minimap_editor@2x.png",
+      "subpaths": [
+        {
+          "d": "R 4 4 16 16 2",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,4 L12,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,12 L20,12",
+          "op": "stroke"
+        },
+        {
+          "d": "R 6 6 5 5 1",
+          "op": "fill"
+        }
+      ],
+      "svg": "tool_minimap_editor.svg",
+      "tooltip": "Show minimap"
+    },
+    "star": {
+      "alias_of": null,
+      "codepoint": "0xf005",
+      "enumerator": "star",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "star.png",
+      "png_2x": "star@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,3.5 L14.351,9.264 L20.56,9.719 L15.804,13.736 L17.29,19.781 L12,16.5 L6.71,19.781 L8.196,13.736 L3.44,9.719 L9.649,9.264 Z",
+          "op": "stroke"
+        }
+      ],
+      "svg": "star.svg",
+      "tooltip": "Favourite (off)"
+    },
+    "star_filled": {
+      "alias_of": null,
+      "codepoint": "0xf005",
+      "enumerator": "star",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "star_filled.png",
+      "png_2x": "star_filled@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,3.5 L14.351,9.264 L20.56,9.719 L15.804,13.736 L17.29,19.781 L12,16.5 L6.71,19.781 L8.196,13.736 L3.44,9.719 L9.649,9.264 Z",
+          "op": "fill"
+        }
+      ],
+      "svg": "star_filled.svg",
+      "tooltip": "Favourite (on)"
+    },
+    "stop": {
+      "alias_of": null,
+      "codepoint": "0xf04d",
+      "enumerator": "stop",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "stop.png",
+      "png_2x": "stop@2x.png",
+      "subpaths": [
+        {
+          "d": "R 7 7 10 10 2",
+          "op": "fill"
+        }
+      ],
+      "svg": "stop.svg",
+      "tooltip": "Stop"
+    },
+    "sun": {
+      "alias_of": null,
+      "codepoint": "0xf185",
+      "enumerator": "sun",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "sun.png",
+      "png_2x": "sun@2x.png",
+      "subpaths": [
+        {
+          "d": "O 12 12 4.5",
+          "op": "stroke"
+        },
+        {
+          "d": "M18.5,12 L21,12 M16.596,16.596 L18.364,18.364 M12,18.5 L12,21 M7.404,16.596 L5.636,18.364 M5.5,12 L3,12 M7.404,7.404 L5.636,5.636 M12,5.5 L12,3 M16.596,7.404 L18.364,5.636",
+          "op": "stroke"
+        }
+      ],
+      "svg": "sun.svg",
+      "tooltip": "Daylight"
+    },
+    "time_normal": {
+      "alias_of": null,
+      "codepoint": "0xf8bd",
+      "enumerator": "TIME_NORMAL",
+      "font": "noggit",
+      "group": "time",
+      "png_1x": "time_normal.png",
+      "png_2x": "time_normal@2x.png",
+      "subpaths": [
+        {
+          "d": "O 12 12 8",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,12 L12,7",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,12 L16,14",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 12 1",
+          "op": "fill"
+        }
+      ],
+      "svg": "time_normal.svg",
+      "tooltip": "Normal time"
+    },
+    "time_pause": {
+      "alias_of": null,
+      "codepoint": "0xf8be",
+      "enumerator": "TIME_PAUSE",
+      "font": "noggit",
+      "group": "time",
+      "png_1x": "time_pause.png",
+      "png_2x": "time_pause@2x.png",
+      "subpaths": [
+        {
+          "d": "O 12 12 8",
+          "op": "stroke"
+        },
+        {
+          "d": "R 9 8 2 8 0.5",
+          "op": "fill"
+        },
+        {
+          "d": "R 13 8 2 8 0.5",
+          "op": "fill"
+        }
+      ],
+      "svg": "time_pause.svg",
+      "tooltip": "Pause time"
+    },
+    "time_speed": {
+      "alias_of": null,
+      "codepoint": "0xf8bf",
+      "enumerator": "TIME_SPEED",
+      "font": "noggit",
+      "group": "time",
+      "png_1x": "time_speed.png",
+      "png_2x": "time_speed@2x.png",
+      "subpaths": [
+        {
+          "d": "O 12 12 8",
+          "op": "stroke"
+        },
+        {
+          "d": "M8,8 L13,12 L8,16 Z",
+          "op": "fill"
+        },
+        {
+          "d": "M13,8 L18,12 L13,16 Z",
+          "op": "fill"
+        }
+      ],
+      "svg": "time_speed.svg",
+      "tooltip": "Speed up time"
+    },
+    "times": {
+      "alias_of": null,
+      "codepoint": "0xf00d",
+      "enumerator": "times",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "times.png",
+      "png_2x": "times@2x.png",
+      "subpaths": [
+        {
+          "d": "M6,6 L18,18",
+          "op": "stroke"
+        },
+        {
+          "d": "M18,6 L6,18",
+          "op": "stroke"
+        }
+      ],
+      "svg": "times.svg",
+      "tooltip": "Close"
+    },
+    "tool_area_designator": {
+      "alias_of": null,
+      "codepoint": "0xf8a0",
+      "enumerator": "TOOL_AREA_DESIGNATOR",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_area_designator.png",
+      "png_2x": "tool_area_designator@2x.png",
+      "subpaths": [
+        {
+          "d": "M5,9 L11,4 L19,8 L17,18 L7,17 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 11 1.3",
+          "op": "fill"
+        }
+      ],
+      "svg": "tool_area_designator.svg",
+      "tooltip": "Area Designator"
+    },
+    "tool_chunk": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_chunk.png",
+      "png_2x": "tool_chunk@2x.png",
+      "subpaths": [
+        {
+          "d": "M3,3 L21,3 L21,21 L3,21 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M9,3 L9,21",
+          "op": "stroke"
+        },
+        {
+          "d": "M15,3 L15,21",
+          "op": "stroke"
+        },
+        {
+          "d": "M3,9 L21,9",
+          "op": "stroke"
+        },
+        {
+          "d": "M3,15 L21,15",
+          "op": "stroke"
+        },
+        {
+          "d": "R 9 9 6 6 0",
+          "op": "fill"
+        }
+      ],
+      "svg": "tool_chunk.svg",
+      "tooltip": "Chunk Manipulator"
+    },
+    "tool_erosion": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_erosion.png",
+      "png_2x": "tool_erosion@2x.png",
+      "subpaths": [
+        {
+          "d": "M3,19 C7,19 8,7 12,7 C16,7 17,19 21,19",
+          "op": "stroke"
+        },
+        {
+          "d": "M11,9 L9,19",
+          "op": "stroke"
+        },
+        {
+          "d": "M14,9 L17,19",
+          "op": "stroke"
+        }
+      ],
+      "svg": "tool_erosion.svg",
+      "tooltip": "Erosion"
+    },
+    "tool_flatten_blur": {
+      "alias_of": null,
+      "codepoint": "0xf89d",
+      "enumerator": "TOOL_FLATTEN_BLUR",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_flatten_blur.png",
+      "png_2x": "tool_flatten_blur@2x.png",
+      "subpaths": [
+        {
+          "d": "M3,7 C6,7 6,3 9,3 C12,3 12,9 15,9 C18,9 18,5 21,5",
+          "op": "stroke"
+        },
+        {
+          "d": "M9,12 L12,15 L15,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M3,19 L21,19",
+          "op": "stroke"
+        }
+      ],
+      "svg": "tool_flatten_blur.svg",
+      "tooltip": "Flatten / Blur"
+    },
+    "tool_hole_cutter": {
+      "alias_of": null,
+      "codepoint": "0xf89f",
+      "enumerator": "TOOL_HOLE_CUTTER",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_hole_cutter.png",
+      "png_2x": "tool_hole_cutter@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,20 L4,20 L4,4 L20,4 L20,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,20 L12,12 L20,12",
+          "dash": [
+            3,
+            2.5
+          ],
+          "op": "stroke"
+        }
+      ],
+      "svg": "tool_hole_cutter.svg",
+      "tooltip": "Hole Cutter"
+    },
+    "tool_impass_designator": {
+      "alias_of": null,
+      "codepoint": "0xf8a1",
+      "enumerator": "TOOL_IMPASS_DESIGNATOR",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_impass_designator.png",
+      "png_2x": "tool_impass_designator@2x.png",
+      "subpaths": [
+        {
+          "d": "R 4 4 16 16 3",
+          "op": "stroke"
+        },
+        {
+          "d": "M7,17 L17,7",
+          "op": "stroke"
+        }
+      ],
+      "svg": "tool_impass_designator.svg",
+      "tooltip": "Impassable Flag"
+    },
+    "tool_light": {
+      "alias_of": null,
+      "codepoint": "0xf8d0",
+      "enumerator": "TOOL_LIGHT",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_light.png",
+      "png_2x": "tool_light@2x.png",
+      "subpaths": [
+        {
+          "d": "O 12 9 4",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,16 L14,16",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,19 L14,19",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,2 L12,3.5",
+          "op": "stroke"
+        },
+        {
+          "d": "M8,5 L6.5,3.5",
+          "op": "stroke"
+        },
+        {
+          "d": "M16,5 L17.5,3.5",
+          "op": "stroke"
+        }
+      ],
+      "svg": "tool_light.svg",
+      "tooltip": "Light Editor"
+    },
+    "tool_minimap_editor": {
+      "alias_of": null,
+      "codepoint": "0xf8a5",
+      "enumerator": "TOOL_MINIMAP_EDITOR",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_minimap_editor.png",
+      "png_2x": "tool_minimap_editor@2x.png",
+      "subpaths": [
+        {
+          "d": "R 4 4 16 16 2",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,4 L12,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,12 L20,12",
+          "op": "stroke"
+        },
+        {
+          "d": "R 6 6 5 5 1",
+          "op": "fill"
+        }
+      ],
+      "svg": "tool_minimap_editor.svg",
+      "tooltip": "Minimap Editor"
+    },
+    "tool_object_editor": {
+      "alias_of": null,
+      "codepoint": "0xf8a4",
+      "enumerator": "TOOL_OBJECT_EDITOR",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_object_editor.png",
+      "png_2x": "tool_object_editor@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,4 L18,8 L12,12 L6,8 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M6,8 L6,16 L12,20 L18,16 L18,8",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,12 L12,21",
+          "op": "stroke"
+        }
+      ],
+      "svg": "tool_object_editor.svg",
+      "tooltip": "Object Editor"
+    },
+    "tool_raise_lower": {
+      "alias_of": null,
+      "codepoint": "0xf89c",
+      "enumerator": "TOOL_RAISE_LOWER",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_raise_lower.png",
+      "png_2x": "tool_raise_lower@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,15 L20,15",
+          "op": "stroke"
+        },
+        {
+          "d": "M7,10 L12,5 L17,10",
+          "op": "stroke"
+        },
+        {
+          "d": "M9,18 L12,21 L15,18",
+          "op": "stroke"
+        }
+      ],
+      "svg": "tool_raise_lower.svg",
+      "tooltip": "Raise / Lower"
+    },
+    "tool_scripting": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_scripting.png",
+      "png_2x": "tool_scripting@2x.png",
+      "subpaths": [
+        {
+          "d": "M10,7 L6,12 L10,17",
+          "op": "stroke"
+        },
+        {
+          "d": "M14,7 L18,12 L14,17",
+          "op": "stroke"
+        },
+        {
+          "d": "M15,6 L9,18",
+          "op": "stroke"
+        }
+      ],
+      "svg": "tool_scripting.svg",
+      "tooltip": "Scripting"
+    },
+    "tool_stamp": {
+      "alias_of": null,
+      "codepoint": "0xf8a6",
+      "enumerator": "TOOL_STAMP",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_stamp.png",
+      "png_2x": "tool_stamp@2x.png",
+      "subpaths": [
+        {
+          "d": "R 5 13 14 5 2",
+          "op": "stroke"
+        },
+        {
+          "d": "M8,13 L10,6 L14,6 L16,13",
+          "op": "stroke"
+        },
+        {
+          "d": "M9,3 L15,3",
+          "op": "stroke"
+        }
+      ],
+      "svg": "tool_stamp.svg",
+      "tooltip": "Stamp"
+    },
+    "tool_texture_paint": {
+      "alias_of": null,
+      "codepoint": "0xf89e",
+      "enumerator": "TOOL_TEXTURE_PAINT",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_texture_paint.png",
+      "png_2x": "tool_texture_paint@2x.png",
+      "subpaths": [
+        {
+          "d": "R 4 5 12 5 2",
+          "op": "stroke"
+        },
+        {
+          "d": "M16,7 L19,7 L19,17",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,14 L10,14",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,18 L12,18",
+          "op": "stroke"
+        }
+      ],
+      "svg": "tool_texture_paint.svg",
+      "tooltip": "Texture Painter"
+    },
+    "tool_vertex_paint": {
+      "alias_of": null,
+      "codepoint": "0xf8a3",
+      "enumerator": "TOOL_VERTEX_PAINT",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_vertex_paint.png",
+      "png_2x": "tool_vertex_paint@2x.png",
+      "subpaths": [
+        {
+          "d": "M13.6,7 L18.4,16 M16.6,19 L7.4,19 M5.6,16 L10.4,7",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 4 2.3",
+          "op": "fill"
+        },
+        {
+          "d": "O 20 19 1.5",
+          "op": "fill"
+        },
+        {
+          "d": "O 4 19 1.5",
+          "op": "fill"
+        }
+      ],
+      "svg": "tool_vertex_paint.svg",
+      "tooltip": "Vertex Painter"
+    },
+    "tool_water_editor": {
+      "alias_of": null,
+      "codepoint": "0xf8a2",
+      "enumerator": "TOOL_WATER_EDITOR",
+      "font": "noggit",
+      "group": "tool-strip",
+      "png_1x": "tool_water_editor.png",
+      "png_2x": "tool_water_editor@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,2 L12,8",
+          "op": "stroke"
+        },
+        {
+          "d": "M9.5,5.5 L12,8 L14.5,5.5",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,13 C7,10 9,16 12,13 C15,10 17,16 20,13",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,18 C7,15 9,21 12,18 C15,15 17,21 20,18",
+          "op": "stroke"
+        }
+      ],
+      "svg": "tool_water_editor.svg",
+      "tooltip": "Water Editor"
+    },
+    "trash": {
+      "alias_of": null,
+      "codepoint": "0xf1f8",
+      "enumerator": "trash",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "trash.png",
+      "png_2x": "trash@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,7 L20,7",
+          "op": "stroke"
+        },
+        {
+          "d": "M9,7 L9,4 L15,4 L15,7",
+          "op": "stroke"
+        },
+        {
+          "d": "M6.5,7 L8.5,20 L15.5,20 L17.5,7",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,10 L10.5,17",
+          "op": "stroke"
+        },
+        {
+          "d": "M14,10 L13.5,17",
+          "op": "stroke"
+        }
+      ],
+      "svg": "trash.svg",
+      "tooltip": "Delete"
+    },
+    "trashalt": {
+      "alias_of": "trash",
+      "codepoint": "0xf2ed",
+      "enumerator": "trashalt",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "trash.png",
+      "png_2x": "trash@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,7 L20,7",
+          "op": "stroke"
+        },
+        {
+          "d": "M9,7 L9,4 L15,4 L15,7",
+          "op": "stroke"
+        },
+        {
+          "d": "M6.5,7 L8.5,20 L15.5,20 L17.5,7",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,10 L10.5,17",
+          "op": "stroke"
+        },
+        {
+          "d": "M14,10 L13.5,17",
+          "op": "stroke"
+        }
+      ],
+      "svg": "trash.svg",
+      "tooltip": "Delete"
+    },
+    "ui_toggle": {
+      "alias_of": null,
+      "codepoint": "0xf8c6",
+      "enumerator": "UI_TOGGLE",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "ui_toggle.png",
+      "png_2x": "ui_toggle@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,4 L4,9 M5,9 L5,20 L12,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,4 L20,9",
+          "dash": [
+            3,
+            2.5
+          ],
+          "op": "stroke"
+        },
+        {
+          "d": "M19,9 L19,20 L12,20",
+          "dash": [
+            3,
+            2.5
+          ],
+          "op": "stroke"
+        },
+        {
+          "d": "M12,4 L12,20",
+          "dash": [
+            3,
+            2.5
+          ],
+          "op": "stroke"
+        }
+      ],
+      "svg": "ui_toggle.svg",
+      "tooltip": "WMO exterior"
+    },
+    "undo": {
+      "alias_of": null,
+      "codepoint": "0xf0e2",
+      "enumerator": "undo",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "undo.png",
+      "png_2x": "undo@2x.png",
+      "subpaths": [
+        {
+          "d": "M5,12 C5,15.866 8.134,19 12,19 C15.866,19 19,15.866 19,12 C19,8.134 15.866,5 12,5",
+          "op": "stroke"
+        },
+        {
+          "d": "M14.751,6.998 L12,5 L14.751,3.002",
+          "op": "stroke"
+        }
+      ],
+      "svg": "undo.svg",
+      "tooltip": "Undo"
+    },
+    "unlock": {
+      "alias_of": null,
+      "codepoint": null,
+      "enumerator": null,
+      "font": null,
+      "group": "affordance",
+      "png_1x": "unlock.png",
+      "png_2x": "unlock@2x.png",
+      "subpaths": [
+        {
+          "d": "R 4 11 16 10 2",
+          "op": "stroke"
+        },
+        {
+          "d": "M11.5,8 C11.5,5.667 13.283,3.72 15.608,3.517 C17.932,3.314 20.026,4.921 20.432,7.219",
+          "op": "stroke"
+        },
+        {
+          "d": "M11.5,8 L11.5,11",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 15 1.3",
+          "op": "fill"
+        },
+        {
+          "d": "M12,16 L12,19",
+          "op": "stroke"
+        }
+      ],
+      "svg": "unlock.svg",
+      "tooltip": "Unlocked"
+    },
+    "view_axis": {
+      "alias_of": null,
+      "codepoint": "0xf8c8",
+      "enumerator": "VIEW_AXIS",
+      "font": "noggit",
+      "group": "view-mode",
+      "png_1x": "view_axis.png",
+      "png_2x": "view_axis@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,16 L12,5",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,16 L20,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,16 L4,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M10.472,7.103 L12,5 L13.528,7.103",
+          "op": "stroke"
+        },
+        {
+          "d": "M18.802,17.692 L20,20 L17.435,20.426",
+          "op": "stroke"
+        },
+        {
+          "d": "M6.565,20.426 L4,20 L5.198,17.692",
+          "op": "stroke"
+        }
+      ],
+      "svg": "view_axis.svg",
+      "tooltip": "Axis gizmo"
+    },
+    "view_mode_2d": {
+      "alias_of": null,
+      "codepoint": "0xf8c7",
+      "enumerator": "VIEW_MODE_2D",
+      "font": "noggit",
+      "group": "view-mode",
+      "png_1x": "view_mode_2d.png",
+      "png_2x": "view_mode_2d@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,4 L18,8 L12,12 L6,8 Z",
+          "op": "fill"
+        },
+        {
+          "d": "M6,8 L6,16 L12,20 L18,16 L18,8",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,12 L12,20",
+          "op": "stroke"
+        }
+      ],
+      "svg": "view_mode_2d.svg",
+      "tooltip": "Top view"
+    },
+    "view_mode_game": {
+      "alias_of": null,
+      "codepoint": "0xf8d8",
+      "enumerator": "VIEW_MODE_GAME",
+      "font": "noggit",
+      "group": "view-mode",
+      "png_1x": "view_mode_game.png",
+      "png_2x": "view_mode_game@2x.png",
+      "subpaths": [
+        {
+          "d": "R 2 8 20 9 4",
+          "op": "stroke"
+        },
+        {
+          "d": "M5,13 L11,13",
+          "op": "stroke"
+        },
+        {
+          "d": "M8,10 L8,16",
+          "op": "stroke"
+        },
+        {
+          "d": "O 16 11 1.3",
+          "op": "fill"
+        },
+        {
+          "d": "O 18 14 1.3",
+          "op": "fill"
+        }
+      ],
+      "svg": "view_mode_game.svg",
+      "tooltip": "Game view"
+    },
+    "visibility_animation": {
+      "alias_of": null,
+      "codepoint": "0xf8b8",
+      "enumerator": "VISIBILITY_ANIMATION",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_animation.png",
+      "png_2x": "visibility_animation@2x.png",
+      "subpaths": [
+        {
+          "d": "M6,9 L9,12 L6,15",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,8 L13,12 L10,16",
+          "op": "stroke"
+        },
+        {
+          "d": "M14,7 L17,12 L14,17",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_animation.svg",
+      "tooltip": "Animations"
+    },
+    "visibility_animation_2": {
+      "alias_of": "visibility_animation",
+      "codepoint": "0xf8b8",
+      "enumerator": "VISIBILITY_ANIMATION_2",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_animation.png",
+      "png_2x": "visibility_animation@2x.png",
+      "subpaths": [
+        {
+          "d": "M6,9 L9,12 L6,15",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,8 L13,12 L10,16",
+          "op": "stroke"
+        },
+        {
+          "d": "M14,7 L17,12 L14,17",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_animation.svg",
+      "tooltip": "Animations"
+    },
+    "visibility_baked_shadows": {
+      "alias_of": null,
+      "codepoint": "0xf8d3",
+      "enumerator": "VISIBILITY_BAKED_SHADOWS",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_baked_shadows.png",
+      "png_2x": "visibility_baked_shadows@2x.png",
+      "subpaths": [
+        {
+          "d": "R 10 10 10 10 2",
+          "op": "fill"
+        },
+        {
+          "d": "R 4 4 10 10 2",
+          "op": "erase_fill"
+        },
+        {
+          "d": "R 4 4 10 10 2",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_baked_shadows.svg",
+      "tooltip": "Baked shadows"
+    },
+    "visibility_climb": {
+      "alias_of": null,
+      "codepoint": "0xf8d2",
+      "enumerator": "VISIBILITY_CLIMB",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_climb.png",
+      "png_2x": "visibility_climb@2x.png",
+      "subpaths": [
+        {
+          "d": "M6,20 L6,6 L20,20 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M15,20 Q15,17.9 16.5,16.5",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_climb.svg",
+      "tooltip": "Climb"
+    },
+    "visibility_contours": {
+      "alias_of": null,
+      "codepoint": "0xf8b1",
+      "enumerator": "VISIBILITY_CONTOURS",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_contours.png",
+      "png_2x": "visibility_contours@2x.png",
+      "subpaths": [
+        {
+          "d": "M11.5,6 C16.194,6 20,9.134 20,13 C20,16.866 16.194,20 11.5,20 C6.806,20 3,16.866 3,13 C3,9.134 6.806,6 11.5,6 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,8 C15.038,8 17.5,10.015 17.5,12.5 C17.5,14.985 15.038,17 12,17 C8.962,17 6.5,14.985 6.5,12.5 C6.5,10.015 8.962,8 12,8 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M12.5,10 C13.881,10 15,10.895 15,12 C15,13.105 13.881,14 12.5,14 C11.119,14 10,13.105 10,12 C10,10.895 11.119,10 12.5,10 Z",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_contours.svg",
+      "tooltip": "Contours"
+    },
+    "visibility_doodads": {
+      "alias_of": null,
+      "codepoint": "0xf8ab",
+      "enumerator": "VISIBILITY_DOODADS",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_doodads.png",
+      "png_2x": "visibility_doodads@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,17 L12,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,8 L12,4 L14,8",
+          "op": "stroke"
+        },
+        {
+          "d": "M9,12 L12,8 L15,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M8,17 L12,12 L16,17",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_doodads.svg",
+      "tooltip": "Doodads"
+    },
+    "visibility_flight_bounds": {
+      "alias_of": null,
+      "codepoint": "0xf8df",
+      "enumerator": "VISIBILITY_FLIGHT_BOUNDS",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_flight_bounds.png",
+      "png_2x": "visibility_flight_bounds@2x.png",
+      "subpaths": [
+        {
+          "d": "R 3 9 18 6 3",
+          "dash": [
+            4,
+            3
+          ],
+          "op": "stroke"
+        },
+        {
+          "d": "M12,20 L12,4",
+          "op": "stroke"
+        },
+        {
+          "d": "M9,7 L12,4 L15,7",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_flight_bounds.svg",
+      "tooltip": "Flight bounds"
+    },
+    "visibility_fog": {
+      "alias_of": null,
+      "codepoint": "0xf8b2",
+      "enumerator": "VISIBILITY_FOG",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_fog.png",
+      "png_2x": "visibility_fog@2x.png",
+      "subpaths": [
+        {
+          "d": "M5,7 L19,7",
+          "op": "stroke"
+        },
+        {
+          "d": "M3,11 L21,11",
+          "op": "stroke"
+        },
+        {
+          "d": "M7,15 L19,15",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,19 L20,19",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_fog.svg",
+      "tooltip": "Fog"
+    },
+    "visibility_hidden_models": {
+      "alias_of": null,
+      "codepoint": "0xf8b6",
+      "enumerator": "VISIBILITY_HIDDEN_MODELS",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_hidden_models.png",
+      "png_2x": "visibility_hidden_models@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,17 L12,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,8 L12,4 L14,8",
+          "op": "stroke"
+        },
+        {
+          "d": "M9,12 L12,8 L15,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M8,17 L12,12 L16,17",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,20 L20,4",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_hidden_models.svg",
+      "tooltip": "Hidden models"
+    },
+    "visibility_hole_lines": {
+      "alias_of": null,
+      "codepoint": "0xf8b7",
+      "enumerator": "VISIBILITY_HOLE_LINES",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_hole_lines.png",
+      "png_2x": "visibility_hole_lines@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,5 L20,5",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,19 L20,19",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,12 L8,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M16,12 L20,12",
+          "op": "stroke"
+        },
+        {
+          "d": "R 8 8 8 8 1",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_hole_lines.svg",
+      "tooltip": "Hole lines"
+    },
+    "visibility_lines": {
+      "alias_of": null,
+      "codepoint": "0xf8af",
+      "enumerator": "VISIBILITY_LINES",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_lines.png",
+      "png_2x": "visibility_lines@2x.png",
+      "subpaths": [
+        {
+          "d": "M6,7 L18,7",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,12 L20,12",
+          "op": "stroke"
+        },
+        {
+          "d": "M6,17 L18,17",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_lines.svg",
+      "tooltip": "Lines"
+    },
+    "visibility_particles": {
+      "alias_of": null,
+      "codepoint": "0xf8bc",
+      "enumerator": "VISIBILITY_PARTICLES",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_particles.png",
+      "png_2x": "visibility_particles@2x.png",
+      "subpaths": [
+        {
+          "d": "O 5 19 1.5",
+          "op": "fill"
+        },
+        {
+          "d": "O 8.323 17.657 1.2",
+          "op": "fill"
+        },
+        {
+          "d": "O 8.818 13.485 1",
+          "op": "fill"
+        },
+        {
+          "d": "O 12.566 12.566 1.5",
+          "op": "fill"
+        },
+        {
+          "d": "O 13.273 8.606 0.9",
+          "op": "fill"
+        },
+        {
+          "d": "O 17.515 8.182 1.2",
+          "op": "fill"
+        },
+        {
+          "d": "O 19 5 1",
+          "op": "fill"
+        }
+      ],
+      "svg": "visibility_particles.svg",
+      "tooltip": "Particles"
+    },
+    "visibility_terrain": {
+      "alias_of": null,
+      "codepoint": "0xf8ae",
+      "enumerator": "VISIBILITY_TERRAIN",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_terrain.png",
+      "png_2x": "visibility_terrain@2x.png",
+      "subpaths": [
+        {
+          "d": "M3,17 L9,9 L14,14 L21,7",
+          "op": "stroke"
+        },
+        {
+          "d": "M3,20 L21,20",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_terrain.svg",
+      "tooltip": "Terrain"
+    },
+    "visibility_vertex_painter": {
+      "alias_of": null,
+      "codepoint": "0xf8d1",
+      "enumerator": "VISIBILITY_VERTEX_PAINTER",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_vertex_painter.png",
+      "png_2x": "visibility_vertex_painter@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,5 L20,19 L4,19 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "O 12 5 1.4",
+          "op": "fill"
+        },
+        {
+          "d": "M8,17 L11,11",
+          "op": "stroke"
+        },
+        {
+          "d": "M13,17 L16,12",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_vertex_painter.svg",
+      "tooltip": "Vertex colour"
+    },
+    "visibility_water": {
+      "alias_of": null,
+      "codepoint": "0xf8b3",
+      "enumerator": "VISIBILITY_WATER",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_water.png",
+      "png_2x": "visibility_water@2x.png",
+      "subpaths": [
+        {
+          "d": "M3,10 C7,6 9,14 12,10 C15,6 17,14 21,10",
+          "op": "stroke"
+        },
+        {
+          "d": "M3,16 C7,12 9,20 12,16 C15,12 17,20 21,16",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_water.svg",
+      "tooltip": "Water"
+    },
+    "visibility_wireframe": {
+      "alias_of": null,
+      "codepoint": "0xf8b0",
+      "enumerator": "VISIBILITY_WIREFRAME",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_wireframe.png",
+      "png_2x": "visibility_wireframe@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,4 L20,4 L20,20 L4,20 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,4 L20,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M20,4 L4,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M12,4 L12,20",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_wireframe.svg",
+      "tooltip": "Wireframe"
+    },
+    "visibility_with_box": {
+      "alias_of": null,
+      "codepoint": "0xf8ac",
+      "enumerator": "VISIBILITY_WITH_BOX",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_with_box.png",
+      "png_2x": "visibility_with_box@2x.png",
+      "subpaths": [
+        {
+          "d": "M12,16 L12,18",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,11 L12,8 L14,11",
+          "op": "stroke"
+        },
+        {
+          "d": "M9,15 L12,11 L15,15",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,8 L4,4 L8,4",
+          "op": "stroke"
+        },
+        {
+          "d": "M16,4 L20,4 L20,8",
+          "op": "stroke"
+        },
+        {
+          "d": "M20,16 L20,20 L16,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M8,20 L4,20 L4,16",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_with_box.svg",
+      "tooltip": "Models with box"
+    },
+    "visibility_wmo": {
+      "alias_of": null,
+      "codepoint": "0xf8a9",
+      "enumerator": "VISIBILITY_WMO",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_wmo.png",
+      "png_2x": "visibility_wmo@2x.png",
+      "subpaths": [
+        {
+          "d": "M5,9 L5,20 L19,20 L19,9",
+          "op": "stroke"
+        },
+        {
+          "d": "M4,9 L12,4 L20,9",
+          "op": "stroke"
+        },
+        {
+          "d": "M10,20 L10,16 L14,16 L14,20",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_wmo.svg",
+      "tooltip": "WMOs"
+    },
+    "visibility_wmo_doodads": {
+      "alias_of": null,
+      "codepoint": "0xf8aa",
+      "enumerator": "VISIBILITY_WMO_DOODADS",
+      "font": "noggit",
+      "group": "view-toolbar",
+      "png_1x": "visibility_wmo_doodads.png",
+      "png_2x": "visibility_wmo_doodads@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,13 L4,20 L13,20 L13,13",
+          "op": "stroke"
+        },
+        {
+          "d": "M3,13 L8,9 L13,13",
+          "op": "stroke"
+        },
+        {
+          "d": "M18,18 L18,20",
+          "op": "stroke"
+        },
+        {
+          "d": "M16.5,14 L18,11 L19.5,14",
+          "op": "stroke"
+        },
+        {
+          "d": "M16,18 L18,14 L20,18",
+          "op": "stroke"
+        }
+      ],
+      "svg": "visibility_wmo_doodads.svg",
+      "tooltip": "WMO doodads"
+    },
+    "volumeup": {
+      "alias_of": null,
+      "codepoint": "0xf028",
+      "enumerator": "volumeup",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "volumeup.png",
+      "png_2x": "volumeup@2x.png",
+      "subpaths": [
+        {
+          "d": "M4,9 L8,9 L14,4 L14,20 L8,15 L4,15 Z",
+          "op": "stroke"
+        },
+        {
+          "d": "M16.828,9.172 C18.391,10.734 18.391,13.266 16.828,14.828",
+          "op": "stroke"
+        },
+        {
+          "d": "M18.95,7.05 C21.683,9.784 21.683,14.216 18.95,16.95",
+          "op": "stroke"
+        }
+      ],
+      "svg": "volumeup.svg",
+      "tooltip": "Sound"
+    },
+    "windowclose": {
+      "alias_of": "times",
+      "codepoint": "0xf410",
+      "enumerator": "windowclose",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "times.png",
+      "png_2x": "times@2x.png",
+      "subpaths": [
+        {
+          "d": "M6,6 L18,18",
+          "op": "stroke"
+        },
+        {
+          "d": "M18,6 L6,18",
+          "op": "stroke"
+        }
+      ],
+      "svg": "times.svg",
+      "tooltip": "Close window"
+    },
+    "windowmaximize": {
+      "alias_of": null,
+      "codepoint": "0xf2d0",
+      "enumerator": "windowmaximize",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "windowmaximize.png",
+      "png_2x": "windowmaximize@2x.png",
+      "subpaths": [
+        {
+          "d": "R 5 5 14 14 1",
+          "op": "stroke"
+        },
+        {
+          "d": "R 5 5 14 4 1",
+          "op": "fill"
+        }
+      ],
+      "svg": "windowmaximize.svg",
+      "tooltip": "Maximise"
+    },
+    "windowminimize": {
+      "alias_of": null,
+      "codepoint": "0xf2d1",
+      "enumerator": "windowminimize",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "windowminimize.png",
+      "png_2x": "windowminimize@2x.png",
+      "subpaths": [
+        {
+          "d": "M5,17 L19,17",
+          "op": "stroke"
+        }
+      ],
+      "svg": "windowminimize.svg",
+      "tooltip": "Minimise"
+    },
+    "wrench": {
+      "alias_of": null,
+      "codepoint": "0xf0ad",
+      "enumerator": "wrench",
+      "font": "awesome",
+      "group": "panel",
+      "png_1x": "wrench.png",
+      "png_2x": "wrench@2x.png",
+      "subpaths": [
+        {
+          "d": "M4.575,8.817 L8.11,12.353",
+          "op": "stroke"
+        },
+        {
+          "d": "M8.817,4.575 L12.353,8.11",
+          "op": "stroke"
+        },
+        {
+          "d": "M8.11,12.353 C11.646,16.171 16.171,11.646 12.353,8.11",
+          "op": "stroke"
+        },
+        {
+          "d": "M12.919,12.919 L19.424,19.424",
+          "op": "stroke"
+        }
+      ],
+      "svg": "wrench.svg",
+      "tooltip": "Tools"
+    }
+  },
+  "needs_enumerator": [
+    "tool_scripting",
+    "tool_chunk",
+    "tool_erosion"
+  ],
+  "path_syntax": "absolute M/L/C/Q/Z plus O cx cy r and R x y w h r; no relative commands, no arcs",
+  "sizes": {
+    "1x": 24,
+    "2x": 48
+  },
+  "stroke_units": 2.0,
+  "tint_note": "PNGs are white (#FFFFFF) straight-alpha masks. Tint with QPainter::CompositionMode_SourceIn; do not use them as-is except for a quick check.",
+  "version": 1
+}

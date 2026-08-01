@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>visibility_contours</title>
+  <path d="M11.5,6 C16.194,6 20,9.134 20,13 C20,16.866 16.194,20 11.5,20 C6.806,20 3,16.866 3,13 C3,9.134 6.806,6 11.5,6 Z"/>
+  <path d="M12,8 C15.038,8 17.5,10.015 17.5,12.5 C17.5,14.985 15.038,17 12,17 C8.962,17 6.5,14.985 6.5,12.5 C6.5,10.015 8.962,8 12,8 Z"/>
+  <path d="M12.5,10 C13.881,10 15,10.895 15,12 C15,13.105 13.881,14 12.5,14 C11.119,14 10,13.105 10,12 C10,10.895 11.119,10 12.5,10 Z"/>
+</svg>

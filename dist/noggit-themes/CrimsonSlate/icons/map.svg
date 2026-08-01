@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>map</title>
+  <path d="M3,7 L9,5 L15,7 L21,5 L21,17 L15,19 L9,17 L3,19 Z"/>
+  <path d="M9,5 L9,17"/>
+  <path d="M15,7 L15,19"/>
+</svg>

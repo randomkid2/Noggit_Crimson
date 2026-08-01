@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>visibility_animation</title>
+  <path d="M6,9 L9,12 L6,15"/>
+  <path d="M10,8 L13,12 L10,16"/>
+  <path d="M14,7 L17,12 L14,17"/>
+</svg>

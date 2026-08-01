@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>gizmo_global</title>
+  <circle cx="12" cy="12" r="8"/>
+  <path d="M12,9 C16.418,9 20,10.343 20,12 C20,13.657 16.418,15 12,15 C7.582,15 4,13.657 4,12 C4,10.343 7.582,9 12,9 Z"/>
+  <path d="M12,4 C13.657,4 15,7.582 15,12 C15,16.418 13.657,20 12,20 C10.343,20 9,16.418 9,12 C9,7.582 10.343,4 12,4 Z"/>
+</svg>
