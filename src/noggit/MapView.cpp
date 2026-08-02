@@ -2642,6 +2642,45 @@ std::string MapView::handleBridgeCommand(std::string const& line)
     return "OK frame window cleared";
   }
 
+  // Grabs the application's own window through Qt rather than the screen. Every screen-capture
+  // attempt in this project has instead photographed whatever happened to be in front -- a
+  // browser, the game, a file manager, the lock screen -- because Windows refuses foreground
+  // steals. QWidget::grab renders the widget straight to a pixmap and does not care what is on
+  // top, whether the window is occluded, or whether it has focus.
+  //
+  // Note this captures the Qt widget tree only. The 3D viewport is a QOpenGLWidget and does not
+  // render into a grab; use the existing "screenshot" command for that.
+  if (command == "grabwindow")
+  {
+    if (argv.size() < 2)
+    {
+      return "ERR grabwindow needs an output path";
+    }
+
+    std::string path;
+
+    for (std::size_t i (1); i < argv.size(); ++i)
+    {
+      path += (i > 1 ? " " : "") + argv[i];
+    }
+
+    QWidget* target (_main_window ? static_cast<QWidget*>(_main_window) : static_cast<QWidget*>(this));
+    QPixmap const shot (target->grab());
+
+    if (shot.isNull())
+    {
+      return "ERR grab produced a null pixmap";
+    }
+
+    if (!shot.save(QString::fromStdString(path)))
+    {
+      return "ERR could not write " + path;
+    }
+
+    return "OK " + path + " (" + std::to_string(shot.width()) + "x"
+         + std::to_string(shot.height()) + ")";
+  }
+
   if (command == "help")
   {
     return "OK ping | status | camera <x> <y> <z> | goto <sx> <sy> <sz> | look <yaw> <pitch> | "
