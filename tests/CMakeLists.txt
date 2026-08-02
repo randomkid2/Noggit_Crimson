@@ -81,6 +81,7 @@ noggit_add_if_present(NOGGIT_DB_SOURCES
   # pure STL with no Qt, no archive and no database, so they belong in the group that
   # builds on a bare machine even though they do not live in the database directory.
   "${NOGGIT_SRC_DIR}/noggit/AssetScan.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/AssetDependencies.cpp"
   "${NOGGIT_SRC_DIR}/noggit/UidCollisionLog.cpp"
   "${NOGGIT_SRC_DIR}/noggit/TerrainRules.cpp"
   "${NOGGIT_SRC_DIR}/noggit/ErosionKernel.cpp"
@@ -103,6 +104,7 @@ noggit_add_if_present(NOGGIT_DB_TESTS
   "${CMAKE_CURRENT_SOURCE_DIR}/ModelPathFixupTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/GameTeleBuilderTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/AssetScanTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/AssetDependenciesTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/UidCollisionLogTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/TerrainRulesTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/ErosionKernelTests.cpp"

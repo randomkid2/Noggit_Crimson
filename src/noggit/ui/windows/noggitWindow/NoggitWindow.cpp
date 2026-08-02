@@ -5,6 +5,7 @@
 #include <noggit/DBCFile.h>
 #include <noggit/Log.h>
 #include <noggit/MapView.h>
+#include <noggit/PatchAssetPacker.hpp>
 #include <noggit/project/ApplicationProject.h>
 #include <noggit/ui/FontAwesome.hpp>
 #include <noggit/ui/FramelessWindow.hpp>
@@ -39,11 +40,13 @@
 #include <QtWidgets/QListWidget>
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QMessageBox>
+#include <QtWidgets/QProgressDialog>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QVBoxLayout>
 #include <QtWidgets/QWidget>
 
+#include <algorithm>
 #include <chrono>
 #include <sstream>
 
@@ -695,6 +698,101 @@ namespace Noggit::Ui::Windows
       }
   }
 
+  QString NoggitWindow::packReferencedAssets( BlizzardArchive::ClientData* client_data
+                                            , BlizzardArchive::Archive::MPQArchive* archive
+                                            , bool include_base_client_assets
+                                            , bool compress
+                                            , bool compact
+                                            , QString& detail_out
+                                            )
+  {
+      if (!client_data || !archive)
+      {
+          return "Referenced assets: no client data, nothing collected.";
+      }
+
+      Noggit::PatchAssetPackerOptions options;
+      options.include_base_client_assets = include_base_client_assets;
+      options.compress = compress;
+      options.compact = compact;
+
+      Noggit::PatchAssetPacker packer (client_data, archive, options);
+
+      // APPLICATION MODAL, and that is the safety property, not a nicety.
+      //
+      // QProgressDialog::setValue pumps the event loop, and a use-after-free from exactly that has
+      // already happened in this codebase (the ambient occlusion bake held MapTile pointers across
+      // it while MapView::tick unloaded them). Modality means the only event the user can generate
+      // while this runs is Cancel. Nothing that could unload the project, close the window or
+      // destroy the archive is reachable.
+      //
+      // Nothing raw is held across the pump either: the packer keeps only the ClientData and
+      // MPQArchive pointers, both owned by the application singleton for its whole lifetime, and
+      // the lambda captures only this stack frame, which cannot go away while run() is on it.
+      QProgressDialog progress ("Collecting referenced assets...", "Cancel", 0, 1, this);
+      progress.setWindowTitle("Patch Client");
+      progress.setWindowModality(Qt::ApplicationModal);
+      progress.setMinimumDuration(0);
+      progress.setAutoClose(false);
+      progress.setAutoReset(false);
+      progress.setValue(0);
+
+      char const* last_phase = nullptr;
+      std::size_t last_shown = 0;
+
+      Noggit::PatchAssetPackerResult const result = packer.run
+        ( [&] (char const* phase, std::size_t done, std::size_t total, std::string const& current) -> bool
+          {
+              // Throttled, because every setValue is a full trip through the event loop and this is
+              // called once per asset -- tens of thousands of times on a real project. Repainting
+              // that often is slower than the work being reported on.
+              bool const interesting
+                (phase != last_phase || done >= last_shown + 64 || done >= total);
+
+              if (interesting)
+              {
+                  last_phase = phase;
+                  last_shown = done;
+
+                  progress.setLabelText
+                    (QString("%1\n%2").arg(QString::fromLatin1(phase), QString::fromStdString(current)));
+                  progress.setMaximum(static_cast<int>(std::min<std::size_t>(total, 1000000)));
+                  progress.setValue(static_cast<int>(std::min<std::size_t>(done, 1000000)));
+              }
+
+              return !progress.wasCanceled();
+          }
+        );
+
+      progress.close();
+
+      detail_out = QString::fromStdString(result.toReport());
+
+      Log << "Patch dependencies: " << result.summary() << std::endl;
+
+      QString summary (QString::fromStdString(result.summary()));
+
+      if (result.cancelled)
+      {
+          summary += "\n\nCancelled: the archive contains whatever had already been written.";
+      }
+
+      if (result.scan.hasFailures())
+      {
+          // Named, never merely counted. A dependency pack that omits something silently is the
+          // failure mode that wastes the user's evening -- they find out in game, with no idea
+          // which file it was.
+          summary += QString("\n\n%1 reference(s) are NOT in the patch: %2 could not be resolved"
+                             " anywhere, %3 resolved but could not be read."
+                             "\nOpen \"Show Details\" for every name.")
+                       .arg(result.scan.distinctMissing() + result.scan.distinctUnreadable())
+                       .arg(result.scan.distinctMissing())
+                       .arg(result.scan.distinctUnreadable());
+      }
+
+      return summary;
+  }
+
   void NoggitWindow::patchWowClient()
   {
       // Option to make folder patch ?
@@ -756,6 +854,32 @@ namespace Noggit::Ui::Windows
       mpq_compress_files_chk->setChecked(true);
       mpq_patch_params_layout->addWidget(mpq_compress_files_chk);
 
+      // Dependency packing. The project folder holds the terrain; the models and textures that
+      // terrain REFERENCES usually live somewhere else entirely, and a patch containing an ADT
+      // whose WMO is missing renders as a hole in the world.
+      QCheckBox* mpq_dependencies_chk = new QCheckBox("Include referenced models and textures", mpq_patch_params);
+      mpq_dependencies_chk->setToolTip("Follows every reference out of the project's ADTs -- models, world models and\
+          \ntheir group files, textures, .skin and .anim files -- and adds the ones the\
+          \nplayer does not already have.\
+          \n\nWithout this, a model you placed from another patch is named by the terrain\
+          \nbut absent from the archive, and is invisible in game.");
+      mpq_dependencies_chk->setChecked(settings.value("noggit_window/mpq_pack_dependencies", true).toBool());
+      mpq_patch_params_layout->addWidget(mpq_dependencies_chk);
+
+      QCheckBox* mpq_base_assets_chk = new QCheckBox("    ...including files already in the base client", mpq_patch_params);
+      mpq_base_assets_chk->setToolTip("Off: only assets that are NOT in a stock 3.3.5a archive are added, which is the\
+          \nuseful behaviour -- a stock building references stock textures every player\
+          \nalready has, and copying them would multiply the size of the patch for no effect.\
+          \n\nOn: every referenced file is copied in, whatever it came from. Use this only to\
+          \nbuild a self-contained archive for someone with no base client.");
+      // Default OFF, the conservative option: it cannot make the archive enormous, and a file the
+      // player already has is not a file that can be missing.
+      mpq_base_assets_chk->setChecked(settings.value("noggit_window/mpq_pack_base_assets", false).toBool());
+      mpq_base_assets_chk->setEnabled(mpq_dependencies_chk->isChecked());
+      mpq_patch_params_layout->addWidget(mpq_base_assets_chk);
+
+      connect(mpq_dependencies_chk, &QCheckBox::toggled, mpq_base_assets_chk, &QCheckBox::setEnabled);
+
 
       QPushButton* mpq_patch_params_okay = new QPushButton("Save Project to Client MPQ", mpq_patch_params);
       mpq_patch_params_layout->addWidget(mpq_patch_params_okay);
@@ -773,6 +897,8 @@ namespace Noggit::Ui::Windows
               {
                 QSettings settings;
                 settings.setValue("noggit_window/mpq_name", mpq_patch_params_ledit->text());
+                settings.setValue("noggit_window/mpq_pack_dependencies", mpq_dependencies_chk->isChecked());
+                settings.setValue("noggit_window/mpq_pack_base_assets", mpq_base_assets_chk->isChecked());
                 settings.sync();
 
                 mpq_patch_params->accept();
@@ -833,11 +959,19 @@ namespace Noggit::Ui::Windows
                   progress_box->repaint();
                   qApp->processEvents();
 
+                  bool const pack_dependencies = mpq_dependencies_chk->isChecked();
+                  bool const compress_files = mpq_compress_files_chk->isChecked();
+                  bool const compact_archive = mpq_compact_chk->isChecked();
+
                   try
                   {
                       auto start = std::chrono::high_resolution_clock::now();
 
-                      std::array<int, 2> result = clientData->saveLocalFilesToArchive(archive.value(), mpq_compress_files_chk->isChecked(), mpq_compact_chk->isChecked());
+                      // Compaction is DEFERRED to the dependency pass when there is one.
+                      // SFileCompactArchive rebuilds the whole archive, so compacting here and then
+                      // adding several thousand more files would pay for the rebuild and then undo
+                      // its benefit.
+                      std::array<int, 2> result = clientData->saveLocalFilesToArchive(archive.value(), compress_files, compact_archive && !pack_dependencies);
                       int processed_files = result[0];
                       int files_failed = processed_files - result[1];
 
@@ -854,10 +988,38 @@ namespace Noggit::Ui::Windows
                               \nMake sure it isn't opened by Wow or MPQ editor");
                       }
                       else
-                          QMessageBox::information(this, "Archive Updated", std::format("Added {} files to existing Archive {} in {} seconds.\
-                        \n{} Files failed.",  std::to_string(processed_files), archive_name, oss.str(), std::to_string(files_failed)).c_str());
+                      {
+                          QString message
+                            ( QString::fromStdString
+                              ( std::format("Added {} project files to archive {} in {} seconds.\n{} files failed."
+                                           , std::to_string(processed_files), archive_name, oss.str()
+                                           , std::to_string(files_failed))
+                              )
+                            );
 
+                          QString detail;
 
+                          if (pack_dependencies)
+                          {
+                              message += "\n\n" + packReferencedAssets
+                                ( clientData
+                                , archive.value()
+                                , mpq_base_assets_chk->isChecked()
+                                , compress_files
+                                , compact_archive
+                                , detail
+                                );
+                          }
+
+                          QMessageBox report (QMessageBox::Information, "Archive Updated", message, QMessageBox::Ok, this);
+
+                          if (!detail.isEmpty())
+                          {
+                              report.setDetailedText(detail);
+                          }
+
+                          report.exec();
+                      }
                   }
                   catch (...)
                   {

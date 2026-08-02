@@ -19,6 +19,16 @@ class World;
 
 class QListWidget;
 
+namespace BlizzardArchive
+{
+  class ClientData;
+
+  namespace Archive
+  {
+    class MPQArchive;
+  }
+}
+
 namespace Noggit::Application
 {
   struct NoggitApplicationConfiguration;
@@ -89,6 +99,23 @@ namespace Noggit::Ui::Windows
       std::shared_ptr<Application::NoggitApplicationConfiguration> _applicationConfiguration;
       std::shared_ptr<Project::NoggitProject> _project;
 
+
+      // Second half of patchWowClient: adds the models and textures the packed terrain references
+      // but the project folder does not contain. Returns the one line summary and fills
+      // `detail_out` with the full report, which is what NAMES every reference that resolved
+      // nowhere -- a dependency pack that omits something silently is worse than one that does not
+      // run at all.
+      //
+      // Split out of patchWowClient rather than inlined because it owns a modal QProgressDialog and
+      // therefore pumps the event loop, and everything it holds across that pump has to be visible
+      // in one place.
+      QString packReferencedAssets( BlizzardArchive::ClientData* client_data
+                                  , BlizzardArchive::Archive::MPQArchive* archive
+                                  , bool include_base_client_assets
+                                  , bool compress
+                                  , bool compact
+                                  , QString& detail_out
+                                  );
 
       void handleEventMapListContextMenuPinMap(int mapId, std::string MapName);
       void handleEventMapListContextMenuUnpinMap(int mapId);
