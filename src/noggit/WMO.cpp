@@ -86,9 +86,22 @@ namespace
   // Reads the 8 byte header of a chunk the sequence requires to be here, checks
   // it is that chunk, and checks its declared payload actually fits in what is
   // left of the file. Returns the payload size.
+  //
+  // `is_container` exempts the size-fits-in-file check, and exists for exactly one chunk: MOGP.
+  // MOGP is not a leaf chunk -- its declared payload spans the group header plus every chunk that
+  // follows it, i.e. the whole rest of the group file. Real WMOs routinely OVERSTATE it by a few
+  // dozen bytes; measured against shipping Draenor assets the excess was 32, 68 and 188 bytes on
+  // three different files. Upstream never noticed because this check was an assert and NDEBUG
+  // compiles asserts away, so the overshoot was simply read past.
+  //
+  // Rejecting on it is wrong, and was a real regression: it made legitimate content unloadable
+  // while protecting nothing. Nothing aliases MOGP's payload as a block -- every chunk inside it
+  // is read through this same function and bounds-checked on its own -- so the protection that
+  // matters is still in force.
   std::uint32_t readChunkHeader( BlizzardArchive::ClientFile& f
                                , std::string const& filename
                                , std::uint32_t expected
+                               , bool is_container = false
                                )
   {
     std::size_t const chunk_start (f.getPos());
@@ -116,7 +129,7 @@ namespace
     // A chunk claiming more bytes than the file holds means the parse has
     // desynchronised or the file is truncated. Either way every offset from
     // here on is meaningless and the payload must not be aliased.
-    if (size > bytesLeft(f))
+    if (size > bytesLeft(f) && !is_container)
     {
       throwWmoParseError ( filename
                          , "Chunk " + fourccToString(expected) + " at offset "
@@ -820,7 +833,7 @@ void WMOGroup::load()
 
   // - MOGP ----------------------------------------------
 
-  uint32_t const mogp_size (readChunkHeader(f, fname, 'MOGP'));
+  uint32_t const mogp_size (readChunkHeader(f, fname, 'MOGP', true));
 
   // MOGP is a container: its payload is the group header followed by every
   // chunk read below, so it has to be at least header sized.
