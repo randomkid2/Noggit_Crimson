@@ -5639,12 +5639,36 @@ void MapView::paintGL()
   {
     _uid_duplicate_warning_shown = true;
 
-    QMessageBox::critical( this
-        , "UID ALREADY IN USE"
-        , "Please enable 'Always check for max UID', mysql uid store or synchronize your "
-          "uid.ini file if you're sharing the map between several mappers.\n\n"
-          "Use 'Editor > Force uid check on next opening' to fix the issue."
-    );
+    // Deferred out of paintGL rather than raised here, and that is the whole point of the
+    // singleShot. QMessageBox::critical is MODAL: it spins a nested event loop, which delivers
+    // further paints and timer events while this paintGL call is still on the stack and while the
+    // OpenGL context scoped_setter above is still alive. When the dialog closes and that setter
+    // unwinds, it runs verify_context_and_check_for_gl_errors against a context the nested loop
+    // has since changed -- and OpenGL::Scoped's destructor throws. A throw from a destructor is
+    // std::terminate, so the editor died on OK rather than on the error it was reporting.
+    //
+    // A zero-timer posts to the event loop, so the dialog is shown after paintGL has returned and
+    // every GL scope has been destroyed normally. Nothing else about the warning changes.
+    //
+    // Worth stating because the message misleads: the duplicates are ALREADY REPAIRED by this
+    // point. world_model_instances_storage renumbers each colliding object with a fresh uid as it
+    // loads it and records the collision. This is a notice that the files on disk carry duplicate
+    // uids and should be saved, not a report of an unrecoverable state.
+    QTimer::singleShot ( 0
+                       , this
+                       , [this]
+                         {
+                           QMessageBox::critical
+                             ( this
+                             , "UID ALREADY IN USE"
+                             , "Objects with duplicate UIDs were found and have been renumbered "
+                               "automatically as the map loaded.\n\n"
+                               "Save the map to make the fix permanent. Assist > UID collision "
+                               "report lists exactly what was renumbered.\n\n"
+                               "This normally happens after copying tiles in from another project."
+                             );
+                         }
+                       );
   }
 
   // Closed here and only here on the drawing path. The two early returns above it -- a lost GL
