@@ -43,7 +43,6 @@ namespace Noggit
 {
   class Tool;
   class TabletManager;
-  class DevBridge;
 
   namespace Database
   {
@@ -197,9 +196,9 @@ public:
   // asynchronous model load.
   //
   // `interactive` decides how the outcome is delivered, not what it is: true raises a dialog, as
-  // the menu wants; false returns it and shows nothing, as the dev bridge needs -- a script left
-  // waiting on a modal nobody will click is a hang. Either way the same line comes back, prefixed
-  // `OK ` or `ERR `, so the two paths cannot describe an outcome differently.
+  // the menu wants; false returns it and shows nothing, as a caller with no human in front of it
+  // needs -- code left waiting on a modal nobody will click is a hang. Either way the same line
+  // comes back, prefixed `OK ` or `ERR `, so the two paths cannot describe an outcome differently.
   //
   // `force` skips the confirmation threshold. Non-interactive callers are refused above it rather
   // than silently allowed, because that threshold exists for exactly the case a script hits.
@@ -273,9 +272,9 @@ private:
 
   // The one exit shape the database spawn actions report through.
   //
-  // A dialog only when a human asked: `interactive` false is the dev bridge, and a script left
-  // waiting on a modal nobody will click is a hang. Either way the same line comes back, prefixed
-  // `OK ` or `ERR `, so the menu, the panel and the bridge cannot describe an outcome differently.
+  // A dialog only when a human asked: `interactive` false means nobody is at the window, and code
+  // left waiting on a modal nobody will click is a hang. Either way the same line comes back,
+  // prefixed `OK ` or `ERR `, so the menu and the panel cannot describe an outcome differently.
   std::string reportDatabaseSpawnOutcome(std::string const& message
                                         , bool is_error
                                         , bool interactive);
@@ -390,16 +389,6 @@ private:
   // selection through currentRowChanged sixty times a second.
   bool _spawn_gizmo_dragging = false;
 
-  // Null unless started with NOGGIT_BRIDGE_PORT set. See DevBridge.hpp for why it is gated twice.
-  //
-  // The member itself is behind the #ifdef, not just its use: DevBridge.cpp is excluded from the
-  // sources when the option is off, so a unique_ptr to it would need ~DevBridge at MapView's own
-  // destructor and find only a declaration -- an unresolved external in the DEFAULT build
-  // configuration, which is the one everybody else gets.
-#ifdef NOGGIT_DEV_BRIDGE_ENABLED
-  std::unique_ptr<Noggit::DevBridge> _dev_bridge;
-#endif
-
   QWidgetAction* createTextSeparator(const QString& text);
 
   float mTimespeed;
@@ -485,16 +474,6 @@ public:
           );
   ~MapView();
 
-  // One dev-bridge command line in, one reply line out, prefixed `OK ` or `ERR `.
-  //
-  // Public because DevBridge calls it, and it lives here rather than there because every command
-  // needs the camera, the world or the spawn cache -- all of which are this class's private
-  // business. Making DevBridge a friend would have traded a clean seam for a shortcut.
-  //
-  // Runs on the GUI thread, so it may touch the GL context. Must not throw; DevBridge catches as
-  // a backstop, but an exception here would be unwinding through a Qt signal emission.
-  std::string handleBridgeCommand(std::string const& line);
-
   // Path of the texture currently selected in the Texturing tool, or empty when none is.
   [[nodiscard]]
   std::string selectedTexturePath() const;
@@ -508,9 +487,9 @@ public:
 
   // Terrain textures actually painted in scope, mapped to how many layers use each.
   //
-  // Lives here rather than in the ground effect panel because two callers need it -- the panel,
-  // to offer only textures that exist, and the dev bridge, to check the same thing without a
-  // human at the window. One scan, one answer.
+  // Lives here rather than in the ground effect panel because more than one caller needs it --
+  // the ground effect panel and the auto-texture dialog both offer only textures that exist.
+  // One scan, one answer.
   [[nodiscard]]
   std::map<std::string, std::size_t> terrainTexturesInScope(bool all_loaded_tiles) const;
 
@@ -531,8 +510,8 @@ public:
 
   // Point the camera at a loaded spawn. False when that guid is not loaded.
   //
-  // Shared by the panel's Focus button and the dev bridge's `lookat`, so the two cannot drift
-  // into framing a spawn differently.
+  // The one place a spawn is framed, so nothing that focuses on one can drift into framing it
+  // differently.
   bool focusOnSpawn(Noggit::Database::SpawnRef const& spawn, float distance = 12.0f);
 
   void tick (float dt);
@@ -608,52 +587,6 @@ private:
 
   float _last_fps_update = 0.f;
 
-  // One sampled call to paintGL, for the dev bridge's `perf` command.
-  //
-  // This exists alongside _last_frame_durations above rather than reusing it, and the reason is
-  // that the status bar's list cannot answer the question `perf` is for. It is cleared once a
-  // second and only ever collapsed to a mean, and a mean is precisely the statistic that hides a
-  // 90ms hitch inside an otherwise unremarkable second -- while a hitch every second is exactly
-  // what "it feels bad" means. Percentiles need every sample kept.
-  struct PerfSample
-  {
-    // Monotonic nanoseconds since _startup_time.start(), taken on entry to paintGL. Stored as well
-    // as the duration because the interval between consecutive drawn frames -- the number that
-    // actually is the frame rate -- cannot be recovered from durations alone.
-    std::int64_t entered_ns;
-
-    // Wall time spent inside the body of paintGL, in milliseconds. CPU-side submission work only:
-    // the buffer swap happens after paintGL returns and so is not included, and GL commands are
-    // asynchronous, so this is not GPU time either. It is what the editor spends building a frame.
-    float work_ms;
-
-    // False when paintGL declined to draw. It early-returns whenever _needs_redraw is clear, and
-    // counting those as very fast frames would let an idle editor report a flattering mean.
-    bool rendered;
-  };
-
-  // 4096 samples is a little over a minute at the default 60 FPS cap: long enough that a scenario
-  // does not have to be measured in a hurry, small enough (64 KiB) to sort in the command handler
-  // without anyone noticing.
-  static constexpr std::size_t PERF_WINDOW_CAPACITY = 4096;
-
-  // Fixed storage, written in place, no locking. An instrument that allocates or blocks on the
-  // render path changes the thing it is measuring. paintGL and handleBridgeCommand both run on the
-  // GUI thread, so there is nothing to synchronise against and nothing is paid for.
-  std::array<PerfSample, PERF_WINDOW_CAPACITY> _perf_window {};
-
-  // Where the next sample goes. Wraps; the window is a ring.
-  std::size_t _perf_write_index = 0;
-
-  // Total samples taken since the last `perfreset`, which is *not* the number retained once the
-  // ring has wrapped. Both numbers are reported so a reader can tell a full window from a partial
-  // one, and can see when a scenario overran the buffer.
-  std::size_t _perf_samples_recorded = 0;
-
-  // Records one call to paintGL. entered_ns below zero means the clock was not running yet and the
-  // sample is dropped.
-  void recordPerfSample (std::int64_t entered_ns, std::int64_t left_ns, bool rendered);
-
   QTimer _update_every_event_loop;
 
   QOpenGLContext* _last_opengl_context;
@@ -726,16 +659,6 @@ private:
   bool _gl_initialized = false;
   bool _destroying = false;
   bool _needs_redraw = false;
-
-  // Forces exactly one paint regardless of _needs_redraw, for the dev bridge's screenshot.
-  //
-  // Setting _needs_redraw is not enough and the reason is a race, not a mistake: the editor
-  // repaints continuously while anything animates, so the normal paint frequently consumes the
-  // flag between the bridge setting it and grabFramebuffer's render running -- at which point
-  // paintGL early-returns and the grab reads back whatever the framebuffer held from an earlier
-  // frame. That is why screenshots showed a stale view while the window itself was demonstrably
-  // correct. A separate flag paintGL clears itself cannot be consumed by anyone else.
-  bool _force_single_render = false;
   bool _unload_tiles = true;
 
   OpenGL::Scoped::deferred_upload_buffers<2> _buffers;

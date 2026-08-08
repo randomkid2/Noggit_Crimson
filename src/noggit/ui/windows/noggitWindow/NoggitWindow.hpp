@@ -124,26 +124,6 @@ namespace Noggit::Ui::Windows
 
       void loadMap (int map_id);
 
-#ifdef NOGGIT_DEV_BRIDGE_ENABLED
-    public:
-      // Open a map with no UI interaction, for --map. Returns false when the map id is not in
-      // Map.dbc.
-      //
-      // > [!warning] This deliberately skips the UID fix, and is why the whole feature is gated
-      // > Ordinary map entry goes through check_uid_then_enter_map, which may raise the UID fix
-      // > window -- a modal, and a modal is a hang when there is no human present. This calls
-      // > enterMapAt directly with uid_fix_mode::none instead, so the map opens unattended.
-      // >
-      // > That makes it fine for looking at a tile and wrong for editing one: a session that
-      // > skipped the UID check and then saved could reuse unique IDs. It exists to verify
-      // > rendering, it is compiled only into a -DNOGGIT_DEV_BRIDGE=ON build, and it must not
-      // > become the normal way in.
-      bool openMapUnattended (int map_id, glm::vec3 const& position);
-
-    private:
-#endif
-
-
       void check_uid_then_enter_map ( glm::vec3 pos
                                     , math::degrees camera_pitch
                                     , math::degrees camera_yaw

@@ -414,7 +414,7 @@ only one table exists on this DB:
 | `waypoints` | absent |
 | `script_waypoint` | absent |
 
-So there is no AI-dependent table branching to implement. Still resolve the target through the
+So there is no creature-AI-dependent table branching to implement. Still resolve the target through the
 M0 capability layer, because another TDB or an AzerothCore target may reintroduce `waypoints`.
 
 **Build:**

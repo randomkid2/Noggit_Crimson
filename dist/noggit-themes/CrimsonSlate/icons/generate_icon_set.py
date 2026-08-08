@@ -606,8 +606,8 @@ def to_svg(name, subpaths):
 # =============================================================== THE ICONS ====
 # Each entry: slug -> (font, enumerator, codepoint, group, tooltip, subpaths)
 # font/enumerator/codepoint are None where no enumerator exists yet; those are
-# the icons the integration agent has to add to the enum (see manifest.json,
-# "needs_enumerator").
+# the icons whose enumerator still has to be added to FontNoggit by hand when the
+# set is integrated (see manifest.json, "needs_enumerator").
 
 CONIFER = [S('M12,17 L12,20'), S('M10,8 L12,4 L14,8'),
            S('M9,12 L12,8 L15,12'), S('M8,17 L12,12 L16,17')]
@@ -768,7 +768,7 @@ icon('tool_light', 'noggit', 'TOOL_LIGHT', 0xF8D0, 'tool-strip', 'Light Editor',
 # ChunkTool, ScriptingTool and ErosionTool all three return FontNoggit::INFO
 # today, so three of the sixteen strip entries are pixel-identical to each other
 # and to the "Details info" toolbar toggle. These three are the fix; they have
-# no enumerator yet, which is the one thing the integration agent must add.
+# no enumerator yet, which is the one thing integrating them still requires.
 icon('tool_scripting', 'noggit', None, None, 'tool-strip', 'Scripting',
      SCRIPT_MARK)
 

@@ -89,18 +89,6 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 OPTION(USE_SQL "Enable sql uid save ? (require mysql installed)" OFF)
 
-# A loopback command socket for driving the editor from a script, so rendering can be verified
-# without a human at the window. OFF by default and it must stay that way: this compiles a remote
-# control surface into the binary, and even gated behind the NOGGIT_BRIDGE_PORT environment
-# variable at runtime, a released build has no business containing it. See src/noggit/DevBridge.hpp
-# and docs/dev-bridge.md.
-OPTION(NOGGIT_DEV_BRIDGE "Compile the loopback dev/test command bridge (development only)" OFF)
-
-IF(NOGGIT_DEV_BRIDGE)
-  ADD_DEFINITIONS(-DNOGGIT_DEV_BRIDGE_ENABLED)
-  MESSAGE(WARNING "NOGGIT_DEV_BRIDGE is ON: this build can be driven over a local TCP socket when "
-                  "NOGGIT_BRIDGE_PORT is set. Do not ship it.")
-ENDIF()
 OPTION(VALIDATE_OPENGL_PROGRAMS "Validate Opengl programs" OFF)
 
 IF(VALIDATE_OPENGL_PROGRAMS)
@@ -244,13 +232,6 @@ IF(NOT (MYSQL_LIBRARY AND MYSQLCPPCONN_LIBRARY AND MYSQLCPPCONN_INCLUDE))
   LIST(FILTER noggit_root_sources EXCLUDE REGEX
        "noggit/database/(WorldDatabaseConnection|SchemaIntrospector|SpawnQuery|DoctorConnectionChecks)\\.cpp$")
   MESSAGE(STATUS "Connector/C++ absent - database connection layer excluded from the build")
-ENDIF()
-
-# The dev bridge is excluded from the sources entirely rather than merely #ifdef'd out, so a
-# default build contains no listening-socket code at all -- not even unreachable. Belt to the
-# NOGGIT_DEV_BRIDGE_ENABLED braces.
-IF(NOT NOGGIT_DEV_BRIDGE)
-  LIST(FILTER noggit_root_sources EXCLUDE REGEX "noggit/DevBridge\\.cpp$")
 ENDIF()
 
 collect_files(png_blp_sources src/external/PNG2BLP TRUE "*.c;*.cpp;" "")

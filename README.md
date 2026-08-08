@@ -428,7 +428,6 @@ stay invisible.
 | [`docs/milestones.md`](docs/milestones.md) | What is done, what is not, and the evidence for each |
 | [`docs/ground-effects.md`](docs/ground-effects.md) | How ground effects work in 3.3.5 and what the editor adds |
 | [`docs/feature-recon.md`](docs/feature-recon.md) | Survey of what already existed in the tree before adding to it |
-| [`docs/dev-bridge.md`](docs/dev-bridge.md) | Optional loopback command socket for testing rendering; **off by default, do not ship it enabled** |
 | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | Coding rules, the licence header every new file needs, and what evidence a change is expected to carry |
 | [`ATTRIBUTION.md`](ATTRIBUTION.md) | Licensing, upstream credit, third-party components, pre-release checks |
 

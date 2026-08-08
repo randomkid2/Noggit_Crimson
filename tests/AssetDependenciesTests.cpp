@@ -185,9 +185,9 @@ TEST_CASE("base client archives are told apart from the user's own patches", "[a
 
   // The caller passes BaseArchive::path(), which is a full disk path, and a directory patch has no
   // extension at all.
-  CHECK(Noggit::isBaseClientArchiveName("H:/WOTLK/Data/common.MPQ"));
-  CHECK_FALSE(Noggit::isBaseClientArchiveName("H:/WOTLK/Data/patch-9.MPQ"));
-  CHECK_FALSE(Noggit::isBaseClientArchiveName("H:/WOTLK/Data/mypatchdir"));
+  CHECK(Noggit::isBaseClientArchiveName("D:/games/wow-3.3.5a/Data/common.MPQ"));
+  CHECK_FALSE(Noggit::isBaseClientArchiveName("D:/games/wow-3.3.5a/Data/patch-9.MPQ"));
+  CHECK_FALSE(Noggit::isBaseClientArchiveName("D:/games/wow-3.3.5a/Data/mypatchdir"));
 }
 
 TEST_CASE("an ADT yields its texture, model and world model name blocks", "[assetdeps]")

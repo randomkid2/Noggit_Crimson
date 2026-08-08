@@ -265,7 +265,6 @@ Everything below is `OFF`/default unless you ask for it. The full list is in the
 | Option | Default | Meaning |
 |---|---|---|
 | `USE_SQL` | `OFF` | Compile the MySQL UID storage and the database-editing connection layer. |
-| `NOGGIT_DEV_BRIDGE` | `OFF` | Compiles a loopback TCP command socket into the binary for scripted testing. **Leave it off.** It is excluded from the source list entirely when off, and CMake prints a warning when on. See `docs/dev-bridge.md`. |
 | `NOGGIT_BUILD_NODE_DATAMODELS` | `ON` | Turn off for a much faster build, at the cost of the Node Editor. Not for deployment. |
 | `NOGGIT_LOGTOCONSOLE` | `OFF` | Log to the console instead of `log.txt`. |
 | `NOGGIT_OPENGL_ERROR_CHECK` | `ON` | Per-call `glGetError`. Cheap to leave on while developing. |
@@ -365,7 +364,7 @@ first `install(DIRECTORY …)` is where it stops. Measured:
 ```
 -- Installing: <prefix>/./noggit.exe
 CMake Error at build/cmake_install.cmake:60 (file):
-  file INSTALL cannot find "H:/NoggitUpdate/bin/shaders": File exists.
+  file INSTALL cannot find "<repo>/bin/shaders": File exists.
 ```
 
 Note that the executable *is* copied before the failure, so a partially populated prefix is not

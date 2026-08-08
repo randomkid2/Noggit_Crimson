@@ -154,9 +154,6 @@ no database dependency precisely so it can be tested exhaustively. Keep it that 
 - **`cmake --build … --target INSTALL` fails.** `cmake/win32_pack.cmake` installs from a top-level
   `bin/` directory that is not in the repository. Run out of `build/bin/<config>/` instead. See
   [`setup.md`](setup.md#the-install-target-is-broken).
-- **`NOGGIT_DEV_BRIDGE` must stay `OFF`.** It compiles a loopback TCP command socket into the
-  binary. It is excluded from the source list entirely when off, and it must never be on in
-  anything distributed.
 - **`ERROR` is a macro.** `<wingdi.h>` defines `ERROR` as `0`, so an enumerator by that name
   cannot compile in any translation unit that reaches a Windows header. This already cost one
   rename across 20 use sites.
