@@ -117,6 +117,41 @@ namespace Noggit
   // patch-z, patch-<locale>-4 .. -9, alternate.MPQ, development.MPQ, and any directory patch.
   bool isBaseClientArchiveName(std::string_view archive_file_name);
 
+  // Why a walk over one file's bytes stopped.
+  //
+  // The three-way split is the point. A caller that cannot tell "this is not that format at all"
+  // from "the format was recognised and the data ran out half way" cannot tell its user which of
+  // the two happened -- and a caller that ignores the answer entirely ships a patch missing every
+  // file the unparsed one named while reporting that everything was fine.
+  enum class ParseOutcome
+  {
+    // Every byte is accounted for. `out` is everything the file names.
+    Complete,
+    // The format was recognised and the data ran out: a chunk header declaring more bytes than the
+    // buffer holds, a trailing fragment too short to be a chunk header, or a table whose entries
+    // run past the end. Whatever landed in `out` is a PREFIX of the truth, never the whole of it,
+    // and it is routinely non-empty -- which is what makes this the harder case to notice.
+    Truncated,
+    // Not this format at all: no MVER, no MD20, no MOHD. Nothing was collected.
+    Unrecognised
+  };
+
+  // [[nodiscard]] on the TYPE, not on each function. Every one of the three collectors returns this
+  // and the whole point of the type existing is that the answer must not be dropped on the floor;
+  // putting the attribute here makes that true for anything added later as well.
+  struct [[nodiscard]] AssetParseResult
+  {
+    ParseOutcome outcome = ParseOutcome::Unrecognised;
+    // One clause, lowercase, no trailing full stop, so it reads after a file name in a report:
+    // "world/maps/foo.adt: chunk MTEX at offset 12 declares 4096 bytes and only 18 remain".
+    // Empty when Complete.
+    std::string reason;
+
+    bool complete() const;
+    // Anything but Unrecognised, i.e. `out` holds at least a prefix of what the file names.
+    bool recognised() const;
+  };
+
   // Every file an ADT (or a WDT -- same chunk shapes for the blocks read here) names.
   //
   // Reads MTEX, MMDX and MWMO by walking the chunk sequence from byte 0 rather than through MHDR's
@@ -127,8 +162,10 @@ namespace Noggit
   // anything -- the opposite trade to AssetScanCollector, which walks placements and would miss a
   // reference the client resolves from the name table.
   //
-  // Returns false if the buffer does not begin with an MVER chunk.
-  bool collectAdtReferences(char const* data, std::size_t size, std::vector<AssetReference>& out);
+  // Unrecognised if the buffer does not begin with an MVER chunk. Truncated if the chunk sequence
+  // runs off the end of the buffer -- which yields whatever the chunks BEFORE that point named, so
+  // a non-empty `out` is not evidence that the file was read whole.
+  AssetParseResult collectAdtReferences(char const* data, std::size_t size, std::vector<AssetReference>& out);
 
   // Every file an M2 names: its type-0 textures, its nViews .skin files, and the .anim files its
   // sequences may live in.
@@ -138,12 +175,13 @@ namespace Noggit
   // constant "tileset/generic/black.blp" for them (Model.cpp:356-364), which is an editor
   // placeholder and not a dependency of the map.
   //
-  // Returns false if the buffer is not an MD20.
-  bool collectModelReferences( std::string_view model_path
-                             , char const* data
-                             , std::size_t size
-                             , std::vector<AssetReference>& out
-                             );
+  // Unrecognised if the buffer is not an MD20. Truncated if the header is shorter than the fields
+  // read here, or if the texture or animation table runs past the end of the buffer.
+  AssetParseResult collectModelReferences( std::string_view model_path
+                                         , char const* data
+                                         , std::size_t size
+                                         , std::vector<AssetReference>& out
+                                         );
 
   // Every file a WMO ROOT names: its nGroups group files, its MOTX textures, its MODN doodads and
   // its MOSB skybox.
@@ -155,12 +193,14 @@ namespace Noggit
   // misses nothing the client asks for but needs both chunks to be well formed. For a packer,
   // over-inclusion costs bytes and omission costs the user an evening.
   //
-  // Returns false if the buffer has no MOHD chunk.
-  bool collectWorldModelReferences( std::string_view world_model_path
-                                  , char const* data
-                                  , std::size_t size
-                                  , std::vector<AssetReference>& out
-                                  );
+  // Unrecognised if the chunk sequence read whole contains no MOHD. Truncated if the sequence runs
+  // off the end of the buffer -- whether or not MOHD was reached first, because a WMO root cut short
+  // is the same hole either way.
+  AssetParseResult collectWorldModelReferences( std::string_view world_model_path
+                                              , char const* data
+                                              , std::size_t size
+                                              , std::vector<AssetReference>& out
+                                              );
 }
 
 #endif // NOGGIT_ASSETDEPENDENCIES_HPP

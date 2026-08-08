@@ -12,12 +12,14 @@
 #include <Listfile.hpp>
 #include <MPQArchive.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <deque>
 #include <fstream>
 #include <sstream>
 #include <system_error>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace fs = std::filesystem;
@@ -58,6 +60,68 @@ namespace
   {
     return path.size() > 3 && path.compare(path.size() - 3, 3, ".m2") == 0;
   }
+
+  // Dispatches to whichever parser matches the extension, and RETURNS what it said.
+  //
+  // The three calls used to sit inline in run() with their results dropped, which is what made a
+  // truncated or malformed file indistinguishable from one that legitimately references nothing:
+  // the status had already been recorded as Present, the child list came back empty, and the file
+  // was counted as a successfully walked reference in a summary that named it nowhere.
+  Noggit::AssetParseResult parseReferences( std::string const& path
+                                          , std::vector<char> const& buffer
+                                          , std::vector<Noggit::AssetReference>& out
+                                          )
+  {
+    if (isAdtLike(path))
+    {
+      return Noggit::collectAdtReferences(buffer.data(), buffer.size(), out);
+    }
+
+    if (isModel(path))
+    {
+      return Noggit::collectModelReferences(path, buffer.data(), buffer.size(), out);
+    }
+
+    if (isWorldModel(path))
+    {
+      return Noggit::collectWorldModelReferences(path, buffer.data(), buffer.size(), out);
+    }
+
+    // isTraversable() gates the call, so nothing reaches this. Complete rather than Unrecognised so
+    // that adding an extension to that list and forgetting a parser here is a silent no-op instead
+    // of a report full of parse failures for files that were never meant to be parsed.
+    return { Noggit::ParseOutcome::Complete, {} };
+  }
+
+  // One recorded reference EDGE: a (referrer, target) pair, kept whether or not the target had
+  // already been seen.
+  //
+  // The walk queues each target once -- it has to, a WMO naming its own doodads is a cycle -- and
+  // it used to record the reference at DEQUEUE time, so every asset was credited with exactly one
+  // reference however many files named it. A texture used by forty models read as "(1 reference)",
+  // which is the number that decides whether a missing file is worth chasing first.
+  //
+  // POINTERS into an interning pool, not strings. There is one edge per reference site rather than
+  // per asset -- a project with a couple of thousand ADTs produces high hundreds of thousands of
+  // them -- and two std::strings each, both past the small-string limit at typical path lengths,
+  // is over a hundred megabytes of duplicated text for a list that is read once.
+  struct ReferenceEdge
+  {
+    std::string const* path = nullptr;
+    std::string const* referrer = nullptr;
+    Noggit::AssetKind kind = Noggit::AssetKind::Other;
+    Noggit::ReferenceNecessity necessity = Noggit::ReferenceNecessity::Required;
+  };
+
+  // What the walk decided about one path, once.
+  struct PathVerdict
+  {
+    Noggit::AssetStatus status = Noggit::AssetStatus::Present;
+    // Nothing in the chain has it. Held apart from `status` because an absent reference is recorded
+    // only when it is REQUIRED, and necessity belongs to the edge while the probe belongs to the
+    // path -- the same file can be optional to one parent and required to another.
+    bool absent = false;
+  };
 }
 
 std::string_view Noggit::assetOriginName(AssetOrigin origin)
@@ -100,6 +164,19 @@ std::string Noggit::PatchAssetPackerResult::summary() const
     line << ", " << scan.distinctUnreadable() << " unreadable";
   }
 
+  if (!parse_failures.empty())
+  {
+    // Shouted, because it is the only number here that means the OTHER numbers are incomplete.
+    //
+    // Deliberately says SOME rather than none. A partial parse -- forEachChunk stopping at a bad
+    // chunk header -- yields the references it reached and loses the rest, so a blanket "never
+    // followed" would be false for exactly the files most likely to occur, and a report that
+    // overstates the damage gets distrusted as fast as one that understates it. The per-file
+    // detail carries the recovered count and where it stopped.
+    line << ", " << parse_failures.size()
+         << " UNPARSED OR PARTIAL (some of their own references were never followed)";
+  }
+
   if (write_failures)
   {
     line << ", " << write_failures << " failed to write";
@@ -118,6 +195,31 @@ std::string Noggit::PatchAssetPackerResult::toReport() const
   std::ostringstream report;
 
   report << summary() << "\n";
+
+  // FIRST, above the missing and unreadable lists, because it is the section that says those lists
+  // are not the whole story. A file that did not parse contributed no references at all, so the
+  // things it names are absent from every other section here by construction.
+  if (!parse_failures.empty())
+  {
+    report << "\nFiles that were read but whose contents could not be fully parsed.\n"
+              "Everything THESE files reference was never followed and is not in this patch.\n"
+              "No other line in this report can show those names -- they were never looked up.\n\n";
+
+    for (auto const& failure : parse_failures)
+    {
+      report << "  " << (failure.partial ? "PARTIAL" : "FAILED ")
+             << "  " << failure.path << "\n"
+             << "      " << failure.reason << "\n";
+
+      if (failure.partial)
+      {
+        report << "      " << failure.recovered
+               << " reference(s) were recovered before the walk stopped; the rest were not\n";
+      }
+
+      report << "      referenced by " << failure.referrer << "\n";
+    }
+  }
 
   if (scan.hasFailures())
   {
@@ -398,9 +500,56 @@ Noggit::PatchAssetPackerResult Noggit::PatchAssetPacker::run(ProgressFn const& p
   std::deque<QueuedReference> queue (roots.begin(), roots.end());
   std::unordered_set<std::string> visited;
 
+  // Every reference edge in discovery order, and one verdict per path.
+  //
+  // The counts are replayed after the walk rather than recorded during it, and they have to be: an
+  // edge is discovered before its target's verdict is known -- the target is usually still in the
+  // queue -- and AssetScanResult keeps the verdict of the FIRST call for an asset while counting
+  // every later one as a disagreement. Recording an edge with a guessed status would make the
+  // per-kind counts disagree with the failure list, which is worse than the wrong count it fixes.
+  std::vector<ReferenceEdge> edges;
+  std::unordered_map<std::string, PathVerdict> verdicts;
+
+  // One copy of each distinct string, pointed at by every edge that uses it. std::unordered_set
+  // never invalidates pointers to its elements, rehash included, so a pointer taken here stays
+  // good for the whole walk.
+  std::unordered_set<std::string> intern_pool;
+
+  auto const intern
+    ( [&intern_pool] (std::string const& text) -> std::string const*
+      {
+        return &*intern_pool.insert(text).first;
+      }
+    );
+
+  // Paths some parent needs. An absent path that is optional everywhere is not reported; one that
+  // is optional to a WMO skybox slot and required by an ADT is, which the old dequeue-time record
+  // could not express because only the first discovering edge survived.
+  std::unordered_set<std::string const*> required_somewhere;
+
+  auto const record_edge
+    ( [&edges, &required_somewhere, &intern]
+      (std::string const& path, std::string const& referrer, AssetKind kind, ReferenceNecessity necessity)
+      {
+        ReferenceEdge edge;
+        edge.path = intern(path);
+        edge.referrer = intern(referrer);
+        edge.kind = kind;
+        edge.necessity = necessity;
+
+        if (necessity == ReferenceNecessity::Required)
+        {
+          required_somewhere.insert(edge.path);
+        }
+
+        edges.push_back(edge);
+      }
+    );
+
   for (auto const& root : roots)
   {
     visited.insert(root.path);
+    record_edge(root.path, root.referrer, root.kind, root.necessity);
   }
 
   std::vector<char> buffer;
@@ -415,26 +564,21 @@ Noggit::PatchAssetPackerResult Noggit::PatchAssetPacker::run(ProgressFn const& p
 
     if (progress && !progress("Collecting referenced assets", result.visited, result.visited + queue.size(), item.path))
     {
+      // BREAK, not return: the edges recorded so far still have to be replayed, or a cancelled run
+      // reports a scan result with no references in it at all.
       result.cancelled = true;
-      return result;
+      break;
     }
 
     AssetOrigin const origin (originOf(item.path));
 
     if (origin == AssetOrigin::NotFound)
     {
-      // Optional references are the ones the loaders themselves probe for -- external .anim files,
-      // a WMO skybox, a tileset's _s.blp companion. Absence is the normal case and recording it
-      // would bury the names that matter.
-      if (item.necessity == ReferenceNecessity::Required)
-      {
-        result.scan.addReference(item.kind, item.path, item.referrer, AssetStatus::Missing);
-      }
-      else
-      {
-        ++result.optional_absent;
-      }
+      PathVerdict verdict;
+      verdict.status = AssetStatus::Missing;
+      verdict.absent = true;
 
+      verdicts[item.path] = verdict;
       continue;
     }
 
@@ -482,7 +626,13 @@ Noggit::PatchAssetPackerResult Noggit::PatchAssetPacker::run(ProgressFn const& p
       }
     }
 
-    result.scan.addReference(item.kind, item.path, item.referrer, status);
+    {
+      PathVerdict verdict;
+      verdict.status = status;
+      verdict.absent = false;
+
+      verdicts[item.path] = verdict;
+    }
 
     switch (origin)
     {
@@ -556,22 +706,40 @@ Noggit::PatchAssetPackerResult Noggit::PatchAssetPacker::run(ProgressFn const& p
 
     children.clear();
 
-    if (isAdtLike(item.path))
+    AssetParseResult const parsed (parseReferences(item.path, buffer, children));
+
+    if (!parsed.complete())
     {
-      collectAdtReferences(buffer.data(), buffer.size(), children);
-    }
-    else if (isModel(item.path))
-    {
-      collectModelReferences(item.path, buffer.data(), buffer.size(), children);
-    }
-    else if (isWorldModel(item.path))
-    {
-      collectWorldModelReferences(item.path, buffer.data(), buffer.size(), children);
+      // THE thing this whole struct exists for. Until it was recorded, a truncated ADT produced no
+      // children, was counted as a successfully walked reference, and appeared in no list: the
+      // patch shipped without every texture and model that file named while the report said
+      // everything was fine. The file is still staged and still traversed as far as it went --
+      // packing a half-readable file is strictly better than dropping it -- so nothing else in the
+      // result will look wrong, which is exactly why this has to be said out loud.
+      AssetParseFailure failure;
+      failure.path = item.path;
+      failure.referrer = item.referrer;
+      failure.reason = parsed.reason;
+      failure.partial = parsed.recognised() && !children.empty();
+      failure.recovered = children.size();
+
+      result.parse_failures.push_back(std::move(failure));
     }
 
     for (auto& child : children)
     {
-      if (child.path.empty() || !visited.insert(child.path).second)
+      if (child.path.empty())
+      {
+        continue;
+      }
+
+      // Recorded for EVERY edge, queued only for a new target. Walking an already visited path
+      // again would not terminate -- a WMO that names its own doodads is a cycle -- but counting
+      // the edge costs nothing and is the difference between "(1 reference)" and the number that
+      // decides which missing file is worth chasing first.
+      record_edge(child.path, item.path, child.kind, child.necessity);
+
+      if (!visited.insert(child.path).second)
       {
         continue;
       }
@@ -587,9 +755,74 @@ Noggit::PatchAssetPackerResult Noggit::PatchAssetPacker::run(ProgressFn const& p
     }
   }
 
+  // ---- reference counts -----------------------------------------------------------------------
+  //
+  // Replayed in discovery order, which is breadth-first from the roots and therefore identical
+  // between two runs over an unchanged project. That matters for more than tidiness:
+  // AssetScanResult keeps only the first DEFAULT_MAX_REFERRERS referrers per asset, so the order
+  // decides which names the report prints.
+  {
+    std::unordered_set<std::string const*> optional_absent_counted;
+
+    for (auto const& edge : edges)
+    {
+      auto const verdict (verdicts.find(*edge.path));
+
+      if (verdict == verdicts.end())
+      {
+        // Queued and never reached, which happens only when the user cancelled.
+        continue;
+      }
+
+      if (!verdict->second.absent)
+      {
+        result.scan.addReference(edge.kind, *edge.path, *edge.referrer, verdict->second.status);
+        continue;
+      }
+
+      // Absent, and named only when some parent REQUIRES it. Optional references are the ones the
+      // loaders themselves probe for -- external .anim files, a WMO skybox, a tileset's _s.blp
+      // companion -- and absence is their normal case, so naming every one would bury the handful
+      // that matter under thousands that were never expected to be there.
+      //
+      // Once a file is required by ANY parent, every edge to it counts, optional ones included: it
+      // is on the missing list already and one more referrer is pure information. The old walk
+      // could not express this at all, because only the first edge to reach a path survived and its
+      // necessity decided the question for every other parent.
+      if (required_somewhere.find(edge.path) != required_somewhere.end())
+      {
+        result.scan.addReference(edge.kind, *edge.path, *edge.referrer, AssetStatus::Missing);
+        continue;
+      }
+
+      if (optional_absent_counted.insert(edge.path).second)
+      {
+        ++result.optional_absent;
+      }
+    }
+  }
+
+  // Deterministic order for the report; discovery order depends on how the filesystem enumerated
+  // the project folder.
+  std::sort( result.parse_failures.begin(), result.parse_failures.end()
+           , [] (AssetParseFailure const& left, AssetParseFailure const& right)
+             {
+               return left.path < right.path;
+             }
+           );
+
+  if (result.cancelled)
+  {
+    return result;
+  }
+
   // ---- phase 2: write -------------------------------------------------------------------------
 
-  if (_staged.empty())
+  // NOT `_staged.empty()` on its own. NoggitWindow hands saveLocalFilesToArchive
+  // `compact_archive && !pack_dependencies` precisely so the rebuild is deferred to this pass, so a
+  // run that stages nothing is the one case where nobody else will do it -- and returning here
+  // silently dropped the compaction on every project whose references were all already present.
+  if (_staged.empty() && !_options.compact)
   {
     return result;
   }
@@ -608,6 +841,14 @@ Noggit::PatchAssetPackerResult Noggit::PatchAssetPacker::run(ProgressFn const& p
   if (!opened)
   {
     result.write_failures += _staged.size();
+
+    if (_staged.empty())
+    {
+      // Nothing to write, so write_failures stays at zero and the summary would otherwise read as a
+      // clean run that quietly did not compact.
+      result.write_errors.push_back("could not open the archive to compact it");
+    }
+
     return result;
   }
 
@@ -670,11 +911,16 @@ Noggit::PatchAssetPackerResult Noggit::PatchAssetPacker::run(ProgressFn const& p
 
   try
   {
-    if (_options.compact && result.added)
+    // Whenever it was asked for, not only when this pass added something. Gating on `added` meant
+    // that ticking both Compact Archive and the dependency option on a project with nothing left to
+    // pack skipped the compaction entirely: the dialog had already deferred it to here.
+    if (_options.compact && !result.cancelled)
     {
       if (progress)
       {
-        progress("Compacting archive", _staged.size(), _staged.size(), std::string());
+        std::size_t const total = std::max<std::size_t>(_staged.size(), 1);
+
+        progress("Compacting archive", total, total, std::string());
       }
 
       _target_archive->compactArchive();

@@ -743,6 +743,20 @@ namespace Noggit::Ui::Windows
           summary += "\n\nCancelled: the archive contains whatever had already been written.";
       }
 
+      if (!result.parse_failures.empty())
+      {
+          // ABOVE the resolved/unresolved counts, because it is the paragraph that says those
+          // counts are incomplete. A file whose contents could not be parsed took every reference
+          // it makes out of the walk, so none of those names appear anywhere else in this report or
+          // in the numbers next to it -- they were never looked up at all.
+          summary += QString("\n\n%1 file(s) were read but could NOT be fully parsed. Some or all"
+                             " of what they reference was never followed, so it is not in this"
+                             " patch and no other line here can name it."
+                             "\nOpen \"Show Details\" for each file, what it recovered, and where"
+                             " it stopped.")
+                       .arg(result.parse_failures.size());
+      }
+
       if (result.scan.hasFailures())
       {
           // Named, never merely counted. A dependency pack that omits something silently is the

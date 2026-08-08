@@ -82,8 +82,36 @@ namespace Noggit
     // Passed through to MPQArchive::addFile. Roughly 3x slower, much smaller.
     bool compress = true;
 
-    // Run SFileCompactArchive after the added files. Only meaningful when something was added.
+    // Run SFileCompactArchive after the added files.
+    //
+    // Honoured even when this pass adds NOTHING. The dialog passes
+    // `compact_archive && !pack_dependencies` to saveLocalFilesToArchive precisely so the rebuild
+    // happens once, here, after the dependencies are in -- so a run that stages nothing is the one
+    // case where nobody else will do it, not the case where it can be skipped.
     bool compact = false;
+  };
+
+  // One file whose bytes were read and whose CONTENTS the walk could not fully account for.
+  //
+  // Deliberately not folded into AssetStatus::Unreadable, and not only because AssetStatus is
+  // AssetScan's to define. Unreadable means the bytes could not be obtained; here the bytes are in
+  // hand and the structure is wrong, and the consequence is different in a way the reader has to
+  // see. Everything this file names is absent from the walk, so those names cannot appear in the
+  // report's missing list -- they were never looked up. This is the only line that says the patch
+  // has a hole, and the file is still packed, so nothing else in the report will look wrong.
+  struct AssetParseFailure
+  {
+    std::string path;
+    // The file that named it, or "project folder" for a root.
+    std::string referrer;
+    // AssetParseResult::reason: one lowercase clause, no trailing full stop.
+    std::string reason;
+    // The walk recovered some references before it stopped, so this file's dependency list is a
+    // PREFIX of the truth rather than empty. Harder to notice than a total failure and worth its
+    // own word in the report.
+    bool partial = false;
+    // References recovered before the walk stopped.
+    std::size_t recovered = 0;
   };
 
   struct PatchAssetPackerResult
@@ -107,6 +135,10 @@ namespace Noggit
 
     // Every write that threw or returned false, with the archive's own message.
     std::vector<std::string> write_errors;
+
+    // Files that were read and could not be fully parsed. Sorted by path, so two runs over an
+    // unchanged project produce identical text.
+    std::vector<AssetParseFailure> parse_failures;
 
     // Dedup, per-kind counts, referrers and deterministic ordering, all from AssetScan. Required
     // references that resolved nowhere are AssetStatus::Missing here, and are what failures()

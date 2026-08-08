@@ -70,6 +70,24 @@ namespace
     return std::memcmp(data, magic, 4) == 0;
   }
 
+  // The four character code the way a HUMAN reads it, rebuilt from the reversed bytes on disk.
+  // Non printable bytes become '?': this string goes into a report line, and a raw 0x07 in the
+  // middle of it is worse than no name at all.
+  std::string chunkName(char const* magic)
+  {
+    std::string name;
+    name.reserve(4);
+
+    for (std::size_t index = 0; index < 4; ++index)
+    {
+      char const character = magic[3 - index];
+
+      name.push_back((character >= 0x20 && character < 0x7F) ? character : '?');
+    }
+
+    return name;
+  }
+
   std::uint32_t readUint32(char const* data)
   {
     std::uint32_t value = 0;
@@ -214,12 +232,23 @@ namespace
     return std::string_view(block + offset, length);
   }
 
+  // How far a chunk walk got.
+  struct ChunkWalk
+  {
+    bool complete = true;
+    std::string reason;
+  };
+
   // Walks a chunked file, calling back with (magic, payload, payload_size).
   //
   // Stops at the first chunk whose declared size runs past the end of the buffer rather than
   // clamping it: past that point every subsequent offset is guesswork.
+  //
+  // It now REPORTS that it stopped. Stopping silently is indistinguishable from a file that named
+  // nothing, and the two have opposite consequences for a packer: the second is fine, the first
+  // means every name after the bad chunk is absent from the walk and therefore from the patch.
   template <typename FunctionT>
-  void forEachChunk(char const* data, std::size_t size, FunctionT&& callback)
+  ChunkWalk forEachChunk(char const* data, std::size_t size, FunctionT&& callback)
   {
     std::size_t position = 0;
 
@@ -231,14 +260,41 @@ namespace
 
       if (chunk_size > size - payload)
       {
-        return;
+        return { false
+               , "chunk " + chunkName(magic)
+               + " at offset " + std::to_string(position)
+               + " declares " + std::to_string(chunk_size)
+               + " bytes and only " + std::to_string(size - payload) + " remain"
+               };
       }
 
       callback(magic, data + payload, static_cast<std::size_t>(chunk_size));
 
       position = payload + chunk_size;
     }
+
+    // A tail too short to be a chunk header is the other shape truncation takes, and it is the
+    // shape a half-copied file has. Everything before it was still read, so `out` is a prefix.
+    if (position != size)
+    {
+      return { false
+             , "the file ends with " + std::to_string(size - position)
+             + " trailing byte(s), too few to be a chunk header"
+             };
+    }
+
+    return {};
   }
+}
+
+bool Noggit::AssetParseResult::complete() const
+{
+  return outcome == ParseOutcome::Complete;
+}
+
+bool Noggit::AssetParseResult::recognised() const
+{
+  return outcome != ParseOutcome::Unrecognised;
 }
 
 std::string Noggit::normalizeReferencePath(std::string_view raw)
@@ -466,16 +522,25 @@ bool Noggit::isBaseClientArchiveName(std::string_view archive_file_name)
   return false;
 }
 
-bool Noggit::collectAdtReferences(char const* data, std::size_t size, std::vector<AssetReference>& out)
+Noggit::AssetParseResult Noggit::collectAdtReferences( char const* data
+                                                    , std::size_t size
+                                                    , std::vector<AssetReference>& out
+                                                    )
 {
-  if (!data || size < 8 || !magicIs(data, MAGIC_MVER))
+  if (!data || size < 8)
   {
-    return false;
+    return { ParseOutcome::Unrecognised, "the file is shorter than a chunk header" };
+  }
+
+  if (!magicIs(data, MAGIC_MVER))
+  {
+    return { ParseOutcome::Unrecognised, "the file does not begin with an MVER chunk" };
   }
 
   std::unordered_set<std::string> seen;
 
-  forEachChunk( data, size
+  ChunkWalk const walk
+    ( forEachChunk( data, size
               , [&] (char const* magic, char const* payload, std::size_t payload_size)
                 {
                   if (magicIs(magic, MAGIC_MTEX))
@@ -504,23 +569,57 @@ bool Noggit::collectAdtReferences(char const* data, std::size_t size, std::vecto
                                         );
                   }
                 }
-              );
+              )
+    );
 
-  return true;
+  if (!walk.complete)
+  {
+    // Non-empty `out` here is the dangerous case, not a reassuring one: the chunks before the bad
+    // one were read and everything after it was not. The caller has to be told, or the file counts
+    // as a successfully walked reference whose missing children appear in no list anywhere.
+    return { ParseOutcome::Truncated, walk.reason };
+  }
+
+  return { ParseOutcome::Complete, {} };
 }
 
-bool Noggit::collectModelReferences( std::string_view model_path
-                                   , char const* data
-                                   , std::size_t size
-                                   , std::vector<AssetReference>& out
-                                   )
+Noggit::AssetParseResult Noggit::collectModelReferences( std::string_view model_path
+                                                       , char const* data
+                                                       , std::size_t size
+                                                       , std::vector<AssetReference>& out
+                                                       )
 {
-  if (!data || size < M2_HEADER_MINIMUM || std::memcmp(data, "MD20", 4) != 0)
+  if (!data || size < 4 || std::memcmp(data, "MD20", 4) != 0)
   {
-    return false;
+    return { ParseOutcome::Unrecognised, "the file does not begin with an MD20 magic" };
+  }
+
+  if (size < M2_HEADER_MINIMUM)
+  {
+    // An MD20 magic and no header behind it. Recognised, so it is reported as a truncated model
+    // rather than as "not a model", which would send the reader looking for the wrong problem.
+    return { ParseOutcome::Truncated
+           , "the MD20 header is " + std::to_string(size) + " bytes, shorter than the "
+           + std::to_string(M2_HEADER_MINIMUM) + " the fields read here need"
+           };
   }
 
   std::unordered_set<std::string> seen;
+
+  // First reason only. A header pointing past the end usually makes every later table do the same,
+  // and ten lines saying so tell the reader nothing the first one did not.
+  AssetParseResult truncation;
+
+  auto const noteTruncation
+    ( [&truncation] (std::string reason)
+      {
+        if (truncation.outcome != ParseOutcome::Truncated)
+        {
+          truncation.outcome = ParseOutcome::Truncated;
+          truncation.reason = std::move(reason);
+        }
+      }
+    );
 
   std::uint32_t const texture_count = readUint32(data + M2_OFS_N_TEXTURES);
   std::uint32_t const texture_offset = readUint32(data + M2_OFS_OFS_TEXTURES);
@@ -532,6 +631,10 @@ bool Noggit::collectModelReferences( std::string_view model_path
 
     if (entry > size || size - entry < M2_TEXTURE_DEF_SIZE)
     {
+      noteTruncation( "texture definition " + std::to_string(index) + " of "
+                    + std::to_string(texture_count) + " begins at offset " + std::to_string(entry)
+                    + ", past the end of the " + std::to_string(size) + " byte file"
+                    );
       break;
     }
 
@@ -546,8 +649,19 @@ bool Noggit::collectModelReferences( std::string_view model_path
 
     // A type-0 slot with a zero length name is legal and the loader skips it with a debug log
     // (Model.cpp:344-348). Silence here too: it is not a missing file.
-    if (!name_length || name_offset >= size)
+    if (!name_length)
     {
+      continue;
+    }
+
+    // A name offset outside the file is NOT the same thing, and used to be folded in with it. The
+    // slot names a texture the file cannot produce, so the texture is silently absent from the walk.
+    if (name_offset >= size)
+    {
+      noteTruncation( "texture " + std::to_string(index) + " names a string at offset "
+                    + std::to_string(name_offset) + ", past the end of the "
+                    + std::to_string(size) + " byte file"
+                    );
       continue;
     }
 
@@ -590,6 +704,10 @@ bool Noggit::collectModelReferences( std::string_view model_path
 
     if (entry > size || size - entry < 4)
     {
+      noteTruncation( "animation " + std::to_string(index) + " of "
+                    + std::to_string(animation_count) + " begins at offset " + std::to_string(entry)
+                    + ", past the end of the " + std::to_string(size) + " byte file"
+                    );
       break;
     }
 
@@ -604,18 +722,23 @@ bool Noggit::collectModelReferences( std::string_view model_path
     }
   }
 
-  return true;
+  if (truncation.outcome == ParseOutcome::Truncated)
+  {
+    return truncation;
+  }
+
+  return { ParseOutcome::Complete, {} };
 }
 
-bool Noggit::collectWorldModelReferences( std::string_view world_model_path
-                                        , char const* data
-                                        , std::size_t size
-                                        , std::vector<AssetReference>& out
-                                        )
+Noggit::AssetParseResult Noggit::collectWorldModelReferences( std::string_view world_model_path
+                                                            , char const* data
+                                                            , std::size_t size
+                                                            , std::vector<AssetReference>& out
+                                                            )
 {
   if (!data || size < 8)
   {
-    return false;
+    return { ParseOutcome::Unrecognised, "the file is shorter than a chunk header" };
   }
 
   std::unordered_set<std::string> seen;
@@ -628,7 +751,8 @@ bool Noggit::collectWorldModelReferences( std::string_view world_model_path
   char const* doodad_name_block = nullptr;
   std::size_t doodad_name_block_size = 0;
 
-  forEachChunk( data, size
+  ChunkWalk const walk
+    ( forEachChunk( data, size
               , [&] (char const* magic, char const* payload, std::size_t payload_size)
                 {
                   if (magicIs(magic, MAGIC_MOHD))
@@ -726,11 +850,15 @@ bool Noggit::collectWorldModelReferences( std::string_view world_model_path
                     }
                   }
                 }
-              );
+              )
+    );
 
-  if (!found_header)
+  // A file with no MOHD is only "not a WMO root" when the walk read the whole of it. If the walk
+  // stopped early, MOHD may well have been in the part that was never reached, and reporting that
+  // as "not a WMO" would send the reader looking for the wrong problem.
+  if (!found_header && walk.complete)
   {
-    return false;
+    return { ParseOutcome::Unrecognised, "the file contains no MOHD chunk" };
   }
 
   // Group files last, so the chunk driven references keep their file order in the result and the
@@ -743,5 +871,10 @@ bool Noggit::collectWorldModelReferences( std::string_view world_model_path
     addReference(out, seen, wmoGroupFileName(world_model_path, group), ReferenceNecessity::Required, false);
   }
 
-  return true;
+  if (!walk.complete)
+  {
+    return { ParseOutcome::Truncated, walk.reason };
+  }
+
+  return { ParseOutcome::Complete, {} };
 }

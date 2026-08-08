@@ -5,9 +5,11 @@
 #include <noggit/AssetDependencies.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -199,7 +201,7 @@ TEST_CASE("an ADT yields its texture, model and world model name blocks", "[asse
   appendChunk(adt, "MWMO", stringBlock({"World\\wmo\\Custom\\Tower.WMO"}));
 
   std::vector<Noggit::AssetReference> references;
-  REQUIRE(Noggit::collectAdtReferences(adt.data(), adt.size(), references));
+  REQUIRE(Noggit::collectAdtReferences(adt.data(), adt.size(), references).complete());
 
   CHECK(contains(references, "tileset/elwynn/elwynngrass01.blp"));
   CHECK(contains(references, "tileset/generic/black.blp"));
@@ -222,11 +224,16 @@ TEST_CASE("a buffer that is not an ADT is rejected rather than mined for strings
   std::vector<char> not_an_adt (64, 'x');
   std::vector<Noggit::AssetReference> references;
 
-  CHECK_FALSE(Noggit::collectAdtReferences(not_an_adt.data(), not_an_adt.size(), references));
+  Noggit::AssetParseResult const parsed
+    (Noggit::collectAdtReferences(not_an_adt.data(), not_an_adt.size(), references));
+
+  CHECK(parsed.outcome == Noggit::ParseOutcome::Unrecognised);
+  CHECK_FALSE(parsed.recognised());
+  CHECK_FALSE(parsed.reason.empty());
   CHECK(references.empty());
 }
 
-TEST_CASE("a chunk declaring more bytes than the file holds stops the walk", "[assetdeps]")
+TEST_CASE("a chunk declaring more bytes than the file holds is REPORTED, not swallowed", "[assetdeps]")
 {
   std::vector<char> adt;
   appendChunk(adt, "MVER", std::vector<char>(4, '\0'));
@@ -242,8 +249,87 @@ TEST_CASE("a chunk declaring more bytes than the file holds stops the walk", "[a
   adt.insert(adt.end(), tail.begin(), tail.end());
 
   std::vector<Noggit::AssetReference> references;
-  CHECK(Noggit::collectAdtReferences(adt.data(), adt.size(), references));
+
+  Noggit::AssetParseResult const parsed
+    (Noggit::collectAdtReferences(adt.data(), adt.size(), references));
+
+  // The bug this pins. The walk stops -- that part was always right -- and it used to say so by
+  // returning TRUE with an empty list, which is byte-for-byte what a legitimate ADT referencing
+  // nothing returns. The packer recorded such a file as Present, counted it as a successfully
+  // walked reference, and named it in no failure list, so the patch shipped without every texture
+  // and model the file listed and the report claimed success.
+  CHECK(parsed.outcome == Noggit::ParseOutcome::Truncated);
+  CHECK_FALSE(parsed.complete());
+  CHECK(parsed.recognised());
   CHECK(references.empty());
+
+  // The reason has to name the chunk, or the user is told a file is broken and not where.
+  CHECK(parsed.reason.find("MTEX") != std::string::npos);
+  CHECK(parsed.reason.find("4096") != std::string::npos);
+}
+
+TEST_CASE("a truncated ADT that yielded some names is reported as partial, not complete", "[assetdeps]")
+{
+  std::vector<char> adt;
+  appendChunk(adt, "MVER", std::vector<char>(4, '\0'));
+  appendChunk(adt, "MTEX", stringBlock({"Tileset\\Elwynn\\ElwynnGrass01.blp"}));
+
+  // MMDX is cut off after its header, so the models are gone and the textures are not. This is the
+  // harder case: `out` is NOT empty, so nothing about the result looks wrong to a caller that only
+  // asks whether anything came back.
+  for (int index = 3; index >= 0; --index)
+  {
+    adt.push_back("MMDX"[index]);
+  }
+
+  appendUint32(adt, 512);
+
+  std::vector<Noggit::AssetReference> references;
+
+  Noggit::AssetParseResult const parsed
+    (Noggit::collectAdtReferences(adt.data(), adt.size(), references));
+
+  CHECK(parsed.outcome == Noggit::ParseOutcome::Truncated);
+  CHECK(contains(references, "tileset/elwynn/elwynngrass01.blp"));
+  CHECK(parsed.reason.find("MMDX") != std::string::npos);
+}
+
+TEST_CASE("a tail too short to be a chunk header is truncation, not a clean end", "[assetdeps]")
+{
+  std::vector<char> adt;
+  appendChunk(adt, "MVER", std::vector<char>(4, '\0'));
+  appendChunk(adt, "MTEX", stringBlock({"tileset/a.blp"}));
+
+  // Three bytes: the shape a half-copied file has. Every chunk before it parsed, so the reference
+  // list is a prefix of the truth and looks perfectly healthy on its own.
+  adt.push_back('M');
+  adt.push_back('W');
+  adt.push_back('M');
+
+  std::vector<Noggit::AssetReference> references;
+
+  Noggit::AssetParseResult const parsed
+    (Noggit::collectAdtReferences(adt.data(), adt.size(), references));
+
+  CHECK(parsed.outcome == Noggit::ParseOutcome::Truncated);
+  CHECK(contains(references, "tileset/a.blp"));
+  CHECK(parsed.reason.find("trailing") != std::string::npos);
+}
+
+TEST_CASE("a well formed ADT reports Complete with no reason", "[assetdeps]")
+{
+  std::vector<char> adt;
+  appendChunk(adt, "MVER", std::vector<char>(4, '\0'));
+  appendChunk(adt, "MTEX", stringBlock({"tileset/a.blp"}));
+
+  std::vector<Noggit::AssetReference> references;
+
+  Noggit::AssetParseResult const parsed
+    (Noggit::collectAdtReferences(adt.data(), adt.size(), references));
+
+  CHECK(parsed.complete());
+  CHECK(parsed.recognised());
+  CHECK(parsed.reason.empty());
 }
 
 namespace
@@ -322,7 +408,7 @@ TEST_CASE("an M2 yields its named textures, its skins and its anims", "[assetdep
     );
 
   std::vector<Noggit::AssetReference> references;
-  REQUIRE(Noggit::collectModelReferences("creature/rabbit/rabbit.m2", model.data(), model.size(), references));
+  REQUIRE(Noggit::collectModelReferences("creature/rabbit/rabbit.m2", model.data(), model.size(), references).complete());
 
   CHECK(contains(references, "creature/rabbit/rabbitskin.blp"));
   CHECK(contains(references, "creature/rabbit/eye.blp"));
@@ -350,7 +436,45 @@ TEST_CASE("a buffer that is not an MD20 is rejected", "[assetdeps]")
   std::vector<char> not_a_model (512, 'x');
   std::vector<Noggit::AssetReference> references;
 
-  CHECK_FALSE(Noggit::collectModelReferences("x/y.m2", not_a_model.data(), not_a_model.size(), references));
+  CHECK(Noggit::collectModelReferences("x/y.m2", not_a_model.data(), not_a_model.size(), references).outcome
+        == Noggit::ParseOutcome::Unrecognised);
+}
+
+TEST_CASE("an MD20 with no header behind it is truncated, not unrecognised", "[assetdeps]")
+{
+  // The distinction is what the report says to the user: "this is not a model" sends them looking
+  // for the wrong problem when what they have is a model that was copied half way.
+  std::vector<char> stub (32, '\0');
+  std::memcpy(stub.data(), "MD20", 4);
+
+  std::vector<Noggit::AssetReference> references;
+
+  Noggit::AssetParseResult const parsed
+    (Noggit::collectModelReferences("x/y.m2", stub.data(), stub.size(), references));
+
+  CHECK(parsed.outcome == Noggit::ParseOutcome::Truncated);
+  CHECK(parsed.recognised());
+  CHECK(references.empty());
+}
+
+TEST_CASE("an M2 whose texture table runs past the end is reported", "[assetdeps]")
+{
+  std::vector<char> model
+    (buildModel(1, { {0, "creature/rabbit/skin.blp"} }, { {std::int16_t(0), std::int16_t(0)} }));
+
+  // Claim ten textures where one was written. The parser stops at the first entry outside the
+  // buffer and still emits the skins, so `out` comes back non-empty and plausible.
+  std::uint32_t const lying_count = 10;
+  std::memcpy(model.data() + 80, &lying_count, 4);
+
+  std::vector<Noggit::AssetReference> references;
+
+  Noggit::AssetParseResult const parsed
+    (Noggit::collectModelReferences("creature/rabbit/rabbit.m2", model.data(), model.size(), references));
+
+  CHECK(parsed.outcome == Noggit::ParseOutcome::Truncated);
+  CHECK(contains(references, "creature/rabbit/rabbit00.skin"));
+  CHECK(parsed.reason.find("texture definition") != std::string::npos);
 }
 
 TEST_CASE("a WMO root yields its group files, textures, doodads and skybox", "[assetdeps]")
@@ -387,7 +511,7 @@ TEST_CASE("a WMO root yields its group files, textures, doodads and skybox", "[a
   appendChunk(wmo, "MODD", doodads);
 
   std::vector<Noggit::AssetReference> references;
-  REQUIRE(Noggit::collectWorldModelReferences("world/wmo/custom/tower.wmo", wmo.data(), wmo.size(), references));
+  REQUIRE(Noggit::collectWorldModelReferences("world/wmo/custom/tower.wmo", wmo.data(), wmo.size(), references).complete());
 
   // THE reference AssetScan cannot produce. A root packed without its groups loads in no client.
   CHECK(contains(references, "world/wmo/custom/tower_000.wmo"));
@@ -419,7 +543,64 @@ TEST_CASE("a WMO with no MOHD is rejected", "[assetdeps]")
   appendChunk(wmo, "MOTX", stringBlock({"a.blp"}));
 
   std::vector<Noggit::AssetReference> references;
-  CHECK_FALSE(Noggit::collectWorldModelReferences("world/wmo/x.wmo", wmo.data(), wmo.size(), references));
+
+  // The whole file parsed and there is no MOHD in it, so this really is "not a WMO root" -- which
+  // is what a group file is, and why the packer keeps those out of this parser by name.
+  CHECK(Noggit::collectWorldModelReferences("world/wmo/x.wmo", wmo.data(), wmo.size(), references).outcome
+        == Noggit::ParseOutcome::Unrecognised);
+}
+
+TEST_CASE("a WMO cut short before MOHD is truncated, not 'not a WMO'", "[assetdeps]")
+{
+  std::vector<char> wmo;
+  appendChunk(wmo, "MVER", std::vector<char>(4, '\0'));
+
+  // MOTX claims 8192 bytes and the file stops. MOHD would have come later, so calling this
+  // "contains no MOHD chunk" would be true and useless: it would send the reader looking for a
+  // malformed root rather than a half-copied file.
+  for (int index = 3; index >= 0; --index)
+  {
+    wmo.push_back("MOTX"[index]);
+  }
+
+  appendUint32(wmo, 8192);
+
+  std::vector<Noggit::AssetReference> references;
+
+  Noggit::AssetParseResult const parsed
+    (Noggit::collectWorldModelReferences("world/wmo/x.wmo", wmo.data(), wmo.size(), references));
+
+  CHECK(parsed.outcome == Noggit::ParseOutcome::Truncated);
+  CHECK(parsed.recognised());
+}
+
+TEST_CASE("a WMO truncated after MOHD still yields its group files, and says it was truncated", "[assetdeps]")
+{
+  std::vector<char> header (0x40, '\0');
+  std::uint32_t const group_count = 2;
+  std::memcpy(header.data() + 4, &group_count, 4);
+
+  std::vector<char> wmo;
+  appendChunk(wmo, "MVER", std::vector<char>(4, '\0'));
+  appendChunk(wmo, "MOHD", header);
+
+  // MOTX cut off after its header. The group files -- the references AssetScan cannot produce and
+  // whose absence loads in no client -- are still known from nGroups and must still come back.
+  for (int index = 3; index >= 0; --index)
+  {
+    wmo.push_back("MOTX"[index]);
+  }
+
+  appendUint32(wmo, 8192);
+
+  std::vector<Noggit::AssetReference> references;
+
+  Noggit::AssetParseResult const parsed
+    (Noggit::collectWorldModelReferences("world/wmo/x.wmo", wmo.data(), wmo.size(), references));
+
+  CHECK(parsed.outcome == Noggit::ParseOutcome::Truncated);
+  CHECK(contains(references, "world/wmo/x_000.wmo"));
+  CHECK(contains(references, "world/wmo/x_001.wmo"));
 }
 
 TEST_CASE("a MODD offset outside MODN is dropped, not dereferenced", "[assetdeps]")
@@ -438,10 +619,106 @@ TEST_CASE("a MODD offset outside MODN is dropped, not dereferenced", "[assetdeps
   appendChunk(wmo, "MODD", doodads);
 
   std::vector<Noggit::AssetReference> references;
-  REQUIRE(Noggit::collectWorldModelReferences("world/wmo/x.wmo", wmo.data(), wmo.size(), references));
+  REQUIRE(Noggit::collectWorldModelReferences("world/wmo/x.wmo", wmo.data(), wmo.size(), references).complete());
 
   // The name is still found through the blob split, which is why both routes are walked: an
   // unusable offset costs nothing when the string itself was already collected.
   CHECK(contains(references, "world/custom/barrel.m2"));
   CHECK(references.size() == 1);
+}
+
+TEST_CASE("a file named by several parents counts once per parent", "[assetdeps]")
+{
+  // The rule PatchAssetPacker's breadth-first walk broke by using ONE set for two jobs.
+  //
+  // A path has to be queued once -- a WMO that names its own doodads is a cycle -- but the walk
+  // also skipped RECORDING the reference for an already-queued target, so every asset came out
+  // with exactly one reference however many files named it. A missing texture used by forty models
+  // read as "(1 reference)", which is precisely the number that decides what to chase first.
+  //
+  // Both halves are exercised here: the count is taken from every edge, the queue from new targets
+  // only.
+  auto const buildAdt
+    ( [] (std::string const& model)
+      {
+        std::vector<char> adt;
+        appendChunk(adt, "MVER", std::vector<char>(4, '\0'));
+        appendChunk(adt, "MTEX", stringBlock({"Tileset\\Shared\\Grass.blp"}));
+        appendChunk(adt, "MMDX", stringBlock({model}));
+
+        return adt;
+      }
+    );
+
+  std::vector<char> const first (buildAdt("World\\Trees\\Oak.MDX"));
+  std::vector<char> const second (buildAdt("World\\Trees\\Pine.MDX"));
+
+  std::vector<std::pair<std::string, std::vector<char> const*>> const parents
+    { {"world/maps/test/test_00_00.adt", &first}
+    , {"world/maps/test/test_00_01.adt", &second}
+    };
+
+  Noggit::AssetScanResult scan;
+  std::unordered_set<std::string> visited;
+  std::size_t queued = 0;
+
+  for (auto const& parent : parents)
+  {
+    std::vector<Noggit::AssetReference> references;
+
+    REQUIRE(Noggit::collectAdtReferences(parent.second->data(), parent.second->size(), references).complete());
+
+    for (auto const& reference : references)
+    {
+      scan.addReference(reference.kind, reference.path, parent.first, Noggit::AssetStatus::Missing);
+
+      if (visited.insert(reference.path).second)
+      {
+        ++queued;
+      }
+    }
+  }
+
+  CHECK(scan.referenceCount("tileset/shared/grass.blp") == 2);
+  CHECK(scan.referenceCount("tileset/shared/grass_s.blp") == 2);
+  CHECK(scan.referenceCount("world/trees/oak.m2") == 1);
+  CHECK(scan.referenceCount("world/trees/pine.m2") == 1);
+
+  // Four distinct paths, walked once each. Counting an edge twice must not queue it twice.
+  CHECK(queued == 4);
+  CHECK(scan.distinctReferenced() == 4);
+  CHECK(scan.totalReferences() == 6);
+
+  // Both parents are named, which is the other half of what a real count buys: the report says
+  // WHERE to go and fix it.
+  std::vector<Noggit::MissingAsset> const failures (scan.failures(Noggit::AssetKind::Texture));
+
+  auto const grass
+    ( std::find_if( failures.begin(), failures.end()
+                  , [] (Noggit::MissingAsset const& asset)
+                    {
+                      return asset.key == "tileset\\shared\\grass.blp";
+                    }
+                  )
+    );
+
+  REQUIRE(grass != failures.end());
+  CHECK(grass->reference_count == 2);
+  CHECK(grass->referrers.size() == 2);
+}
+
+TEST_CASE("one file naming the same texture twice is still one reference", "[assetdeps]")
+{
+  // The other side of the same rule, and the reason addReference deduplicates inside a single
+  // parser: a WMO with 200 materials over 6 textures must not report 200 references from one file.
+  std::vector<char> adt;
+  appendChunk(adt, "MVER", std::vector<char>(4, '\0'));
+  appendChunk(adt, "MTEX", stringBlock({"Tileset\\Shared\\Grass.blp", "TILESET\\shared\\grass.BLP"}));
+
+  std::vector<Noggit::AssetReference> references;
+
+  REQUIRE(Noggit::collectAdtReferences(adt.data(), adt.size(), references).complete());
+
+  // grass.blp and its specular companion, once each, despite two spellings of the same name.
+  CHECK(references.size() == 2);
 }
