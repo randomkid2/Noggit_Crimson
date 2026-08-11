@@ -12,8 +12,14 @@ when, and what evidence backed each claim.
 
 A fork of [Marlamin/noggit-red](https://github.com/Marlamin/noggit-red) (upstream base
 `6f0776d4`, 2025-01-17) that renders and edits **TrinityCore 3.3.5a world-database spawns on the
-ADT view**: creature and gameobject placement, a visual waypoint editor, a chunk mover, and a
-tile-centric staged-edit workflow adapted to server-side data.
+ADT view**: creature and gameobject placement, and a tile-centric staged-edit workflow adapted to
+server-side data.
+
+Two further goals from the original plan — a **visual waypoint editor** and a **chunk mover** —
+are only half built. Both have a complete, unit-tested logic layer (`waypoint_data` modelling and
+emission; `ChunkTransform`'s translate and rotate planning) and **neither has a user interface**.
+Do not read the paragraph above as a feature list; the current one is in
+[`../README.md`](../README.md).
 
 Everything database-related is opt-in behind the CMake `USE_SQL` option, which is `OFF` by
 default. With it off, four sources are dropped from the build and the editor is ordinary Noggit

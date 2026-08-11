@@ -51,6 +51,13 @@
 !/tools/**
 !/tests/
 !/tests/**
+# patches/ carries fixes to submodules this project cannot push to. `0001` is a REQUIRED build
+# step -- without it, Client > Patch Client writes MPQ archives the game client silently ignores.
+# It was added but never un-ignored, so the whole directory was invisible to `git add` and the
+# repository shipped build instructions referring to a file it did not contain. Exactly the
+# failure documented at the top of this file.
+!/patches/
+!/patches/**
 # scripts/ holds 23 tracked Lua/TypeScript files inherited from upstream, but was never
 # un-ignored -- they survive only because gitignore does not apply to already-tracked files.
 # Without this, a NEW file added under scripts/ is silently invisible to `git add`, which is

@@ -51,6 +51,13 @@ Notes on the behaviour, because they are decisions rather than accidents:
 - A weight of 0 disables a slot without clearing its path.
 - Editing a set that already exists rewrites that row in place. Only genuinely new ids append.
 
+## Verification status
+
+The editor builds in both configurations, its menu entry and dialog were confirmed present in the
+running editor, and the DBC write path is unit-tested. **Nobody has written a set, loaded the
+resulting project patch in the game client, and confirmed the doodads appear.** Until someone
+does, treat the in-game result as unproven — see the Status table in [`../README.md`](../README.md).
+
 ## Still not done
 
 - **Export / import** (the `.MGE` equivalent) — reapplying a tile's assignments after repainting

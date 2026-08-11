@@ -52,18 +52,60 @@ git clone <this repo> noggit
 cd noggit
 git submodule update --init --recursive
 
+# REQUIRED -- see "Applying patches/0001" below. Skipping this builds an editor
+# whose Client > Patch Client writes archives the game client silently ignores.
+cd src/external/blizzard-archive-library
+git am ../../../patches/0001-blizzard-archive-mpq-backslash-names.patch
+cd ../../..
+
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 \
   "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" \
   "-DCMAKE_PREFIX_PATH=C:/Qt/5.15.2/msvc2019_64"
 
-cmake --build build --config RelWithDebInfo --target ALL_BUILD
+cmake --build build --config RelWithDebInfo --target noggit
 ```
 
 The executable lands in `build/bin/RelWithDebInfo/noggit.exe`. Before the first run, copy the
 listfile next to it — see [Running it](#running-it).
 
 **Do not run `--target INSTALL`.** It is broken in the tree as it stands; see
-[The INSTALL target](#the-install-target-is-broken) for why and what to do instead.
+[The INSTALL target](#the-install-target-is-broken) for why and what to do instead. `noggit` and
+`ALL_BUILD` are both fine.
+
+## Applying `patches/0001`
+
+**This is a required build step.** It is easy to skip because nothing fails loudly without it —
+the editor builds, runs, and writes a perfectly well-formed MPQ archive that the game client then
+ignores.
+
+```bash
+cd src/external/blizzard-archive-library
+git am ../../../patches/0001-blizzard-archive-mpq-backslash-names.patch
+cd ../../..
+```
+
+Why it is a patch file rather than a submodule commit: `src/external/blizzard-archive-library`
+points at `gitlab.com/T1ti/blizzard-archive-library`, a third-party repository this project cannot
+push to. The parent repository records only a **commit pointer** into it, and that pointer has to
+name a commit which exists on that remote — a parent recording a locally-made SHA makes
+`git submodule update --init --recursive` fail for everyone except the machine that made it. So the
+fix cannot travel through the pointer, and travels as a patch instead.
+
+What it fixes: MPQ resolves a file by hashing its stored name, so the name has to be byte-for-byte
+what the client asks for (`World\Maps\...`). `Listfile::FileKey` normalises to forward slashes for
+Noggit's own lookups, and that normalised form went straight into `SFileAddFileEx`, filing every
+entry under a name nothing would ever request. The archive is otherwise perfect — valid header,
+correct payload, correct name — and MPQ viewers list its contents normally, because they read the
+`(listfile)` rather than hashing. The only symptom is that nothing happens in game.
+
+After applying it, `git status` reports `src/external/blizzard-archive-library` as modified.
+**That is expected and correct.** Do not reset the submodule to clear it.
+
+> If `git submodule update --init --recursive` itself fails with something like
+> `fatal: remote error: upload-pack: not our ref <sha>` or `Fetched in submodule path
+> 'src/external/blizzard-archive-library', but it did not contain <sha>`, then the parent is
+> recording a commit that is not public. Report it — the recorded pointer needs resetting to the
+> last public commit (`6cac330`), after which the patch above supplies the fix.
 
 ### What "no database" means
 
@@ -94,7 +136,7 @@ top-level `CMakeLists.txt`.
 | Path | Why it matters |
 |---|---|
 | `cmake/` | The entire build system: `Find*.cmake`, platform files, `windeployqt.cmake`. Configure fails immediately without it. |
-| `src/external/blizzard-archive-library` | Compiled into a static library. Empty ⇒ no sources, and every `#include <ClientFile.hpp>` fails. |
+| `src/external/blizzard-archive-library` | Compiled into a static library. Empty ⇒ no sources, and every `#include <ClientFile.hpp>` fails. **Also needs `patches/0001` applied** — see below. |
 | `src/external/blizzard-database-library` | Same. |
 | `dist/definitions` | DBD field definitions, copied next to the exe at build time. Empty ⇒ the app logs "Unable to find database definitions". |
 | `dist/themes` | UI themes, copied next to the exe at build time. |
@@ -424,12 +466,23 @@ not a regression.** Measured on this tree:
 
 | Machine | Test cases | Assertions | ctest |
 |---|---|---|---|
-| No Connector/C++ at all | 376 | 276,784 | 33 tests, 0 failures |
-| Connector present, no database reachable | 382 (377 pass, **5 skipped**) | 276,787 | 0 failures |
-| Connector present, dev database reachable | 382, none skipped | more | 0 failures |
+| No Connector/C++ at all | 416 | not measured | expected 33 tests, 0 failures |
+| Connector present, no database reachable | 422 (417 pass, **5 skipped**) | 276,964 | `100% tests passed, 0 tests failed out of 33` |
+| Connector present, dev database reachable | 422, none skipped | more | 0 failures |
 
-The first two rows are measured on this tree. The third is the expected state and the exact
-figures will drift as cases are added — the point of the table is the *shape*: the count goes
+**Only the middle row is measured on this tree.** Its exact output:
+
+```
+test cases:    422 |    417 passed | 5 skipped
+assertions: 276964 | 276964 passed
+```
+
+The first row's case count is arithmetic, not a measurement — 422 minus the six cases in
+`tests/DatabaseIntegrationTests.cpp`, which is the file the connector gate omits. Its assertion
+count has not been measured, because no machine here lacks the connector. The third row is the
+expected state and nobody has a reachable dev database to confirm it with.
+
+Exact figures drift as cases are added. The point of the table is the *shape*: the count goes
 down as capability goes away, and failures stay at zero throughout.
 
 Three mechanisms produce that, and each is deliberate:
@@ -572,6 +625,9 @@ path has not been observed against a live server.
 | Symptom | Cause |
 |---|---|
 | `include could not find load file: cmake/cmake_function.cmake` | Submodules not initialised. `cmake/` is a submodule. |
+| Client ▸ Patch Client produces an archive the game ignores | `patches/0001` was not applied. Nothing errors; entry names are hashed under forward slashes. See [Applying `patches/0001`](#applying-patches0001). |
+| `git status` shows `src/external/blizzard-archive-library` modified | Expected after applying `patches/0001`. Leave it. |
+| `git submodule update` fails with `did not contain <sha>` / `not our ref` | The parent records a non-public submodule commit. See the note under [Applying `patches/0001`](#applying-patches0001). |
 | `Invalid CMAKE_POLICY_VERSION_MINIMUM value "3"` | The flag was not quoted; the shell ate the `.5`. |
 | `Target "nodes" links to Qt5::OpenGL but the target was not found` | Qt below 5.10, or `CMAKE_PREFIX_PATH` points at the wrong kit. Appears at *generate*, not configure. |
 | `MySQL lib or connector not found` | `-DUSE_SQL=ON` with bad or missing connector paths. Drop `USE_SQL` if you do not need the database features. |

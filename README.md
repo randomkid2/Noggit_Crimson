@@ -151,6 +151,26 @@ These work in a plain `-DUSE_SQL=OFF` build:
   auto-repaired UID collisions in memory on every load, but compressed the result to a single
   `bool`; this records and reports what was renumbered.
 
+### Client patch building
+
+**Client ▸ Patch Client** writes your project folder into an MPQ patch the game client will load.
+Two things about it are worth stating plainly, because both are load-bearing:
+
+- **It packs referenced assets, not just terrain.** A byte-level walk over the project's ADTs
+  follows the three links whose absence produces a model that loads in the editor and fails in
+  game: WMO **group files**, M2 **`.skin`** files for every `nViews`, and the MOSB **skybox**.
+  Base-client assets are excluded by default and gated behind a checkbox.
+- **It requires [`patches/0001`](patches/0001-blizzard-archive-mpq-backslash-names.patch) to be
+  applied.** That patch lives in a submodule this project cannot push to. Without it the archives
+  written here are **silently ignored by the client** — valid header, correct payload, correct
+  name, and MPQ viewers still list the contents, because they read the `(listfile)` rather than
+  hashing the stored name. Applying it is a required build step, not an optional one. See
+  [Quick start](#quick-start).
+
+The archive produced this way has been confirmed working in game against a 3.3.5a client. The
+report the packer prints distinguishes a file it could not parse at all from one it parsed
+partially, and names the chunk and byte offset where it stopped.
+
 ### Fixes to inherited code
 
 Several upstream defects were fixed as a by-product, and they matter whether or not you use the
@@ -197,23 +217,28 @@ which parts:
 
 | | |
 |---|---|
+| **Confirmed in the game client** | **Client ▸ Patch Client**, with `patches/0001` applied. An ADT naming `Farm.wmo` produced an archive containing `world\wmo\azeroth\buildings\human_farm\farm.wmo` alongside `farm_000.wmo` and `farm_001.wmo`, with zero forward-slash entries, and `SFileHasFile` — which hashes the name, as the client does — found all three. Confirmed loading in game against a 3.3.5a client. |
 | **Confirmed in the running editor** | Spawn overlay rendering. A run against a seeded dev schema loaded 5 spawns across 30 tiles with zero resolution failures, and confirmed all three DBC chains open against a stock client. Menu entries and tool registration were verified by driving the running process, not inferred from the fact that they compile. |
 | **Built and tested, not visually confirmed** | Creature skin textures. Creature M2s carry no skin of their own — the image comes from `CreatureDisplayInfo.TextureVariation` per display id — and Noggit's loader replaced every such texture with black. The fix builds clean and breaks no test, but nobody has opened a populated tile and looked. If creatures render black, that is where to start. |
 | **Compiles, path is reachable, never seen working** | The **spawn axis-drag gizmo**. `MapView::handleSpawnGizmo` is wired to the same preconditions as the shift-click pick and hands off to the ImGuizmo-backed transform gizmo, so nothing about the code path is speculative — but no one has confirmed the handles actually render on screen, let alone dragged one. Treat "move a spawn by dragging it" as unproven. Setting the coordinates numerically in the spawn panel is the path that has been exercised. |
 | **Logic complete and unit-tested, no UI yet** | The waypoint editor (`waypoint_data` model and emission — no visual editor), the terrain half of the chunk mover, and the environment "Doctor" (`DoctorReport` renders, but there is no dialog over it). |
 | **Not finished** | The M1 definition of done also requires demonstrating the read path working through a `SELECT`-only account, and a screenshot. Neither has been done. |
 | **Never run against live MySQL** | The `DEV_WRITE` refusal path. It is verified by reading the code and by a clean compile; it has not been watched refusing a real connection. |
+| **Menu-verified, output not signed off** | The map-making tools — ground effect set editor, automatic texturing, thermal erosion, AO baking, alpha-map integrity. They build clean in both configurations, their pure logic is unit-tested, their menu entries and tool registration were verified in the running editor, and each was put through an adversarial review that found and fixed real defects. What is **not** recorded anywhere is somebody opening a map, running each one, and confirming the *result* looks right. Treat the output as unproven. |
 | **Screenshots** | None yet. See [`docs/screenshots/`](docs/screenshots/). |
 
 The test suite is a standalone Catch2 target that links neither Qt nor Noggit and needs no running
 database, plus a handful of live-database integration cases that skip cleanly without credentials.
-The current suite is **382 test cases**. **Without a dev database you will see
-`test cases: 382 | 377 passed | 5 skipped` — that is the correct result on this tree, not a
-regression**, and the same run reports 276,787 assertions, all passing. That is the measured
-figure. With a dev database configured, the five gated cases are expected to run and pass as well;
-nobody has a reachable one to confirm it with right now. A machine with no Connector/C++ at all
-compiles six cases out of the binary entirely and reports 376. See
-[`docs/setup.md`](docs/setup.md#expected-results-without-a-database) for why each mechanism exists.
+The current suite is **422 test cases**. **Without a dev database you will see
+`test cases: 422 | 417 passed | 5 skipped` — that is the correct result on this tree, not a
+regression**, and the same run reports 276,964 assertions, all passing. That is the measured
+figure, and `ctest -LE needs-database` reports `100% tests passed, 0 tests failed out of 33`
+alongside it. With a dev database configured, the five gated cases are expected to run and pass as
+well; nobody has a reachable one to confirm it with right now. A machine with no Connector/C++ at
+all compiles the six cases in `tests/DatabaseIntegrationTests.cpp` out of the binary entirely and
+should report 416 — that figure is arithmetic from the measured 422, not a separate measurement.
+See [`docs/setup.md`](docs/setup.md#expected-results-without-a-database) for why each mechanism
+exists.
 
 ```bash
 cmake -S tests -B build-tests -G "Visual Studio 17 2022" -A x64
@@ -225,10 +250,14 @@ There is **no CI**. The `.gitlab-ci.yml` in the root is upstream's GitLab templa
 here. Nothing in this repository is verified by an automated build on push; the evidence is what is
 pasted into `docs/milestones.md`.
 
-Not planned, deliberately: client-side MPQ patch building, `TaxiPath.dbc` editing, AzerothCore
-support (the capability layer exists to make it cheap to add later, but only TrinityCore 3.3.5 is
-implemented), and any write path to a schema other than the one you nominate as writable. There
-will never be a "write directly to the server" button.
+Not planned, deliberately: `TaxiPath.dbc` / `TaxiPathNode.dbc` editing, custom WMO embedded-doodad
+(`MODD`/`MODN`) editing, AzerothCore support (the capability layer exists to make it cheap to add
+later, but only TrinityCore 3.3.5 is implemented), and any write path to a schema other than the one
+you nominate as writable. There will never be a "write directly to the server" button.
+
+Client-side MPQ patch building **was** on that list and is no longer — Client ▸ Patch Client now
+writes the project folder, and the assets its terrain references, into an MPQ patch. See
+[Client patch building](#client-patch-building) below.
 
 ---
 
@@ -244,7 +273,7 @@ because "no game data, not ever" would be a claim you could falsify in thirty se
 
 - **`dist/noggit-definitions/`** — four upstream-supplied CSV mapping tables, inherited unchanged
   from Noggit Red and copied next to the executable at build time.
-  `AreatriggerDescriptions.csv` (1,220 rows) labels area-trigger IDs with Blizzard zone and trigger
+  `AreatriggerDescriptions.csv` (1,219 rows) labels area-trigger IDs with Blizzard zone and trigger
   names; `light_dbc_names.csv` (378 rows) names `Light.dbc` entries and, per its own README, was
   extracted from the legacy `.lit` files that shipped until the TBC beta; `ZoneLight.*.csv` and
   `ZoneLightPoint.*.csv` carry zone-light values the 3.3.5 client hardcodes. These are factual
@@ -322,13 +351,36 @@ exact command.
 
 ## Quick start
 
+**1. Clone with submodules.** Six of them, and `cmake/` is itself one, so nothing configures at all
+without this step:
+
 ```bash
 git clone --recursive <this-repo>
 cd <this-repo>
 git submodule update --init --recursive
 ```
 
-Configure. **Quote the policy flag** — unquoted, some shells strip the `.5`, the cache ends up
+**2. Apply `patches/0001` — this is a required build step, not an optional one.**
+
+```bash
+cd src/external/blizzard-archive-library
+git am ../../../patches/0001-blizzard-archive-mpq-backslash-names.patch
+cd ../../..
+```
+
+`src/external/blizzard-archive-library` is a submodule pointing at
+`gitlab.com/T1ti/blizzard-archive-library`, which this project cannot push to, so the fix cannot be
+delivered through the submodule pointer — the parent must record a commit that exists on that
+remote, or `git submodule update` fails for everyone who clones. The patch is therefore carried
+here and applied by hand. **Without it, Client ▸ Patch Client writes archives the game client
+silently ignores**, because MPQ resolves a file by hashing its stored name and the writer stored
+forward slashes where the client asks with backslashes. Nothing reports an error; the patch simply
+does nothing in game.
+
+Applying it leaves that submodule showing as modified in `git status`. **That is expected and
+correct** — do not "fix" it by resetting the submodule.
+
+**3. Configure.** **Quote the policy flag** — unquoted, some shells strip the `.5`, the cache ends up
 holding `3`, and every subproject then fails with a message that blames the subproject rather than
 the flag:
 
@@ -348,10 +400,11 @@ Add these for the database build (or drop the `-D` paths entirely and use the si
 -DMYSQLCPPCONN_LIBRARY="<Connector>/lib64/vs14/mysqlcppconn.lib"
 ```
 
-Build:
+**4. Build.** Build the `noggit` target (or `ALL_BUILD`) — **never `INSTALL`**, which is broken
+upstream, see the note below:
 
 ```bash
-cmake --build build --config RelWithDebInfo --target ALL_BUILD
+cmake --build build --config RelWithDebInfo --target noggit
 ```
 
 The executable lands in **`build/bin/RelWithDebInfo/`**, and you run it from there.
@@ -424,10 +477,12 @@ stay invisible.
 | File | Contents |
 |---|---|
 | [`docs/setup.md`](docs/setup.md) | Build prerequisites, the gotchas in the order they bite, dev-database setup |
+| [`docs/design-notes.md`](docs/design-notes.md) | Why the fork is shaped the way it is — the decisions that are hard to infer from the code |
 | [`docs/schema-335.md`](docs/schema-335.md) | TrinityCore 3.3.5a world schema measured from `information_schema`, and eleven places published references are wrong |
-| [`docs/milestones.md`](docs/milestones.md) | What is done, what is not, and the evidence for each |
+| [`patches/README.md`](patches/README.md) | The required `0001` submodule patch, why it cannot ship as a submodule commit, and how to verify the pointer |
+| [`docs/milestones.md`](docs/milestones.md) | **Historical planning record.** The milestone briefs and the evidence pasted as each landed. Superseded in places — the README Status table is current. |
 | [`docs/ground-effects.md`](docs/ground-effects.md) | How ground effects work in 3.3.5 and what the editor adds |
-| [`docs/feature-recon.md`](docs/feature-recon.md) | Survey of what already existed in the tree before adding to it |
+| [`docs/feature-recon.md`](docs/feature-recon.md) | **Point-in-time survey** of what existed in the tree before the map-making work. Most of it has since been built. |
 | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | Coding rules, the licence header every new file needs, and what evidence a change is expected to carry |
 | [`ATTRIBUTION.md`](ATTRIBUTION.md) | Licensing, upstream credit, third-party components, pre-release checks |
 

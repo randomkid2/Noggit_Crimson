@@ -1,4 +1,4 @@
-﻿// This file is part of Noggit3, licensed under GNU General Public License (version 3).
+// This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
 // Tests for the frame conversion between TrinityCore world coordinates and Noggit's internal
 // frame. This is the one place in the project where being wrong produces no error -- just spawns

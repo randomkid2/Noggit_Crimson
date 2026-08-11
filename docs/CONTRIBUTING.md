@@ -8,6 +8,13 @@ are licence obligations rather than preferences.
 Build instructions live in [`setup.md`](setup.md). If a build step is wrong or incomplete, that is
 a bug worth reporting on its own.
 
+**Before your first build, apply `patches/0001`** — it is a required step, not an optional one,
+and nothing fails loudly if you skip it. See
+[Applying `patches/0001`](setup.md#applying-patches0001). It will leave
+`src/external/blizzard-archive-library` showing as modified in `git status` forever after; that is
+expected, and **must not be included in a patch or PR** — the submodule pointer is deliberately
+kept at the last public commit.
+
 > This file lives in `docs/` rather than at the repository root on purpose. The root `.gitignore`
 > starts with `/**` and whitelists paths explicitly, so a **new file added at the top level is
 > silently invisible to `git add`**. `docs/` is whitelisted. GitHub finds a contributing guide
@@ -80,7 +87,14 @@ First line, exactly:
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 ```
 
-337 existing files carry it. Yours makes 338.
+Measured on this tree: **813 of the 908 tracked source files under `src/` outside `src/external/`
+carry it.** The 95 that do not are inherited upstream files that never had it; they are not this
+fork's to reformat. Every file *this fork adds* carries it, and yours must too.
+
+```bash
+# count them yourself
+git ls-files 'src/*.cpp' 'src/*.hpp' 'src/*.h' 'src/*.inl' | grep -v '^src/external/' | wc -l
+```
 
 ### 6. Log your change in ATTRIBUTION.md
 
@@ -169,6 +183,11 @@ no database dependency precisely so it can be tested exhaustively. Keep it that 
 3. Run the test suite and paste the result.
 4. Add your `ATTRIBUTION.md` row.
 5. Re-run the tracked-file check in rule 2.
+6. **Check you are not committing the submodule pointer.** `git diff --cached --submodule` must
+   show no change to `src/external/blizzard-archive-library`. Applying `patches/0001` dirties it
+   permanently, and committing that pointer records a SHA that exists on no remote — which makes
+   `git submodule update --init --recursive` fail for **everyone** who clones. If you fixed
+   something inside that submodule, export it as a new file under `patches/` instead.
 
 Bug reports are more useful with `log.txt` (written beside the executable), your Qt and CMake
 versions, and whether you built with `USE_SQL`.

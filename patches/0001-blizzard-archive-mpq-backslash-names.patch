@@ -1,0 +1,702 @@
+From f2b1716d305e225bc4002f2317c0fb56cdb72b9f Mon Sep 17 00:00:00 2001
+From: randomkid2 <jayden.mattsson101@gmail.com>
+Date: Sun, 2 Aug 2026 15:51:40 +1000
+Subject: [PATCH] Store MPQ entry names with backslashes
+
+MPQ resolves a file by hashing its name, so a stored name must be byte-for-byte
+what the client requests: World\Maps\Expansion01\Expansion01_29_32.adt.
+Listfile::FileKey normalises to forward slashes for Noggit's own lookups, and
+that normalised form went straight into SFileAddFileEx, so every file written
+was filed under a name nothing would ever ask for.
+
+The result was a patch archive with a valid header, correct payload and the
+right filename that the client silently ignored -- and MPQ viewers still listed
+its contents, because they read the (listfile) rather than hashing, which is
+what made it invisible.
+
+Confirmed working in game against a 3.3.5a client.
+---
+ src/ClientData.cpp |  12 +-
+ src/MPQArchive.cpp | 647 +++++++++++++++++++++++----------------------
+ 2 files changed, 341 insertions(+), 318 deletions(-)
+
+diff --git a/src/ClientData.cpp b/src/ClientData.cpp
+index eb7e1e0..c713f79 100644
+--- a/src/ClientData.cpp
++++ b/src/ClientData.cpp
+@@ -486,7 +486,17 @@ std::array<int, 2> BlizzardArchive::ClientData::saveLocalFilesToArchive(Archive:
+                 if (!full_write_file)
+                 {
+                     // get internal Wow path
+-                    auto wow_path = fs::relative(entry.path(), fs::path(_local_path)).generic_string();
++                    //
++                    // BACKSLASHES, not generic_string(). MPQ looks a file up by HASHING ITS NAME,
++                    // so the stored name has to be byte-for-byte what the client will ask for --
++                    // and the client asks for World\Maps\Expansion01\Expansion01_29_32.adt.
++                    // generic_string() returns forward slashes by definition, which hash to
++                    // something else entirely, so every file written here was filed under a name
++                    // nothing would ever request. The archive listed correctly in any MPQ viewer
++                    // (those read the listfile rather than hashing) and the client silently found
++                    // nothing: valid header, correct payload, right archive name, no effect.
++                    auto wow_path = fs::relative(entry.path(), fs::path(_local_path)).string();
++                    std::replace(wow_path.begin(), wow_path.end(), '/', '\\');
+ 
+                     try
+                     {
+diff --git a/src/MPQArchive.cpp b/src/MPQArchive.cpp
+index 9eea8f0..0565633 100644
+--- a/src/MPQArchive.cpp
++++ b/src/MPQArchive.cpp
+@@ -1,318 +1,331 @@
+-#include <MPQArchive.hpp>
+-#include <Exception.hpp>
+-#include <StormLib.h>
+-
+-
+-using namespace BlizzardArchive::Archive;
+-
+-MPQArchive::MPQArchive(std::string const& path, Locale locale, Listfile::Listfile* listfile)
+-: BaseArchive(path, locale, listfile)
+-{
+-  if (!SFileOpenArchive(path.c_str(), 0, MPQ_OPEN_NO_LISTFILE | STREAM_FLAG_READ_ONLY, &_handle))
+-  {
+-    DWORD nError = GetLastError();
+-    throw Exceptions::Archive::ArchiveOpenError("Error opening archive: " + path + "\nMake sure it isn't opened by another tool.");
+-  }
+-
+-  // handle listfiles
+-  HANDLE fh;
+-  if (SFileOpenFileEx(_handle, "(listfile)", 0, &fh))
+-  {
+-    size_t filesize = SFileGetFileSize(fh, nullptr); 
+-
+-    std::vector<char> readbuffer(filesize);
+-    SFileReadFile(fh, readbuffer.data(), static_cast<DWORD>(filesize), nullptr, nullptr);
+-    SFileCloseFile(fh);
+-
+-    listfile->initFromFileList(readbuffer);
+-  }
+-  else
+-  {
+-      // DWORD nError = GetLastError();
+-      return;
+-  }
+-}
+-
+-bool MPQArchive::openFile(Listfile::FileKey const& file_key, Locale locale, HANDLE* file_handle) const
+-{
+-  assert(file_key.hasFilepath());
+-  return SFileOpenFileEx(_handle, ClientData::normalizeFilenameWoW(file_key.filepath()).c_str(), 0, file_handle);
+-}
+-
+-bool BlizzardArchive::Archive::MPQArchive::writeFile(Listfile::FileKey const& file_key, const char* file_data,
+-    std::size_t buf_size, Locale locale, unsigned long skip_error, bool compress)
+-{
+-    // archive must have been open in non STREAM_FLAG_READ_ONLY mode or  SFileCreateFile will return ERROR_ACCESS_DENIED
+-
+-    assert(file_key.hasFilepath());
+-    assert(buf_size);
+-
+-    HANDLE hFile = NULL;
+-
+-    // DWORD dwFileSize = (DWORD)strlen(file_data);
+-    DWORD dwFlags = 0x0;
+-    DWORD dwCompression = 0x0;
+-
+-    // compression benchmarks for 1000 files :
+-    // BZIP 2 : 83sec, ZLIB 18.2sec, no compression = 6.7s
+-    if (compress)
+-    {
+-        dwFlags |= MPQ_FILE_COMPRESS; //Blizzard seems to use MPQ_FILE_SECTOR_CRC. // MPQ_FILE_ENCRYPTED
+-        dwCompression |= MPQ_COMPRESSION_ZLIB; // MPQ_COMPRESSION_BZIP2 is super slow
+-    }
+-
+-    // static_cast<int>(locale) - 1 // use neutral locale
+-
+-    if (SFileCreateFile(_handle, file_key.filepath().c_str(), 0, buf_size, 0, dwFlags, &hFile))
+-    {
+-        // Write the file
+-        if (hFile != 0 && !SFileWriteFile(hFile, file_data, buf_size, dwCompression))
+-        {
+-            // exception "Failed to write data to the MPQ"
+-            auto nError = GetLastError();
+-            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::writeFile() SFileWriteFile: Error creating file: " +
+-                file_key.filepath() + "in archive" + _path);
+-        }
+-
+-        // do this now or after checks?
+-        _listfile->addFile(file_key.filepath());
+-
+-        if (!SFileFinishFile(hFile))
+-        {
+-            auto nError = GetLastError();
+-            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::writeFile() SFileFinishFile: Error creating file: " +
+-            file_key.filepath() + "in archive" + _path);
+-        }
+-    }
+-    else
+-    {
+-        DWORD const error = GetLastError();
+-
+-        if (skip_error == error)
+-        {
+-            // don't allow chain crashing on the same error
+-            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::writeFile() SFileCreateFile: Error creating file: " +
+-                file_key.filepath() + "in archive" + _path + ", got the same error twice.", error);
+-        }
+-
+-        // handle the various errors
+-        if (error == ERROR_DISK_FULL)
+-        {
+-            // increase archive size.
+-
+-            DWORD dwMaxFileCount = SFileGetMaxFileCount(_handle);
+-            if (!SFileSetMaxFileCount(_handle, dwMaxFileCount + 1))
+-                return true;
+-            // add file again
+-            return writeFile(file_key, file_data, buf_size, locale, error, compress);
+-        }
+-        else if (error == ERROR_ALREADY_EXISTS)
+-        {
+-            // delete file
+-            if (!SFileRemoveFile(_handle, file_key.filepath().c_str(), 0))
+-                throw Exceptions::Archive::FileWriteFailedError("MPQArchive::writeFile() SFileRemoveFile: Error replacing file: " +
+-                    file_key.filepath() + "in archive" + _path, error);
+-
+-            return writeFile(file_key, file_data, buf_size, locale, error, compress);
+-        }
+-        else if (error == ERROR_ACCESS_DENIED)
+-        {
+-            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::writeFile() SFileCreateFile: Error creating file: " +
+-                file_key.filepath() + "in archive" + _path + "\nMPQ Archive ACCESS DENIED, make sure no other application is using this MPQ.", error);
+-        }
+-        else
+-        {
+-            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::writeFile() SFileCreateFile: Error creating file: " +
+-                file_key.filepath() + "in archive" + _path + ", unhandled error", error);
+-        }
+-    }
+-    return true;
+-}
+-
+-bool BlizzardArchive::Archive::MPQArchive::addFile(Listfile::FileKey const& wow_path, std::string file_disk_path, Locale locale, unsigned long skip_error, bool compress)
+-{
+-    // archive must have been open in non STREAM_FLAG_READ_ONLY mode or  SFileCreateFile will return ERROR_ACCESS_DENIED
+-
+-        // SFileSetAddFileCallback(_handle, AddFileCallback, pLogger);
+-    // SFileAddFileEx() https://github.com/ladislav-zezula/StormLib/blob/master/src/SFileAddFile.cpp#L896
+-    // if (!SFileAddFileEx(_handle, disk_path, file_key.filepath().c_str(), dwFlags, dwCompression, MPQ_COMPRESSION_NEXT_SAME))
+-
+-
+-    assert(wow_path.hasFilepath());
+-
+-    HANDLE hFile = NULL;
+-    DWORD dwFlags = 0x0;
+-    DWORD dwCompression = 0x0;
+-
+-    // compression benchmarks for 1000 files :
+-    // BZIP 2 : 83sec, ZLIB 18.2sec, no compression = 6.7s
+-    if (compress)
+-    {
+-        dwFlags |= MPQ_FILE_COMPRESS | MPQ_FILE_SECTOR_CRC; //Blizzard seems to use MPQ_FILE_SECTOR_CRC. // MPQ_FILE_ENCRYPTED support ?
+-        dwCompression |= MPQ_COMPRESSION_ZLIB; // MPQ_COMPRESSION_BZIP2 is super slow
+-    }
+-
+-
+-    auto has_file = SFileHasFile(_handle, wow_path.filepath().c_str());
+-    if (has_file)
+-        // delete file
+-        if (!SFileRemoveFile(_handle, wow_path.filepath().c_str(), 0))
+-            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::addFile() SFileRemoveFile: Error replacing file: " +
+-                wow_path.filepath() + "in archive" + _path);
+-    
+-    if (SFileAddFileEx(_handle, file_disk_path.c_str(), wow_path.filepath().c_str(), dwFlags, dwCompression, MPQ_COMPRESSION_NEXT_SAME))
+-    {
+-        _listfile->addFile(wow_path.filepath());
+-
+-        // auto dwVerifyResult = SFileVerifyFile(_handle, wow_path.filepath().c_str(), MPQ_ATTRIBUTE_CRC32 | MPQ_ATTRIBUTE_MD5);
+-        return true;
+-    }
+-    else
+-    {
+-        DWORD const error = GetLastError();
+-
+-        if (skip_error == error)
+-        {
+-            // don't allow chain crashing on the same error
+-            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::addFile() SFileAddFileEx: Error adding file: " +
+-                wow_path.filepath() + "to archive" + _path + ", got the same error twice.", error);
+-        }
+-
+-        // handle the various errors
+-        if (error == ERROR_DISK_FULL)
+-        {
+-            // increase archive size.
+-            DWORD dwMaxFileCount = SFileGetMaxFileCount(_handle);
+-            if (!SFileSetMaxFileCount(_handle, dwMaxFileCount + 1))
+-                return false; // failed to increase archive size, just give up...
+-            // add file again
+-            return addFile(wow_path, file_disk_path, locale, error, compress);
+-        }
+-        else if (error == ERROR_ALREADY_EXISTS)
+-        {
+-            // delete file
+-            if (!SFileRemoveFile(_handle, wow_path.filepath().c_str(), 0))
+-                throw Exceptions::Archive::FileWriteFailedError("MPQArchive::addFile() SFileRemoveFile: Error replacing file: " +
+-                    wow_path.filepath() + "in archive" + _path, error);
+-
+-            return addFile(wow_path, file_disk_path, locale, error, compress);
+-        }
+-        else if (error == ERROR_ACCESS_DENIED)
+-        {
+-            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::addFile() SFileAddFileEx: Error creating file: " +
+-                wow_path.filepath() + "in archive" + _path + "\nMPQ Archive ACCESS DENIED, make sure no other application is using this MPQ.", error);
+-        }
+-        else
+-        {
+-            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::addFile() SFileAddFileEx: Error creating file: " +
+-                wow_path.filepath() + "in archive" + _path + ", unhandled error", error);
+-        }
+-    }
+-
+-    return true;
+-}
+-
+-bool BlizzardArchive::Archive::MPQArchive::flushArchive() const
+-{
+-    return SFileFlushArchive(_handle);
+-}
+-
+-bool BlizzardArchive::Archive::MPQArchive::compactArchive() const
+-{
+-    // archive must be opened to compress
+-    if (!_handle)
+-        return false;
+-
+-    // optional :  callback
+-    // SFileSetCompactCallback(_handle, CompactCallback, &Logger);
+-
+-
+-    if (!SFileCompactArchive(_handle, NULL, false))
+-    {
+-        auto error = GetLastError();
+-        throw Exceptions::Archive::ArchiveOpenError("MPQArchive::compactArchive(): Error compacting archive: " + _path);
+-    }
+-
+-    return true;
+-}
+-
+-bool MPQArchive::readFile(HANDLE file_handle, char* buffer, std::size_t buf_size) const
+-{
+-  assert(file_handle);
+-  return SFileReadFile(file_handle, buffer, static_cast<DWORD>(buf_size), nullptr, nullptr);
+-}
+-
+-bool MPQArchive::closeFile(HANDLE file_handle) const
+-{
+-  assert(file_handle);
+-  return SFileCloseFile(file_handle);
+-}
+-
+-bool BlizzardArchive::Archive::MPQArchive::openForWritting()
+-{
+-    // close the archive and reopen it without read-only flag
+-
+-    if (_handle)
+-    {
+-        if (!SFileCloseArchive(_handle))
+-        {
+-            auto error = GetLastError();
+-            // ERROR_SUCCESS
+-            throw Exceptions::Archive::ArchiveCloseError("PQArchive::openForWritting(): Error closing archive: " + _path);
+-        }
+-    }
+-
+-    _handle = nullptr; // todo verify if nullptr
+-
+-    if (!SFileOpenArchive(_path.c_str(), 0, 0, &_handle))
+-    {
+-        auto error = GetLastError();
+-        throw Exceptions::Archive::ArchiveOpenError("MPQArchive::openForWritting(): Error opening archive: " + _path);
+-    }
+-
+-    return true;
+-}
+-
+-bool BlizzardArchive::Archive::MPQArchive::closeToReadOnly()
+-{
+-    // close the archive and reopen it without read-only flag
+-
+-    if (_handle)
+-    {
+-        if (!SFileCloseArchive(_handle))
+-        {
+-            auto error = GetLastError();
+-            // ERROR_SUCCESS
+-            throw Exceptions::Archive::ArchiveCloseError("MPQArchive::closeToReadOnly(): Error closing archive: " + _path);
+-        }
+-    }
+-
+-    // _handle = nullptr;
+-
+-    if (!SFileOpenArchive(_path.c_str(), 0, MPQ_OPEN_NO_LISTFILE | STREAM_FLAG_READ_ONLY, &_handle))
+-    {
+-        auto error = GetLastError();
+-        throw Exceptions::Archive::ArchiveOpenError("Error opening archive: " + _path);
+-    }
+-    // don't need to read listfile again, should be added when adding files in writeFile()
+-
+-    return true;
+-}
+-
+-std::uint64_t MPQArchive::getFileSize(HANDLE file_handle) const
+-{
+-  assert(file_handle);
+-  return SFileGetFileSize(file_handle, nullptr);
+-}
+-
+-bool MPQArchive::exists(Listfile::FileKey const& file_key, Locale locale) const
+-{
+-  assert(file_key.hasFilepath());
+-  return SFileHasFile(_handle, ClientData::normalizeFilenameWoW(file_key.filepath()).c_str());
+-}
+-
+-MPQArchive::~MPQArchive()
+-{
+-  if (_handle)
+-    SFileCloseArchive(_handle);
++#include <MPQArchive.hpp>
++#include <Exception.hpp>
++#include <StormLib.h>
++
++#include <algorithm>
++
++
++using namespace BlizzardArchive::Archive;
++
++MPQArchive::MPQArchive(std::string const& path, Locale locale, Listfile::Listfile* listfile)
++: BaseArchive(path, locale, listfile)
++{
++  if (!SFileOpenArchive(path.c_str(), 0, MPQ_OPEN_NO_LISTFILE | STREAM_FLAG_READ_ONLY, &_handle))
++  {
++    DWORD nError = GetLastError();
++    throw Exceptions::Archive::ArchiveOpenError("Error opening archive: " + path + "\nMake sure it isn't opened by another tool.");
++  }
++
++  // handle listfiles
++  HANDLE fh;
++  if (SFileOpenFileEx(_handle, "(listfile)", 0, &fh))
++  {
++    size_t filesize = SFileGetFileSize(fh, nullptr); 
++
++    std::vector<char> readbuffer(filesize);
++    SFileReadFile(fh, readbuffer.data(), static_cast<DWORD>(filesize), nullptr, nullptr);
++    SFileCloseFile(fh);
++
++    listfile->initFromFileList(readbuffer);
++  }
++  else
++  {
++      // DWORD nError = GetLastError();
++      return;
++  }
++}
++
++bool MPQArchive::openFile(Listfile::FileKey const& file_key, Locale locale, HANDLE* file_handle) const
++{
++  assert(file_key.hasFilepath());
++  return SFileOpenFileEx(_handle, ClientData::normalizeFilenameWoW(file_key.filepath()).c_str(), 0, file_handle);
++}
++
++bool BlizzardArchive::Archive::MPQArchive::writeFile(Listfile::FileKey const& file_key, const char* file_data,
++    std::size_t buf_size, Locale locale, unsigned long skip_error, bool compress)
++{
++    // archive must have been open in non STREAM_FLAG_READ_ONLY mode or  SFileCreateFile will return ERROR_ACCESS_DENIED
++
++    assert(file_key.hasFilepath());
++    assert(buf_size);
++
++    HANDLE hFile = NULL;
++
++    // DWORD dwFileSize = (DWORD)strlen(file_data);
++    DWORD dwFlags = 0x0;
++    DWORD dwCompression = 0x0;
++
++    // compression benchmarks for 1000 files :
++    // BZIP 2 : 83sec, ZLIB 18.2sec, no compression = 6.7s
++    if (compress)
++    {
++        dwFlags |= MPQ_FILE_COMPRESS; //Blizzard seems to use MPQ_FILE_SECTOR_CRC. // MPQ_FILE_ENCRYPTED
++        dwCompression |= MPQ_COMPRESSION_ZLIB; // MPQ_COMPRESSION_BZIP2 is super slow
++    }
++
++    // static_cast<int>(locale) - 1 // use neutral locale
++
++    if (SFileCreateFile(_handle, file_key.filepath().c_str(), 0, buf_size, 0, dwFlags, &hFile))
++    {
++        // Write the file
++        if (hFile != 0 && !SFileWriteFile(hFile, file_data, buf_size, dwCompression))
++        {
++            // exception "Failed to write data to the MPQ"
++            auto nError = GetLastError();
++            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::writeFile() SFileWriteFile: Error creating file: " +
++                file_key.filepath() + "in archive" + _path);
++        }
++
++        // do this now or after checks?
++        _listfile->addFile(file_key.filepath());
++
++        if (!SFileFinishFile(hFile))
++        {
++            auto nError = GetLastError();
++            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::writeFile() SFileFinishFile: Error creating file: " +
++            file_key.filepath() + "in archive" + _path);
++        }
++    }
++    else
++    {
++        DWORD const error = GetLastError();
++
++        if (skip_error == error)
++        {
++            // don't allow chain crashing on the same error
++            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::writeFile() SFileCreateFile: Error creating file: " +
++                file_key.filepath() + "in archive" + _path + ", got the same error twice.", error);
++        }
++
++        // handle the various errors
++        if (error == ERROR_DISK_FULL)
++        {
++            // increase archive size.
++
++            DWORD dwMaxFileCount = SFileGetMaxFileCount(_handle);
++            if (!SFileSetMaxFileCount(_handle, dwMaxFileCount + 1))
++                return true;
++            // add file again
++            return writeFile(file_key, file_data, buf_size, locale, error, compress);
++        }
++        else if (error == ERROR_ALREADY_EXISTS)
++        {
++            // delete file
++            if (!SFileRemoveFile(_handle, file_key.filepath().c_str(), 0))
++                throw Exceptions::Archive::FileWriteFailedError("MPQArchive::writeFile() SFileRemoveFile: Error replacing file: " +
++                    file_key.filepath() + "in archive" + _path, error);
++
++            return writeFile(file_key, file_data, buf_size, locale, error, compress);
++        }
++        else if (error == ERROR_ACCESS_DENIED)
++        {
++            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::writeFile() SFileCreateFile: Error creating file: " +
++                file_key.filepath() + "in archive" + _path + "\nMPQ Archive ACCESS DENIED, make sure no other application is using this MPQ.", error);
++        }
++        else
++        {
++            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::writeFile() SFileCreateFile: Error creating file: " +
++                file_key.filepath() + "in archive" + _path + ", unhandled error", error);
++        }
++    }
++    return true;
++}
++
++bool BlizzardArchive::Archive::MPQArchive::addFile(Listfile::FileKey const& wow_path, std::string file_disk_path, Locale locale, unsigned long skip_error, bool compress)
++{
++    // archive must have been open in non STREAM_FLAG_READ_ONLY mode or  SFileCreateFile will return ERROR_ACCESS_DENIED
++
++        // SFileSetAddFileCallback(_handle, AddFileCallback, pLogger);
++    // SFileAddFileEx() https://github.com/ladislav-zezula/StormLib/blob/master/src/SFileAddFile.cpp#L896
++    // if (!SFileAddFileEx(_handle, disk_path, file_key.filepath().c_str(), dwFlags, dwCompression, MPQ_COMPRESSION_NEXT_SAME))
++
++
++    assert(wow_path.hasFilepath());
++
++    // BACKSLASHES. MPQ resolves a file by HASHING ITS NAME, so what is stored has to be exactly
++    // what the client will ask for -- and the client asks for
++    // World\\Maps\\Expansion01\\Expansion01_29_32.adt. Listfile::FileKey normalises to forward
++    // slashes for Noggit's own lookups, and passing that straight to StormLib filed every written
++    // file under a name nothing would ever request: valid archive, correct payload, correct
++    // archive name, and the client silently finding nothing. Any MPQ viewer still listed the
++    // files, because viewers read the (listfile) rather than hashing, which is what made this
++    // invisible.
++    std::string mpq_name (wow_path.filepath());
++    std::replace (mpq_name.begin(), mpq_name.end(), '/', '\\');
++
++    HANDLE hFile = NULL;
++    DWORD dwFlags = 0x0;
++    DWORD dwCompression = 0x0;
++
++    // compression benchmarks for 1000 files :
++    // BZIP 2 : 83sec, ZLIB 18.2sec, no compression = 6.7s
++    if (compress)
++    {
++        dwFlags |= MPQ_FILE_COMPRESS | MPQ_FILE_SECTOR_CRC; //Blizzard seems to use MPQ_FILE_SECTOR_CRC. // MPQ_FILE_ENCRYPTED support ?
++        dwCompression |= MPQ_COMPRESSION_ZLIB; // MPQ_COMPRESSION_BZIP2 is super slow
++    }
++
++
++    auto has_file = SFileHasFile(_handle, mpq_name.c_str());
++    if (has_file)
++        // delete file
++        if (!SFileRemoveFile(_handle, mpq_name.c_str(), 0))
++            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::addFile() SFileRemoveFile: Error replacing file: " +
++                wow_path.filepath() + "in archive" + _path);
++    
++    if (SFileAddFileEx(_handle, file_disk_path.c_str(), mpq_name.c_str(), dwFlags, dwCompression, MPQ_COMPRESSION_NEXT_SAME))
++    {
++        _listfile->addFile(wow_path.filepath());
++
++        // auto dwVerifyResult = SFileVerifyFile(_handle, wow_path.filepath().c_str(), MPQ_ATTRIBUTE_CRC32 | MPQ_ATTRIBUTE_MD5);
++        return true;
++    }
++    else
++    {
++        DWORD const error = GetLastError();
++
++        if (skip_error == error)
++        {
++            // don't allow chain crashing on the same error
++            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::addFile() SFileAddFileEx: Error adding file: " +
++                wow_path.filepath() + "to archive" + _path + ", got the same error twice.", error);
++        }
++
++        // handle the various errors
++        if (error == ERROR_DISK_FULL)
++        {
++            // increase archive size.
++            DWORD dwMaxFileCount = SFileGetMaxFileCount(_handle);
++            if (!SFileSetMaxFileCount(_handle, dwMaxFileCount + 1))
++                return false; // failed to increase archive size, just give up...
++            // add file again
++            return addFile(wow_path, file_disk_path, locale, error, compress);
++        }
++        else if (error == ERROR_ALREADY_EXISTS)
++        {
++            // delete file
++            if (!SFileRemoveFile(_handle, mpq_name.c_str(), 0))
++                throw Exceptions::Archive::FileWriteFailedError("MPQArchive::addFile() SFileRemoveFile: Error replacing file: " +
++                    wow_path.filepath() + "in archive" + _path, error);
++
++            return addFile(wow_path, file_disk_path, locale, error, compress);
++        }
++        else if (error == ERROR_ACCESS_DENIED)
++        {
++            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::addFile() SFileAddFileEx: Error creating file: " +
++                wow_path.filepath() + "in archive" + _path + "\nMPQ Archive ACCESS DENIED, make sure no other application is using this MPQ.", error);
++        }
++        else
++        {
++            throw Exceptions::Archive::FileWriteFailedError("MPQArchive::addFile() SFileAddFileEx: Error creating file: " +
++                wow_path.filepath() + "in archive" + _path + ", unhandled error", error);
++        }
++    }
++
++    return true;
++}
++
++bool BlizzardArchive::Archive::MPQArchive::flushArchive() const
++{
++    return SFileFlushArchive(_handle);
++}
++
++bool BlizzardArchive::Archive::MPQArchive::compactArchive() const
++{
++    // archive must be opened to compress
++    if (!_handle)
++        return false;
++
++    // optional :  callback
++    // SFileSetCompactCallback(_handle, CompactCallback, &Logger);
++
++
++    if (!SFileCompactArchive(_handle, NULL, false))
++    {
++        auto error = GetLastError();
++        throw Exceptions::Archive::ArchiveOpenError("MPQArchive::compactArchive(): Error compacting archive: " + _path);
++    }
++
++    return true;
++}
++
++bool MPQArchive::readFile(HANDLE file_handle, char* buffer, std::size_t buf_size) const
++{
++  assert(file_handle);
++  return SFileReadFile(file_handle, buffer, static_cast<DWORD>(buf_size), nullptr, nullptr);
++}
++
++bool MPQArchive::closeFile(HANDLE file_handle) const
++{
++  assert(file_handle);
++  return SFileCloseFile(file_handle);
++}
++
++bool BlizzardArchive::Archive::MPQArchive::openForWritting()
++{
++    // close the archive and reopen it without read-only flag
++
++    if (_handle)
++    {
++        if (!SFileCloseArchive(_handle))
++        {
++            auto error = GetLastError();
++            // ERROR_SUCCESS
++            throw Exceptions::Archive::ArchiveCloseError("PQArchive::openForWritting(): Error closing archive: " + _path);
++        }
++    }
++
++    _handle = nullptr; // todo verify if nullptr
++
++    if (!SFileOpenArchive(_path.c_str(), 0, 0, &_handle))
++    {
++        auto error = GetLastError();
++        throw Exceptions::Archive::ArchiveOpenError("MPQArchive::openForWritting(): Error opening archive: " + _path);
++    }
++
++    return true;
++}
++
++bool BlizzardArchive::Archive::MPQArchive::closeToReadOnly()
++{
++    // close the archive and reopen it without read-only flag
++
++    if (_handle)
++    {
++        if (!SFileCloseArchive(_handle))
++        {
++            auto error = GetLastError();
++            // ERROR_SUCCESS
++            throw Exceptions::Archive::ArchiveCloseError("MPQArchive::closeToReadOnly(): Error closing archive: " + _path);
++        }
++    }
++
++    // _handle = nullptr;
++
++    if (!SFileOpenArchive(_path.c_str(), 0, MPQ_OPEN_NO_LISTFILE | STREAM_FLAG_READ_ONLY, &_handle))
++    {
++        auto error = GetLastError();
++        throw Exceptions::Archive::ArchiveOpenError("Error opening archive: " + _path);
++    }
++    // don't need to read listfile again, should be added when adding files in writeFile()
++
++    return true;
++}
++
++std::uint64_t MPQArchive::getFileSize(HANDLE file_handle) const
++{
++  assert(file_handle);
++  return SFileGetFileSize(file_handle, nullptr);
++}
++
++bool MPQArchive::exists(Listfile::FileKey const& file_key, Locale locale) const
++{
++  assert(file_key.hasFilepath());
++  return SFileHasFile(_handle, ClientData::normalizeFilenameWoW(file_key.filepath()).c_str());
++}
++
++MPQArchive::~MPQArchive()
++{
++  if (_handle)
++    SFileCloseArchive(_handle);
+ }
+\ No newline at end of file
+-- 
+2.51.0.windows.1
+

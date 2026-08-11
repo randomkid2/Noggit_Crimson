@@ -1,5 +1,38 @@
 # Feature recon — ten map-making features
 
+> [!important] Point-in-time research note. Most of this has since been built.
+>
+> This was a read-only survey taken **before** the map-making work started, to find out what
+> already existed in the tree so that nothing got built twice. It is kept because the `file:line`
+> citations and the "this already exists" findings are still useful for anyone working in these
+> areas — **not** because it describes outstanding work.
+>
+> Seven of the ten have shipped since. The "Now" column below is current; the prose after it is
+> the original survey text, left as written. Where the two disagree, the table is right.
+
+| # | Feature | Original verdict | Now |
+|---|---|---|---|
+| 1 | Scatter brush | **Already exists in Lua.** `scripts/prop_placer.lua` | Lua version still the only one. A C++ version was not built. The undo defect the survey found *was* fixed. |
+| 2 | Auto-texture by slope/height | Genuinely new rule layer; alpha write path already built | **Built** — Tools ▸ Automatic Texturing |
+| 3 | UID collision repair | **Detection *and* repair already run.** Only reporting is missing | **Built** — Assist ▸ UID collision report |
+| 4 | ADT seam stitching | **Height stitching already done and in the menu.** Alpha missing | Unchanged. Alpha-map stitching still does not exist. |
+| 5 | Missing asset report | Existence API already exists and is used in 9 places | **Built** — Assist ▸ Report missing assets |
+| 6 | WDL generation | **Already fully implemented, with a menu item.** Build nothing | Unchanged, still inherited upstream code |
+| 7 | game_tele from bookmarks | Built. `GameTeleBuilder` + Assist menu action | Unchanged |
+| 8 | Waypoint editor | Logic layer done and tested; UI only | **Still UI-only.** No waypoint editor exists in the tree. |
+| 9 | Erosion brush | No erosion exists, but every *part* does. One new kernel | **Built** — `ErosionTool` / `ErosionKernel`, thermal (angle-of-repose) |
+| 10 | Vertex-colour AO baking | One pure function + a hook into `VertexPainterTool` | **Built** — Tools ▸ Bake Ambient Occlusion |
+
+Two more shipped that this survey never considered, because they are not map-making features:
+**Ground Effect Sets** (Tools menu) and **Client ▸ Patch Client**.
+
+None of the shipped tools above has had its *output* visually signed off; see the Status table in
+[`../README.md`](../README.md).
+
+---
+
+*Original survey text follows, unedited.*
+
 Read-only reconnaissance over the whole tree, one pass per feature, every claim cited to
 `file:line`. Recorded because the headline result is *how much already exists*: three features are
 wholly or mostly implemented already, and every remaining one is smaller than it looks because the
@@ -7,19 +40,6 @@ machinery underneath is built.
 
 **Do not start any of these without reading its row first.** The expensive mistake here is building
 something that is already in the Editor menu.
-
-| # | Feature | Size | Verdict |
-|---|---|---|---|
-| 1 | Scatter brush | small | **Already exists in Lua.** `scripts/prop_placer.lua` |
-| 2 | Auto-texture by slope/height | medium | Genuinely new rule layer; alpha write path already built |
-| 3 | UID collision repair | small | **Detection *and* repair already run.** Only reporting is missing |
-| 4 | ADT seam stitching | small | **Height stitching already done and in the menu.** Alpha missing |
-| 5 | Missing asset report | medium | Existence API already exists and is used in 9 places |
-| 6 | WDL generation | — | **Already fully implemented, with a menu item.** Build nothing |
-| 7 | game_tele from bookmarks | done | Built. `GameTeleBuilder` + Assist menu action |
-| 8 | Waypoint editor | medium | Logic layer done and tested; UI only |
-| 9 | Erosion brush | small | No erosion exists, but every *part* does. One new kernel |
-| 10 | Vertex-colour AO baking | medium | One pure function + a hook into `VertexPainterTool` |
 
 ## The three that are already built
 

@@ -1,12 +1,32 @@
-# Milestones
+# Milestones — historical planning record
 
-Each milestone is gated: write a plan against the brief below, get it approved, then implement.
-No implementation code before an approved plan.
+> [!important] This is a historical document, not a status page.
+>
+> It records the milestone briefs this fork was planned against and the evidence pasted as each
+> piece landed, in the order it happened. **Individual sections below were written at a point in
+> time and were accurate then; several have since been overtaken.** Where a section's figures or
+> scope disagree with the summary immediately below, the summary is the current one.
+>
+> For what the project does and what is actually verified today, read
+> [`../README.md`](../README.md) — specifically its Status table. For how the code is shaped and
+> why, read [`design-notes.md`](design-notes.md).
+>
+> The planning process it describes was real: each milestone was gated on a written plan, and
+> every definition of done required **pasted evidence** rather than an assertion that something
+> built. That standard is why the sections below read the way they do.
 
-Every definition of done requires **pasted evidence**. "Builds clean" without compiler output
-is not a completed milestone.
+## Current status — supersedes the per-milestone notes below
 
-## Status
+Measured on this tree, and the figures here are the ones to trust:
+
+```
+test cases:    422 |    417 passed | 5 skipped
+assertions: 276964 | 276964 passed
+```
+
+`ctest -LE needs-database` reports `100% tests passed, 0 tests failed out of 33`. The five skips
+are the live-database cases with no credentials in the environment; that is the correct result,
+not a regression.
 
 | | Milestone | State |
 |---|---|---|
@@ -14,22 +34,27 @@ is not a completed milestone.
 | — | Dev database live and seeded, 29/29 assertions | **done** (2026-07-30) |
 | M0a | Capability model + test harness | **done** |
 | M0b | Live introspector + connection layer | **done** |
-| M0c | QSettings adapter | **done and compiled** — links into `noggit.exe` |
-| M0c | UID migration off the old `connect()` | remaining |
+| M0c | QSettings adapter | **done** — links into `noggit.exe` |
+| M0c | UID migration off the old `connect()` | **remaining** |
 | M1 | Tile math + spawn query (logic) | **done** |
-| M1 | Spawn overlay rendering | **built** — awaits the screenshot and the `noggit_ro` run |
-| M2 | Changeset emission (logic) | **done** — staging UI remaining |
-| M3 | Waypoint path model + emission | **done** — visual editor remaining |
-| M4 | Chunk transform plan (translate + rotate) | **done** — terrain side remaining |
-| M5 | Doctor, archive/recovery, coordinate round-trip | **done** — UI surface remaining |
+| M1 | Spawn overlay rendering | **done and confirmed in the editor** — still awaits the screenshot and the `noggit_ro` read-only proof, so the definition of done is not formally met |
+| M2 | Changeset emission + staging UI | **done** — `DatabaseSpawnPanel`, `SpawnTilePicker`. Never applied twice against a real server. |
+| M3 | Waypoint path model + emission | **done** — **no visual editor exists**; there is no waypoint UI in the tree |
+| M4 | Chunk transform plan (translate + rotate) | **done** — **terrain half not built** |
+| M5 | Doctor, archive/recovery, coordinate round-trip | **done** — `DoctorReport` renders, but **no dialog surfaces it** |
 
-**220 test cases, 3098 assertions.** Qt 5.15.2 is installed (via `aqtinstall`, no Qt account
-needed), `noggit.exe` builds with `-DUSE_SQL=ON`, and all 17 database translation units link into
-it.
+Beyond the original M0–M5 plan, two things shipped that these briefs do not describe:
 
-Everything remaining is UI and rendering: wiring the tested logic layer into `MapView`'s render
-path, ghost placement, the pending-changes panel, the waypoint visual editor, the terrain half of
-the chunk mover, and a Doctor dialog over `DoctorReport::render()`.
+- **Client ▸ Patch Client** — MPQ patch building with a referenced-asset dependency walk. The
+  briefs below list this as explicitly out of scope; that is no longer true. See
+  [Scope changes since the briefs were written](#scope-changes-since-the-briefs-were-written).
+- **The map-making tools** — ground effect set editor, automatic texturing, thermal erosion, AO
+  baking, alpha-map integrity, missing-asset and UID-collision reports. These came out of
+  [`feature-recon.md`](feature-recon.md), not out of the database plan.
+
+Still genuinely outstanding: the waypoint visual editor, the terrain half of the chunk mover, a
+Doctor dialog over `DoctorReport::render()`, the UID migration off the old `connect()`, and the
+`noggit_ro` read-only demonstration.
 
 ### M1 rendering — next steps, in order
 
@@ -471,10 +496,21 @@ M0 capability layer, because another TDB or an AzerothCore target may reintroduc
 - A deleted changeset is recoverable from backup.
 - A round-tripped coordinate returns to the same tile and position within float precision.
 
+## Scope changes since the briefs were written
+
+**Client-side MPQ patch building was out of scope and is now built.** The brief below reasoned
+that AtlasForge's `patch-Z.MPQ` model had no analog here because the server-side equivalent is the
+emitted `.sql` changeset. That reasoning holds for *spawn* data and is unchanged — but it does not
+cover the client-side assets Noggit was already editing, and those still have to reach the client
+somehow. **Client ▸ Patch Client** now writes the project folder, plus the assets its terrain
+references, into an MPQ patch. It requires `patches/0001`; see
+[`setup.md`](setup.md#applying-patches0001) and the `ATTRIBUTION.md` change table.
+
+The rest of the original out-of-scope list stands.
+
 ## Explicitly out of scope
 
-- Client-side MPQ patch building. AtlasForge's `patch-Z.MPQ` model has no analog here; the
-  server-side equivalent is the emitted `.sql` changeset.
+- ~~Client-side MPQ patch building.~~ **Built** — see above.
 - Custom WMO embedded-doodad (`MODD`/`MODN`) editing — a client-asset concern, and Noggit
   already places WMOs in ADTs.
 - Anything touching `TaxiPath.dbc` / `TaxiPathNode.dbc` — DBC-driven, not world-DB data.
