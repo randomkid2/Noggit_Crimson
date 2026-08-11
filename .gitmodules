@@ -4,6 +4,12 @@
 [submodule "src/external/blizzard-archive-library"]
 	path = src/external/blizzard-archive-library
 	url = https://gitlab.com/T1ti/blizzard-archive-library.git
+	# The recorded commit is deliberately the last PUBLIC one. patches/0001 carries a required
+	# fix that cannot be pushed upstream, so a local checkout that has applied it sits ahead of
+	# what this repo records. ignore = all keeps `git add -A` and `git status` from silently
+	# re-recording that local commit -- a pointer no remote has makes `git submodule update`
+	# fail for every clone, which has already happened twice.
+	ignore = all
 [submodule "cmake"]
 	path = cmake
 	url = https://gitlab.com/T1ti/build-dependencies.git
