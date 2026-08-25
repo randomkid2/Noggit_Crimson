@@ -76,6 +76,14 @@ namespace Noggit::Ui::Widget
     // from the text.
     constexpr int ROW_HINT_WIDTH = 125;
 
+    // The accent, spelled out here because a QGraphicsColorizeEffect is not reachable from a
+    // style sheet: this is one of the handful of colours in the application that a theme change
+    // cannot move, so it has to be moved by hand or the star stays on the old accent while
+    // everything around it goes gold. Measured against the surfaces a row can sit on:
+    // 8.77:1 on bg.void #100E0B (the list well), 6.86:1 on bg.panel #292621 and 7.95:1 on the
+    // bg.alt #1D1916 of an alternating row -- all far over the 3:1 floor for a graphical mark.
+    constexpr QRgb ACCENT_GOLD = qRgb(0xDF, 0xA5, 0x2E);
+
     // DEFAULTS, set through QFont rather than an inline style sheet -- a style sheet on the
     // widget itself outranks the application sheet, which is how the previous revision pinned
     // every row to 12px/10px no matter which theme was loaded. A theme's font-size still wins
@@ -140,7 +148,9 @@ namespace Noggit::Ui::Widget
     applyFont (_map_name, TITLE_PIXEL_SIZE, true);
     makeElastic (_map_name);
 
-    _map_id = new QLabel(QString::number(_map_data.map_id), this);
+    // "530" on its own is a number with no noun. The row has the width for the word and the
+    // detail header on the right-hand pane says the same thing the same way, so the two agree.
+    _map_id = new QLabel(tr("Map %1").arg(_map_data.map_id), this);
     _map_id->setObjectName("project-information");
     applyFont (_map_id, INFORMATION_PIXEL_SIZE, false);
     makeElastic (_map_id);
@@ -180,9 +190,11 @@ namespace Noggit::Ui::Widget
       _map_pinned_label->setToolTip(tr("Pinned map"));
 
       // Font Awesome renders the glyph as a monochrome pixmap and the icon engine takes no
-      // colour, so the gold has to be applied to the rendered pixels. Same effect as before.
+      // colour, so the gold has to be applied to the rendered pixels. This is one of the few
+      // colours in the application a style sheet cannot reach, which is exactly why it has to be
+      // carried forward by hand when the accent moves -- see ACCENT_GOLD above.
       auto const colour = new QGraphicsColorizeEffect(_map_pinned_label);
-      colour->setColor(QColor(224, 163, 62));
+      colour->setColor(QColor(ACCENT_GOLD));
       colour->setStrength(1.0f);
       _map_pinned_label->setGraphicsEffect(colour);
 

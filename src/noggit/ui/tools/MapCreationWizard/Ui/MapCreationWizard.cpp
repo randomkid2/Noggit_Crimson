@@ -7,6 +7,7 @@
 #include <noggit/Log.h>
 #include <noggit/MapChunk.h>
 #include <noggit/project/CurrentProject.hpp>
+#include <noggit/ui/DesignTokens.hpp>
 #include <noggit/ui/FontAwesome.hpp>
 #include <noggit/ui/minimap_widget.hpp>
 #include <noggit/ui/widgets/Vector3Widget.hpp>
@@ -434,14 +435,31 @@ void MapCreationWizard::createWmoEntryTab()
     // An outline rather than the solid red fill this used to be: the fill swallowed the path the
     // user was trying to read at the exact moment they needed to read it. The colour matches
     // CrimsonSlate's QLineEdit[state="error"] so the themed and unthemed cases agree.
-    static char const* const ERROR_OUTLINE_QSS ("QLineEdit { border: 1px solid #E0574B; }");
+    //
+    // TWO CUES, NOT ONE, AND THE SECOND IS LOAD-BEARING. This used to be the border alone, in
+    // the old crimson #E0574B -- which was 1.024:1 in luminance and 4.0 degrees in hue from the
+    // old ACCENT, i.e. the same colour the theme used for focus. An invalid field and a focused
+    // field were therefore indistinguishable, and the field the user was typing in was almost
+    // always both. Under the Ironforge palette the accent is gold and BAD is 34.5 degrees away,
+    // but gold and WARN are only 15.8 degrees apart, so the design system makes the separation
+    // structural instead of chromatic and that rule is absolute: an invalid input takes a
+    // coloured border AND a tinted fill, a FOCUSED input takes a border and NEVER a tint.
+    //
+    // Measured on the authored tint: TEXT_HI on FILL_ERROR is 15.04:1 and body text 12.91:1, so
+    // the path stays fully readable inside the tint; the BAD edge against its own fill is
+    // 5.61:1, so the border reads as a border rather than bleeding into it.
+    static QString const ERROR_OUTLINE_QSS
+      ( QStringLiteral ("QLineEdit { border: 1px solid %1; background-color: %2; }")
+          .arg (QString::fromLatin1 (Noggit::Ui::Design::BAD))
+          .arg (QString::fromLatin1 (Noggit::Ui::Design::FILL_ERROR))
+      );
 
     auto const set_path_state = [](QLineEdit* field, QVariant const& state)
     {
       bool const is_error (state.toString() == QStringLiteral("error"));
 
       field->setProperty("state", state);
-      field->setStyleSheet (is_error ? QString::fromLatin1 (ERROR_OUTLINE_QSS) : QString());
+      field->setStyleSheet (is_error ? ERROR_OUTLINE_QSS : QString());
       field->setToolTip ( is_error
                         ? QStringLiteral ("This WMO could not be loaded. Check the path.")
                         : QString()

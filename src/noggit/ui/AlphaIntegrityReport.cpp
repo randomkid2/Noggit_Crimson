@@ -1,6 +1,7 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
 #include <noggit/ui/AlphaIntegrityReport.hpp>
+#include <noggit/ui/DesignTokens.hpp>
 #include <noggit/ui/WaitCursor.hpp>
 
 #include <noggit/Action.hpp>
@@ -603,7 +604,20 @@ void AlphaIntegrityReport::updateCoverageLabel()
   if (!_scan_has_run)
   {
     // The third state, and the one a plain "0 problems" would silently impersonate.
-    _coverage_label->setStyleSheet("font-style: italic;");
+    //
+    // A widget-level style sheet is the right mechanism for all four of these and not a theme
+    // leak: the emphasis is per-STATE, the sheet has no selector that can see which of the four
+    // branches this label is in, and font-weight set through QFont would lose to the theme's
+    // own `QLabel { font-weight: 400 }` rank. Each declaration names only the properties it
+    // needs, so background, size and family stay with the theme.
+    //
+    // TEXT_DIM is the design system's secondary rank -- 7.58:1 on BG_PANEL, which is what this
+    // dialog's body is. The state is "no claim has been made yet", so it should read as quieter
+    // than a result, not louder.
+    _coverage_label->setStyleSheet
+      ( QStringLiteral ("font-style: italic; color: %1;")
+          .arg (QString::fromLatin1 (Noggit::Ui::Design::TEXT_DIM))
+      );
     _coverage_label->setText
       ("No scan has been run yet. Nothing below describes this map -- choose a scope and press Scan.");
     return;
@@ -615,7 +629,16 @@ void AlphaIntegrityReport::updateCoverageLabel()
   {
     // Loudest state in the window on purpose. Every count below is zero, "no problems" is
     // literally true, and it means nothing whatsoever.
-    _coverage_label->setStyleSheet("font-weight: bold;");
+    //
+    // WARN, and this is the design system's status rank rather than decoration: the scan
+    // completed but covered nothing, which is exactly "proceeded, but not as you think". WARN
+    // measures 5.30:1 on BG_PANEL, over the 4.5:1 floor, and status colours are permitted as
+    // TEXT on BG_VOID and BG_PANEL. Weight AND colour together, because the design system's
+    // rule is that a warning is never carried by hue alone.
+    _coverage_label->setStyleSheet
+      ( QStringLiteral ("font-weight: bold; color: %1;")
+          .arg (QString::fromLatin1 (Noggit::Ui::Design::WARN))
+      );
     headline = "NOTHING WAS CHECKED. No chunk in scope carried a stored alpha layer, so this scan "
                "makes no claim about the map at all.";
   }

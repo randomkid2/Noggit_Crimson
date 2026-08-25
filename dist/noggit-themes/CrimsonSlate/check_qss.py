@@ -481,9 +481,20 @@ def main(path, image_root, moc_root=None):
     print()
 
     if palette:
-        base = dict(palette).get('bg.base')
+        by_name = dict(palette)
+
+        # The token names moved when the palette was rebuilt (bg.base ->
+        # bg.panel, bg.sunken -> bg.void). Both spellings are accepted so this
+        # checker still reports on an older sheet.
+        def token(*names):
+            for n in names:
+                if n in by_name:
+                    return n, by_name[n]
+            return None, None
+
+        panel_name, base = token('bg.panel', 'bg.base')
         if base:
-            print('-- contrast against bg.base %s (WCAG 2.1) --' % base)
+            print('-- contrast against %s %s (WCAG 2.1) --' % (panel_name, base))
             for tok, hexv in palette:
                 if tok.startswith('bg.'):
                     continue
@@ -493,13 +504,26 @@ def main(path, image_root, moc_root=None):
                 print('   %-13s %s  %5.2f:1  %s' % (tok, hexv, r, verdict))
             print()
 
-        accent = dict(palette).get('accent')
-        sunken = dict(palette).get('bg.sunken')
-        hi = dict(palette).get('text.hi')
-        if accent and sunken and hi:
+        # Every text rank against every surface, which is the table the sheet
+        # header quotes and the only way to catch a rank that fails on one
+        # surface while passing on the one it was authored against.
+        surfaces = [(t, h) for t, h in palette if t.startswith('bg.')]
+        ranks = [(t, h) for t, h in palette if t.startswith('text')]
+        if surfaces and ranks:
+            print('-- every text rank on every surface --')
+            print('   %-10s' % '' + ''.join('%11s' % t for t, _ in surfaces))
+            for t, h in ranks:
+                print('   %-10s' % t
+                      + ''.join('%11.2f' % ratio(h, s) for _, s in surfaces))
+            print()
+
+        accent = by_name.get('accent')
+        ink_name, ink = token('ink', 'bg.void', 'bg.sunken')
+        hi = by_name.get('text.hi')
+        if accent and ink and hi:
             print('-- ink on a filled accent --')
             print('   %-13s %s  %5.2f:1  (the sheet uses this one)'
-                  % ('bg.sunken', sunken, ratio(sunken, accent)))
+                  % (ink_name, ink, ratio(ink, accent)))
             print('   %-13s %s  %5.2f:1  (rejected)'
                   % ('text.hi', hi, ratio(hi, accent)))
             print()

@@ -1084,10 +1084,28 @@ namespace Noggit
       static QFont interfaceFont (int pixel_size);
     };
 
+    // The probe widget whose polished palette decides the pen for every Font Awesome icon --
+    // see iconProbePalette below for the mechanism.
+    //
+    // IT CARRIED THE WRONG NAME. It set accessibleName("FontNoggitButtonStyle"), which is the
+    // OTHER engine's probe, so the two icon sets shared one selector and every theme's
+    //     QWidget[accessibleName="FontAwesomeButtonStyle"]
+    // rule was dead: no widget in the process ever wore that name for it to match. The bug is
+    // invisible today only because all three shipped sheets happen to write identical colours
+    // into both selectors, so the pen resolved to the right value through the wrong rule. It
+    // stops being invisible the moment a sheet wants the two sets to differ -- which is a
+    // reasonable thing for a theme to want, since one set is the general-purpose icon font and
+    // the other is Noggit's own tool glyphs.
+    //
+    // Corrected here rather than by deleting the unreachable rules, because the rules are what
+    // the design system documents and the name is what was wrong. Verified appearance-neutral
+    // before changing it: CrimsonSlate, Dark and Dark/editing_theme each give
+    // FontAwesomeButtonStyle and FontNoggitButtonStyle byte-identical `color` and `:disabled`
+    // declarations, so no icon in any shipped theme changes colour as a result.
     class FontAwesomeButtonStyle : public QWidget
     {
     public:
-        FontAwesomeButtonStyle(QWidget* parent = nullptr) : QWidget(parent) { setAccessibleName("FontNoggitButtonStyle");};
+        FontAwesomeButtonStyle(QWidget* parent = nullptr) : QWidget(parent) { setAccessibleName("FontAwesomeButtonStyle");};
     };
 
     class FontAwesomeIcon : public QIcon
@@ -1139,28 +1157,61 @@ namespace Noggit
     // Disabled, and QIcon::Off is what Qt passes for an unchecked button AND for a button that
     // is not checkable at all; the engine cannot tell those apart.
     //
-    // Sharing with Disabled is what shipped and is what is kept. Measured over each theme's own
-    // button surface (WCAG contrast, sRGB), with the alternative in the last column:
+    // Sharing with Disabled is what shipped and is what is kept. Sharing with Normal is not
+    // even a contrast win everywhere: in the Dark sheet it would take unchecked icons from
+    // 10.25:1 down to 3.65:1, because that theme's pair is a hue change (blue = checked) rather
+    // than a brightness ramp, and it pays for that by deleting the only checked marker Dark has
+    // on a QPushButton, which it does not style `:checked` at all. An icon you cannot tell is
+    // active is worse than one that is dim, so the state marker wins.
     //
-    //                        checked        unchecked      unchecked if Off shared Normal
-    //   Dark  QToolButton    #5281B9 4.03   #D7D7D7 10.25  #5281B9 3.65
-    //   Dark  QPushButton    #5281B9 3.32   #D7D7D7  9.31  #5281B9 3.32
-    //   McNet                 #C6CCD6 8.30   #59606B  2.11  #C6CCD6 8.30
-    //   CrimsonSlate          #C6CCD6 9.39   #59606B  2.39  #C6CCD6 9.39
+    // THE FOUR STATES UNDER THE CRIMSONSLATE PALETTE, measured (WCAG 2.1, sRGB) on the surfaces
+    // an icon button in this application actually lands on. Every figure below came out of a
+    // standalone Qt 5.15.2 probe that runs iconPenHoverColor itself, not out of arithmetic done
+    // by hand; the previous version of this table stated two hover pens the code never produced.
     //
-    // Sharing with Normal is not even a contrast win everywhere: in Dark it takes unchecked
-    // icons from 10.25 down to 3.65, because that theme's pair is a hue change (blue = checked)
-    // rather than a brightness ramp. It is a win only in the two sheets that wrote a true
-    // disabled grey into the `:disabled` slot -- and it pays for that by deleting the only
-    // checked marker Dark and McNet have on a QPushButton, neither styling `QPushButton:checked`
-    // at all. An icon you cannot tell is active is worse than one that is dim, so the state
-    // marker wins.
+    //                    pen        void   panel  raised overlay hover  alt
+    //   OFF/unchecked    #BFB7AA    9.70   7.58   5.92   4.72    3.65   8.79   (text.dim)
+    //   OFF + HOVER      #DCD7D0   13.47  10.53   8.22   6.55    5.07  12.20   (derived)
+    //   CHECKED          #DFA52E    8.77   6.86   5.36   4.27    3.30   7.95   (accent)
+    //   CHECKED + HOVER  #EDCE8C   12.67   9.91   7.74   6.16    4.77  11.48   (derived)
     //
-    // The dim unchecked icons in the last two sheets are real and are a THEME defect this
-    // function cannot reach: the `:disabled` colour on the two Font*ButtonStyle selectors is
-    // read as "unchecked", so writing a genuine disabled grey there dims every non-checkable
-    // icon button in the application. One colour in the sheet fixes it -- CrimsonSlate's own
-    // text.dim #8A93A0 measures 4.88:1 on the panel and 4.33:1 on a floating bar.
+    // Every one of those clears the 3:1 non-text floor for a graphical object, and the two
+    // resting pens clear 4.5:1 everywhere except the BG_HOVER plate, which by design carries
+    // only icons and short labels and is never a resting surface.
+    //
+    // DISABLED is the OFF pen composited at ICON_DISABLED_OPACITY: #5F5A53 on bg.void (2.82:1),
+    // #6D675F on bg.panel (2.70:1), #777168 on bg.raised (2.44:1), #7F7970 on bg.overlay
+    // (2.17:1), #888279 on bg.hover (1.91:1), #666059 on bg.alt (2.81:1). Deliberately below
+    // threshold -- that IS the disabled signal, and WCAG 2.1 SC 1.4.3 exempts inactive
+    // components.
+    //
+    // WHY text.dim AND NOT text FOR THE OFF PEN. Restraint, and it is measurable. Thirty-six
+    // icons are on screen at once (16 tools plus 20 view toggles). At `text` #E4DFD7 every one
+    // of them would sit at 7.07:1 on bg.overlay and the two bars would be the loudest thing in
+    // the application; at text.dim they sit at 4.72:1, read as calm chrome, and the checked ones
+    // pop gold. An accent only means something if the neutrals are quiet. (This paragraph used
+    // to carry a second reason -- that lifting `text` for the hover pen clipped to pure #FFFFFF.
+    // That was true of the old QColor::lighter derivation and is no longer true of the one below,
+    // so it has been removed rather than left standing as a justification that no longer holds.)
+    //
+    // OFF -> CHECKED, WHAT ACTUALLY SEPARATES THEM. Measured, all four numbers from the probe:
+    // the luminance step is 1.106:1, the hue difference is 3.20 degrees, the HSV saturations are
+    // 28 and 202 out of 255, and CIEDE2000 between the two pens is 22.20. An earlier version of
+    // this comment claimed the pair was "105 degrees in hue" apart. It is not; 3.20 degrees is
+    // the number, both pens are the same warm gold hue, and that justification was void.
+    //
+    // The separation is real all the same, and it is CHROMA, not hue and not luminance. In
+    // CIELAB the off pen is L*74.7 C*7.6 -- a near-neutral warm grey -- and the checked pen is
+    // L*71.4 C*66.2, an 8.7x chroma step at essentially equal lightness. dE2000 22.20 is roughly
+    // 10x the ~2.3 just-noticeable difference, so the two are plainly different colours; on
+    // hover the pair still measures 17.15. Neither pen can move to buy luminance separation
+    // instead: the off pen is already at 3.65:1 on bg.hover and cannot go down without breaking
+    // the 3:1 graphical floor, and the checked pen is the brand accent.
+    //
+    // The pen is still not asked to carry the state alone -- the component spec drops the checked
+    // button's face from bg.overlay to bg.void, two whole surface levels and a measured 2.057:1,
+    // and adds a 2px or 3px accent rule. That matters for a red-green deficient user, for whom
+    // a chroma step in the yellow band is the weakest of the three cues.
     inline QColor iconPenColor (QPalette const& palette, QIcon::Mode mode, QIcon::State state)
     {
       QPalette::ColorGroup const group
@@ -1179,13 +1230,54 @@ namespace Noggit
     // no state that was distinguishable before becomes less so, and the checked/unchecked pair
     // is untouched. iconPenColor's group selection is deliberately not reachable from here.
     //
-    // 125 rather than a fixed token because a theme is free to invert: on a light sheet the
-    // resolved colour is dark and lighter() still moves it away from the surface it sits on.
+    //! The share of the remaining lightness headroom a hover consumes. Not a colour, because the
+    //! resting pen is whatever the active sheet authored and this has to work for all of them.
+    double const ICON_HOVER_LIGHTNESS_HEADROOM = 0.45;
+
+    //! Moves a resolved pen AWAY from the surface it sits on, in HSL, preserving hue and
+    //! saturation. A light pen (a dark sheet) is lifted through 45% of the headroom left above
+    //! it; a dark pen (a light sheet) is taken 45% of the way down towards black.
+    //!
+    //! THIS REPLACES QColor::lighter(125), WHICH DID NOT DO WHAT IT WAS DOCUMENTED TO DO.
+    //! Measured against real Qt 5.15.2, not reasoned about -- lighter() scales the HSV VALUE
+    //! channel and, on overflow, spends the excess by DESTROYING SATURATION:
+    //!
+    //!   pen                       lighter(125) gave   this gives
+    //!   #BFB7AA text.dim          #EFE5D4             #DCD7D0
+    //!   #DFA52E accent            #FFC44C  sat 202->179 and the red channel clipped at 255
+    //!                                                 #EDCE8C  hue and HSL saturation intact
+    //!   #D7D7D7 the Dark sheet    #FFFFFF  pure white, which the palette forbids
+    //!                                                 #E9E9E9
+    //!
+    //! and the claim that it "still moves a dark pen away from the surface on a light sheet" is
+    //! backwards. Probed: pen #303030 on a #F2F0EC sheet is 11.60:1 at rest; lighter(125) takes
+    //! it to #3C3C3C and 9.69:1 -- TOWARDS the surface, contrast lost. This function takes it to
+    //! #1A1A1A and 15.29:1, which is what the comment always claimed and never delivered.
+    //!
+    //! Measured hover steps under CrimsonSlate: unchecked 1.388:1, checked 1.444:1. Under the
+    //! legacy Dark sheet: unchecked 1.185:1 (it starts at #D7D7D7, so there is little headroom
+    //! left to spend), checked 2.021:1. Nothing clips at either end, because l + (1-l)*k <= 1
+    //! and l*(1-k) >= 0 for every k in [0,1].
+    inline QColor iconPenHoverColor (QColor const& base)
+    {
+      qreal hue, saturation, lightness, alpha;
+      base.getHslF (&hue, &saturation, &lightness, &alpha);
+
+      qreal const lifted
+        ( lightness >= 0.5 ? lightness + (1.0 - lightness) * ICON_HOVER_LIGHTNESS_HEADROOM
+                           : lightness * (1.0 - ICON_HOVER_LIGHTNESS_HEADROOM)
+        );
+
+      // getHslF reports -1 for an achromatic colour, which fromHslF rejects; saturation is 0
+      // there, so any hue reconstructs the same grey.
+      return QColor::fromHslF (hue < 0.0 ? 0.0 : hue, saturation, lifted, alpha);
+    }
+
     inline QColor iconPenColorForMode (QPalette const& palette, QIcon::Mode mode, QIcon::State state)
     {
       QColor const base (iconPenColor (palette, mode, state));
 
-      return mode == QIcon::Active ? base.lighter (125) : base;
+      return mode == QIcon::Active ? iconPenHoverColor (base) : base;
     }
 
     // A genuinely disabled icon is drawn at this opacity on top of its resolved colour. It

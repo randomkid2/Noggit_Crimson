@@ -1,6 +1,7 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
 #include <noggit/ui/AutoTextureDialog.hpp>
+#include <noggit/ui/DesignTokens.hpp>
 
 #include <noggit/Action.hpp>
 #include <noggit/ActionManager.hpp>
@@ -332,7 +333,20 @@ AutoTextureDialog::AutoTextureDialog(MapView* map_view, QWidget* parent)
   _report = new QPlainTextEdit(this);
   _report->setReadOnly(true);
   _report->setLineWrapMode(QPlainTextEdit::NoWrap);
-  _report->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+  // THE MONOSPACE RANK, from the design system's type scale: MONO_FAMILY at FONT_MONO with the
+  // regular weight. This was QFontDatabase::systemFont(FixedFont), which on Windows resolves to
+  // Courier New at the system's POINT size -- a different family and a different size from the
+  // Lua log and the SQL changeset preview, so the editor's three monospaced readouts were three
+  // different typefaces. StyleHint Monospace is the fallback chain for a machine without
+  // Consolas: it is not redistributed with this repository (see ATTRIBUTION.md) and must be
+  // resolved by name from the system font database, exactly as the interface family is.
+  {
+    QFont report_font (QString::fromLatin1(Design::MONO_FAMILY));
+    report_font.setStyleHint(QFont::Monospace, QFont::PreferMatch);
+    report_font.setPixelSize(Design::FONT_MONO);
+    report_font.setWeight(Design::WEIGHT_REGULAR);
+    _report->setFont(report_font);
+  }
   _report->setPlainText("Add rules, choose a scope, then press Preview.");
   right->addWidget(_report, 1);
 

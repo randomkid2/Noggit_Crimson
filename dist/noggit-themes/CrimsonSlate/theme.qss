@@ -1,14 +1,18 @@
 /* ===========================================================================
- * Crimson Slate -- a dark theme for Noggit Crimson
+ * Crimson Slate -- the "Ironforge" palette for Noggit Crimson
  * ---------------------------------------------------------------------------
  * Part of Noggit Crimson, licensed under the GNU General Public License v3.
+ *
+ * The DIRECTORY is still CrimsonSlate and must stay that way: QSettings stores
+ * the chosen theme by folder name, so renaming it silently resets every
+ * existing user to the default theme. Crimson survives in the palette, but as
+ * the DESTRUCTIVE rank only -- the accent is gold.
  *
  * Drop-in theme: the settings panel lists any directory under themes/ that
  * contains a theme.qss. Every url() below is written as
  *   themes/CrimsonSlate/images/<file>.png
  * and must stay that way -- the loader rewrites that exact prefix so the paths
  * resolve against the executable directory rather than the working directory.
- * Do not make them absolute and do not drop the "themes/" segment.
  *
  * The 34 PNGs in images/ are generated, not drawn. Edit the colour constants at
  * the top of generate_icons.py (the same tokens as below), then run
@@ -22,230 +26,290 @@
  * ===========================================================================
  * PALETTE. Change these values and nothing else to retheme.
  * ===========================================================================
- * These are the same values the application QPalette is built from in
- * ApplicationEntry.cpp. If you change one here, change it there too, or an
- * unstyled widget will not match a styled one.
+ * The same values build the application QPalette in ApplicationEntry.cpp. If
+ * you change one here, change it there too, or an unstyled widget will not
+ * match a styled one.
  *
- * SURFACES -- the app gets LIGHTER as it comes towards you. Chrome recedes,
- * controls sit forward. This is the opposite of the previous revision, which
- * sank inputs into near-black wells; that model made every panel read as a
- * grid of holes.
- *   bg.sunken     #16181D   3D viewport surround, dock gutters, splitters,
- *                           menu bar, status bar, scroll troughs
- *   bg.base       #1B1E24   panel and dialog background, dock title bars
- *   bg.raised     #22262E   inputs, buttons, list rows, item views, the tool
- *                           strip, header sections
- *   bg.overlay    #2A2F38   hover, menus, tool tips, combo popups, the
- *                           floating bars drawn over the render
+ * HUE DIRECTION. Every neutral is built at hue 30-40 degrees and 6-19%
+ * saturation -- warm slate, not photocopier grey. Blizzard chrome is warm iron
+ * and old leather lit by gold. Gold is also the only accent that stays fully
+ * saturated at the lightness this palette needs; a blue at the same luminance
+ * washes out (#6FAEDC is only 61% saturated at L=0.388), so the choice is
+ * arithmetic, not taste.
+ *
+ * SURFACES -- the depth model. The window RECEDES, the panel is the working
+ * plane, things you PRESS come forward, fields you TYPE INTO go back to the
+ * floor, and things that FLOAT come furthest forward.
+ *   bg.void       #100E0B   3D viewport surround, dock gutters, splitters,
+ *                           scroll troughs, menu bar, status bar, the title
+ *                           bar band -- AND the inside of every input well and
+ *                           item view. Also the ink drawn on an accent fill.
+ *   bg.alt        #1D1916   alternating item-view row; focused input fill
+ *   bg.panel      #292621   dock bodies, dialog bodies, tab panes, sections
+ *   bg.raised     #3C3732   buttons, header sections, spin/combo sub-buttons,
+ *                           docked toolbars
+ *   bg.overlay    #4A4640   menus, combo popups, tool tips, the floating cards
+ *                           drawn over the 3D view
+ *   bg.hover      #5B5651   hover plate on an overlay surface. ICONS AND SHORT
+ *                           LABELS ONLY -- body text on it is 5.47:1 and this
+ *                           sheet's floor for prose is 7:1.
+ *
+ * ADJACENT STEP           MEASURED     PREVIOUS SHEET
+ *   void    -> panel      1.279:1      1.064
+ *   panel   -> raised     1.281:1      1.101
+ *   raised  -> overlay    1.256:1      1.128
+ *   overlay -> hover      1.292:1      n/a
+ *   void    -> alt        1.104:1      deliberately subtle; zebra only
+ *   TOTAL void -> overlay 2.057:1      1.321
+ * The old sheet's four "levels" spanned 1.321:1 in total, which is one surface
+ * wearing four names -- that is why the application read as a wireframe of
+ * itself. This ladder is 2.5x longer in ratio terms.
+ *
+ * WHY THE TOP SURFACE IS NOT LIGHTER: the 7:1 body-text floor binds.
+ * Body text #E4DFD7 on bg.overlay #4A4640 is 7.065:1; on #4B4741 it is 6.955 and
+ * fails. Every surface above bg.overlay breaks menu legibility, which is why
+ * bg.hover carries icons and short labels and never prose.
  *
  * STROKES
- *   stroke        #343A45   visible borders: inputs, buttons, popup edges
- *   stroke.soft   #262B33   hairline dividers: section rules, panel seams
+ *   stroke.soft   #403B35   hairline seams INSIDE a panel or a void well.
+ *                           1.36:1 on panel, 1.74:1 on void. NOT permitted on
+ *                           bg.raised (1.06:1) or bg.overlay (1.18:1).
+ *   stroke        #565049   the visible 1px border of a control. 1.89:1 on
+ *                           panel, 1.48:1 on raised, 2.42:1 on void.
+ *   stroke.hi     #746D64   hover outline, and every separator drawn ON
+ *                           bg.overlay. 1.84:1 there, where stroke is 1.18:1.
  *
- * TEXT (contrast measured against bg.base #1B1E24, see check_qss.py output)
- *   text.hi       #EDF0F4   headings, active values, the focused control
- *   text          #C6CCD6   body -- default label and control text
- *   text.mid      #A0A8B4   the secondary rank WHERE THE SURFACE IS LIGHTER
- *                           THAN bg.base. text.dim is a 5.38:1 colour on the
- *                           panel and that is where its number was taken, but
- *                           it is only 4.33:1 on bg.overlay and 4.35:1 on the
- *                           selected project row -- both below the 4.5 floor,
- *                           on the two surfaces this sheet lifts TOWARDS the
- *                           reader. text.mid is text.dim raised until the
- *                           worst of those clears the floor with margin: the
- *                           minimum anywhere it is used is 4.92:1 (secondary
- *                           project text on a hovered selected row) and the
- *                           maximum 7.40:1 (an unchecked icon on bg.sunken).
- *                           It carries exactly two roles, both listed at their
- *                           rules: the UNCHECKED icon pen, and secondary text
- *                           on the project row. text.dim keeps every caption
- *                           that sits on bg.base or bg.sunken.
- *   text.dim      #8A93A0   section titles, dock titles, captions, units
- *   text.off      #59606B   disabled; deliberately sub-threshold, that IS the
- *                           disabled signal. Sub-threshold for TEXT on a panel
- *                           is not sub-threshold for a 1px STROKE on a
- *                           floating bar -- it measures 2.12:1 there -- so it
- *                           does a second job as the edge of the HOVER plate on
- *                           the view-toggle bar. Different role, different
- *                           threshold; it is still never used as body text.
+ * TEXT, four ranks. Measured void / panel / raised / overlay:
+ *   text.hi       #F3F0E9   16.93  13.24  10.34   8.23   headings, dock
+ *                           titles, values being edited, hovered labels
+ *   text          #E4DFD7   14.53  11.36   8.87   7.07   body -- the default
+ *   text.dim      #BFB7AA    9.70   7.58   5.92   4.72   captions, units,
+ *                           header sections, the unchecked icon pen
+ *   text.off      #7F786A    4.40   3.44   2.69   2.14   disabled only
+ * Body clears 7:1 on every surface it is permitted on. text.dim clears 4.5:1
+ * on all four and is barred from bg.hover (3.65:1). text.off is the one
+ * documented exception: WCAG 2.1 SC 1.4.3 exempts inactive components and
+ * sub-threshold IS the disabled signal. It is never used for enabled text.
  *
- * ACCENT -- warm red. Selection, focus, checked state, the active tool. It is
- * the only saturated colour in the chrome; if it shows up anywhere that is not
- * "this is the thing you are acting on", that is a bug.
- *   accent        #E8543F
- *   accent.dim    #B33F2E   pressed
- *
- * Accent carries two DIFFERENT marks and the distinction is the whole of the
- * view-toggle bar's design, so it is stated here rather than only there.
- *
- * As a FILL it means ONE checked thing out of a set: the exclusive left tool
- * strip, a selected tab, a selected row -- "the thing you are acting on".
- *
- * As a 2px RULE along one edge it means a LATCHED TOGGLE is on. That is the
- * mark the tab bar already uses (border-bottom) and the tool strip already
- * uses (border-left), and it is what the view bar gets. The bar holds 20
- * independent visibility switches (counted from the live add_tool_icon calls
- * in ViewToolbar.cpp's second constructor; the 21st button on it is the
- * history QPushButton, which is not checkable), of which 8 are ON at startup
- * -- read off the BoolToggleProperty initialisers in MapView.h, not guessed.
- * Filling 8 of 20 faces with accent would be noise; ruling 8 of 20 bottom
- * edges is not, and it is the only mark in this palette that clears the 3:1
- * floor for a graphical state indicator on a bg.overlay bar (3.69:1, where
- * the best available NEUTRAL is 2.12:1). See the floating-bar block near the
- * end of this file for the per-state numbers.
+ * ACCENT -- ONE meaning: "the thing you are acting on". Selection, focus,
+ * checked, the active tool, slider fill, progress, the tab underline, the dock
+ * title rule. The accent moved from crimson to gold because crimson cannot be
+ * both "selected" and "will destroy your data": the old accent #E8543F and the
+ * old error #E0574B measured 1.024:1 apart in luminance and 4.0 degrees in
+ * hue, i.e. the same colour, which is why red meant eight different things.
+ * Gold against crimson is 34.5 degrees and 1.389:1.
+ *   accent        #DFA52E   ink on it 8.77:1 (crimson managed only 4.88:1)
+ *   accent.hi     #F0BA4A   hover on a FILLED accent surface; ink 10.85:1
+ *   accent.press  #B8801F   pressed on a FILLED accent surface; ink 5.64:1
+ *   ink           #100E0B   = bg.void. The text drawn ON any accent or status
+ *                           fill. Note the press no longer has to invert to
+ *                           light text the way crimson did.
+ * Accent as a 2px/3px RULE on bg.overlay is 4.27:1, over the 3:1 floor for a
+ * non-text state indicator. Washes: 0.24 alpha for "selected", 0.34 for
+ * "selected AND hovered", permitted on bg.panel and darker only.
  *
  * STATUS -- meaning, never decoration.
- *   ok            #4FB477
- *   warn          #E0A33E
- *   bad           #E0574B
- *   bad.wash      #2A1B1B   destructive button at rest, fill
- *   bad.edge      #5E2C29   destructive button at rest, border
- *   bad.press     #B8443A   destructive button pressed
+ *   ok            #4FB87E   panel 6.09  raised 4.76  ink-on-it 7.79
+ *   warn          #E2803C   panel 5.30  raised 4.14  ink-on-it 6.78
+ *   bad           #E86F62   panel 4.94  raised 3.86  ink-on-it 6.31
+ *   info          #6FAEDC   panel 6.29  raised 4.91  ink-on-it 8.04
+ *   bad.press     #C85F54   the destructive button pressed; ink on it 4.79.
+ *                           It was #C4574A, which put ink at 4.41 -- under the
+ *                           4.5 floor on an ENABLED control, so the disabled
+ *                           exemption did not apply. Lightened until ink
+ *                           clears, and it is still 1.32:1 below bad, so the
+ *                           press step is as legible as it was.
+ *   close.hover   #A75047   title-bar close, hovered. See below: that one
+ *                           glyph is a polish-time PNG and cannot restate
+ *                           itself per pseudo-state, so it stays text.hi and
+ *                           the FILL is what moved. text.hi on it 4.75:1, and
+ *                           the 40px plate reads 3.56:1 against the bg.void
+ *                           bar it sits in.
+ *   close.press   #974840   title-bar close, pressed. text.hi 5.56:1, plate
+ *                           vs bar 3.04:1, and 1.17:1 below close.hover.
+ *   bad.tint      #2E1C17   bad at 14% alpha over bg.void -- an error field
+ *   warn.tint     #2D1E12   warn at 14% alpha over bg.void -- a warning field
+ * Status colours are TEXT only on bg.void and bg.panel, where all four clear
+ * 4.5:1. On bg.raised and bg.overlay they appear as 1px borders and as fills,
+ * where the floor is 3:1 and all four clear it.
+ * SEPARATION: accent vs bad 34.5 deg / 1.389:1, vs ok 106.5 deg, vs info
+ * 165.0 deg. HONEST LIMIT: accent vs warn is 15.8 deg and warn vs bad is 18.8.
+ * Four warm signals cannot all be 30 degrees apart. warn and bad are an
+ * escalation pair and adjacency is the traffic-light convention. accent vs
+ * warn is disambiguated by FORM and this is a hard rule: a warn or error input
+ * takes a coloured border AND a 14%-alpha tinted fill; a focused input takes a
+ * 1px accent border and NEVER a tint. Never rely on the hue alone.
  *
- * DERIVED. Three values the token table does not name but the sheet needs.
- * They are computed from the tokens above, not invented alongside them.
- *   stroke.hi     #454C59   hover outline; halfway stroke -> text.off. It has a
- *                           second job as the HOVER FILL on the floating bars,
- *                           whose own surface is bg.overlay: it is the only
- *                           neutral that separates from that bar by more than a
- *                           rounding error -- 1.56:1 against #2A2F38, where the
- *                           surface immediately above it is 1.18:1 and the one
- *                           below 1.13:1, both invisible at icon-button size.
- *   accent.hi     #EE6852   hover on a FILLED accent surface. accent.dim is
- *                           the press, and a filled control needs a lift as
- *                           well as a drop or hovering it is indistinguishable
- *                           from resting on it. Ink stays legible on it --
- *                           4.88:1 on accent, 5.70:1 here -- which is the
- *                           constraint that fixed the value: any lighter and
- *                           it stops reading as the same colour, any darker
- *                           and the hover is not a lift.
- *   bg.alt        #1E222A   alternating item-view row; halfway base -> raised
- *   ink           #16181D   text drawn ON an accent fill. 4.85:1 against
- *                           #E8543F; #EDF0F4 would be 3.19:1 and fail.
- *   ramp.hi       #F2F2F2   top of the texture-level value ramp
- *   ramp.lo       #101216   bottom of the same ramp
+ * The texture-level slider value ramp, the one gradient in this file:
+ *   ramp.hi       #F2F0EC   top of the ramp
+ *   ramp.lo       #0C0A08   bottom of the ramp
+ * Neither is pure white or pure black -- the editor has to stay legible beside
+ * a sunlit viewport, and pure endpoints bloom against it.
  *
- * And three alpha washes, which have no hex form because they must composite
- * over whatever surface they land on:
- *   accent.wash   rgba(232, 84, 63, 0.16)   quiet -- reserved
- *   accent.wash+  rgba(232, 84, 63, 0.26)   selected row, menu item, checked
- *   accent.wash++ rgba(232, 84, 63, 0.36)   selected AND hovered, text select
- * Measured on Qt 5.15.2: the fourth argument of rgba() accepts a 0-1 float, a
- * 0-255 integer AND a percentage, all three, and 0.26 renders identically to
- * 66 and to 26%. The float form is used here because it reads as a fraction.
- *
- * ===========================================================================
- * METRICS. One height, one radius, no gradients.
- * ===========================================================================
- *   control height   26px for QPushButton, QLineEdit, QComboBox and
- *                    QAbstractSpinBox. Getting there needs a DIFFERENT
- *                    vertical padding per class -- measured, not guessed; the
- *                    numbers and the reason are on the input rule below.
- *   corner radius     4px, everywhere, with one documented exception:
- *                    top-level popups (QMenu, combo popup, tool tip) stay
- *                    square, because a rounded top-level leaves the corner
- *                    pixels showing the desktop behind the window on Windows.
- *   accent bar        2px, border-left on the tool strip, border-bottom on
- *                    tabs. Reserved as transparent in every other state so
- *                    that becoming :checked does not reflow the icon.
- *   hairline          1px stroke.soft. These are structure, not decoration --
- *                    with the surfaces this close together they are the only
- *                    thing separating a panel from its neighbour.
- *
- * There is exactly ONE qlineargradient in this file, on the texture brush
- * level slider, where the groove is a black-to-white value ramp and therefore
- * data rather than chrome. No control is shaded.
+ * WORKED ARITHMETIC, so the method can be checked. Relative luminance: per
+ * channel c/255, then c<=0.04045 ? c/12.92 : ((c+0.055)/1.055)^2.4;
+ * L = 0.2126R + 0.7152G + 0.0722B. Ratio = (Lmax+0.05)/(Lmin+0.05).
+ *   1) text #E4DFD7 -> L = 0.741756 ;  bg.panel #292621 -> L = 0.019674
+ *      (0.741756+0.05)/(0.019674+0.05)                        = 11.3636:1
+ *   2) bg.overlay #4A4640 -> L = 0.062063
+ *      (0.741756+0.05)/(0.062063+0.05)                        =  7.0653:1
+ *   3) ink #100E0B -> L = 0.004484 ;  accent #DFA52E -> L = 0.427955
+ *      (0.427955+0.05)/(0.004484+0.05)                        =  8.7724:1
  *
  * ===========================================================================
+ * METRICS. One height, three radii, no gradients but the one that is data.
+ * ===========================================================================
+ *   control height   28px for QPushButton, QLineEdit, QComboBox and
+ *                    QAbstractSpinBox. Three classes need three different
+ *                    vertical paddings to land there. MEASURED on Qt 5.15.2,
+ *                    Fusion, Segoe UI 12px, 1px border, with a standalone
+ *                    probe that reports sizeHint and the laid-out height:
+ *                      QPushButton   min-height 16 + padding 5px 12px   -> 28
+ *                      QLineEdit     padding 1px 8px, min-height 16     -> 28
+ *                      QAbstractSpinBox as QLineEdit, padding-right 20  -> 28
+ *                      QComboBox     h = 19 + vpad_top + vpad_bottom, so
+ *                                    padding 5px 24px 4px 10px          -> 28
+ *                    The combo formula in the previous revision of this sheet
+ *                    said h = 23 + vpad and would have produced 24px, one
+ *                    control four pixels shorter than the button beside it.
+ *                    Re-measure before changing any padding here.
+ *   radii            CONTROL 5px (buttons, inputs, combos, spin boxes, tool
+ *                    buttons, a tab hover plate)
+ *                    CONTAINER 8px (item-view wells, floating cards, the
+ *                    project list, the minimap holder, text edits)
+ *                    POPUP 0px (QMenu, combo popup, QToolTip) -- a rounded
+ *                    top-level leaves the corner pixels showing the desktop on
+ *                    Windows. Unchanged and correct.
+ *                    INDICATOR 4px check box, 8px radio and slider handle
+ *                    (half of 16 = a circle), 4px scrollbar thumb.
+ *   border widths    1px on every control and hairline. 2px for a tab
+ *                    underline and a list row leading rule. 3px for the rule
+ *                    that marks the active tool and the dock title. Every
+ *                    state RESERVES its rule as transparent, so becoming
+ *                    :checked never reflows anything.
+ *   QSS min-/max-    size the CONTENT rect, not the box. Measured: a
+ *                    QToolButton with min-height 34px, padding 4px and a 1px
+ *                    border lays out at 44px, not 34. The 34x34 tool buttons
+ *                    below therefore declare the content size that ARRIVES at
+ *                    34 after padding and borders, and the arithmetic is shown
+ *                    at each rule.
+ *
+ * SPACING. One 4px scale; every margin, padding and gap comes from it.
+ *   s0  2px   a state rule reserve; icon-to-label inside a compact control
+ *   s1  4px   inside a UNIT: label to its control, chip to chip, grid gutters
+ *   s2  6px   vertical padding in a dense row (menu item, list row, tab)
+ *   s3  8px   DEFAULT gap between sibling controls; horizontal input padding;
+ *             check box indicator to its text
+ *   s4 12px   panel side margins; horizontal button padding; control to rule
+ *   s5 16px   between SECTIONS in a panel; dialog content margins
+ *   s6 24px   between major regions; dialog outer margins
+ *   s7 32px   the column gutter on the project-selection window
+ * Use the smallest step that still separates two things that are not part of
+ * the same unit. Never an odd number; never a step that is not on this list.
+ *
  * TYPE SCALE. Family is Segoe UI; nothing is bundled (see ATTRIBUTION.md).
- *   13/600  text.hi   dialog and window titles
- *   12/400  text      default control and label text  <- the global size
- *   12/600  text.hi   values that are being edited, active tab
- *   11/600  text.dim  section titles, dock titles, header sections
- *   11/400  text.dim  status bar, captions, units
- *   12 mono           QPlainTextEdit / QTextEdit (reports, Lua log, SQL)
- *
- * Qt QSS has NO text-transform and NO letter-spacing. Section titles are
- * therefore whatever case the .ui file typed; they are not upper-cased here
- * and cannot be. If they should read as small caps, the strings have to change
- * in the forms.
+ * Qt QSS has NO text-transform and NO letter-spacing, so every rank is
+ * separable by SIZE and WEIGHT alone and colour only reinforces. No rank
+ * shares both a size and a weight with any other.
+ *   15/600 text.hi   window titles, the frameless title bar label
+ *   14/700 text.hi   QDockWidget::title -- the app answer to "which tool am I
+ *                    in", so it out-ranks every heading inside the panel
+ *   13/700 text.hi   section headings: QGroupBox::title, QToolBox::tab,
+ *                    ads--CDockWidgetTab
+ *   12/400 text      the global default: labels, check boxes, buttons, tabs,
+ *                    menu items
+ *   12/600 text.hi   values: QLabel[state="value"], the selected tab, the
+ *                    contents of an input, the viewport overlay label
+ *   11/400 text.dim  secondary: captions, units, ranges, the status bar own
+ *                    transient showMessage text
+ *   11/700 text.dim  QHeaderView::section
+ *   12 mono          QTextEdit / QPlainTextEdit -- reports, the Lua log, the
+ *                    SQL changeset preview. Consolas; tabular figures matter.
+ * GLOBAL SIZE STAYS 12px, which is what Qt 9pt Windows default resolves to at
+ * 96 dpi, so the base does not resize and INTERFACE_FONT_PIXEL_SIZE in
+ * ApplicationEntry.cpp is unchanged.
+ * MEASURED LINE BOXES (QFontMetrics, Segoe UI, standalone probe): 11px -> 13,
+ * 12px -> 15, 13px -> 17, 14px -> 19, 15px -> 20, 17px -> 23. Weight does not
+ * change any of them. The two rules that had to move for the new sizes are
+ * called out at QGroupBox and QDockWidget::title; nothing else reflows.
  *
  * ---------------------------------------------------------------------------
  * The Font Awesome icon font is NOT shipped with this fork. Nothing in this
- * sheet fixes a control's size to a glyph, no state is signalled by an icon
+ * sheet fixes a control size to a glyph, no state is signalled by an icon
  * alone, and the frameless title bar buttons get real PNGs via qproperty-icon
  * below -- so the window controls stay identifiable with no icon font at all.
  *
  * ---------------------------------------------------------------------------
  * NOT REACHABLE FROM QSS -- for whoever wires the 3D side up in C++. Recorded
- * here so the viewport and the chrome stay one design.
- *   viewport.active     #F0A030   active object outline
- *   viewport.select     #E8632A   selected object outline
- *   spawn.creature      #3FD0A4   spawn.gameobject   #B98BE8
- *   waypoint.node/line  #FFC145   (line at 60% alpha)
- *   chunk.ghost         #E8543F   db.dirty  #E0A33E   db.deleted #E0574B @40%
- *   layer budget 1-2    #4FB477 @25%   3  #E0A33E @30%   4  #E0574B @35%
+ * here so the viewport and the chrome stay one design. The accent moved, so
+ * these move with it or the viewport still looks crimson.
+ *   viewport.active     #DFA52E   accent -- the thing you are acting on
+ *   viewport.select     #F0BA4A   accent.hi
+ *   spawn.creature      #4FB87E   spawn.gameobject   #A98BE8
+ *   waypoint.node/line  #DFA52E   (line at 60% alpha)
+ *   chunk.ghost         #DFA52E   db.dirty  #E2803C   db.deleted #E86F62 @40%
+ *   layer budget 1-2    #4FB87E @25%   3  #E2803C @30%   4  #E86F62 @35%
  * ======================================================================== */
 
 
 /* ---------------------------------------------------------------- global -- */
 
 QWidget {
-	background-color: #1B1E24;
-	color: #C6CCD6;
+	background-color: #292621;
+	color: #E4DFD7;
 	border: none;
 	font-family: "Segoe UI";
 	font-size: 12px;
 	outline: 0;
-	selection-background-color: rgba(232, 84, 63, 0.26);
-	selection-color: #EDF0F4;
+	selection-background-color: rgba(223, 165, 46, 0.34);
+	selection-color: #F3F0E9;
 }
 
 QWidget:disabled {
-	color: #59606B;
+	color: #7F786A;
 }
 
 QDialog {
-	background-color: #1B1E24;
+	background-color: #292621;
 }
 
 QMessageBox {
-	background-color: #1B1E24;
+	background-color: #292621;
 }
 
 QMessageBox QLabel {
-	color: #C6CCD6;
+	color: #E4DFD7;
 	font-size: 12px;
 }
 
 QLabel {
 	background: transparent;
-	color: #C6CCD6;
+	color: #E4DFD7;
 	padding: 1px 0px;
 }
 
 QLabel:disabled {
-	color: #59606B;
+	color: #7F786A;
 }
 
-/* Hyperlinks are one of the very few non-interaction uses of the accent. */
+/* A hyperlink is information, not an action, so it takes info and not the
+   accent -- the accent means "the thing you are acting on" and nothing else.
+   info on bg.panel is 6.29:1. */
 QLabel[openExternalLinks="true"] {
-	color: #E8543F;
+	color: #6FAEDC;
 }
 
 /* QFrame is a base class, so a bare QFrame rule would repaint every scroll
-   area, tree, list and text edit in the app -- that is the seam the old Dark
-   theme had. Only the two line shapes are targeted here. If your Qt build does
-   not match enum-valued property selectors these two rules are simply ignored
-   and separators stay as they are today. */
+   area, tree, list and text edit in the app. Only the two line shapes are
+   targeted here. */
 QFrame[frameShape="4"] {
-	background-color: #262B33;
+	background-color: #403B35;
 	border: none;
 	max-height: 1px;
 }
 
 QFrame[frameShape="5"] {
-	background-color: #262B33;
+	background-color: #403B35;
 	border: none;
 	max-width: 1px;
 }
@@ -253,20 +317,21 @@ QFrame[frameShape="5"] {
 
 /* ------------------------------------------------- window, docks, gutters -- */
 
+/* The window recedes. bg.void is the floor everything else sits on and it is
+   what surrounds the 3D viewport: 2.057:1 below the floating cards drawn over
+   the render, so a card never washes out against snowy Dun Morogh. */
 QMainWindow {
-	background-color: #16181D;
+	background-color: #100E0B;
 }
 
-/* The dock resize grips. Unstyled these are drawn by Fusion and are the
-   lightest thing on screen. */
 QMainWindow::separator {
-	background-color: #16181D;
+	background-color: #100E0B;
 	width: 4px;
 	height: 4px;
 }
 
 QMainWindow::separator:hover {
-	background-color: #E8543F;
+	background-color: #3C3732;
 }
 
 QSplitter {
@@ -275,7 +340,7 @@ QSplitter {
 }
 
 QSplitter::handle {
-	background-color: #16181D;
+	background-color: #100E0B;
 }
 
 QSplitter::handle:horizontal {
@@ -287,47 +352,45 @@ QSplitter::handle:vertical {
 }
 
 QSplitter::handle:hover {
-	background-color: #2A2F38;
+	background-color: #3C3732;
 }
 
 QSplitter::handle:pressed {
-	background-color: #E8543F;
+	background-color: #DFA52E;
 }
 
 QDockWidget {
-	background-color: #1B1E24;
-	color: #8A93A0;
-	font-size: 11px;
-	font-weight: 600;
+	background-color: #292621;
+	color: #F3F0E9;
+	font-size: 14px;
+	font-weight: 700;
 	border: none;
 	titlebar-close-icon: url(themes/CrimsonSlate/images/icon_close.png);
 	titlebar-normal-icon: url(themes/CrimsonSlate/images/icon_restore.png);
 }
 
-/* Dock titles are chrome, not content: same surface as the panel they head,
-   separated by a hairline rather than by being a lighter slab.
+/* MapView retitles this dock from the active tool on every mode change, so
+   this line is the application answer to "which tool am I in" and it has to
+   out-rank every heading inside the panel: 14/700 text.hi at 13.24:1 against
+   the panel, against 13/700 for a section heading and 12/400 for a label.
 
-   They are NOT the same rank as a section heading, though, and until now they
-   were drawn in the same 11/600 text.dim as every QGroupBox title inside the
-   panel. The tool dock retitles itself to the active tool on every mode change
-   (MapView sets the dock's window title from the tool's name), so this line is
-   the app's answer to "which tool am I in" -- it has to out-rank the headings
-   below it or it reads as one more divider. 13/600 text.hi plus the 2px accent
-   bar, which is the same mark the exclusive tool strip uses, and for the same
-   reason: this is the thing you are acting on.
+   The rule is on the LEFT because a dock title is a horizontal band whose left
+   edge is where the eye starts, and a bottom rule would collide with the
+   hairline separating the title from the panel.
 
-   The bar is on the LEFT because a dock title is a horizontal band whose left
-   edge is where the eye starts; a bottom bar here would collide with the
-   hairline that already separates the title from the panel. */
+   REFLOW: the size went 13px -> 14px, whose line box measures 19px against 17.
+   Padding drops from 8px/7px to 7px/6px in the same edit, so the bar stays
+   19+7+6 = 32 plus the hairline, the height it has always been, and no dock
+   moves. */
 QDockWidget::title {
-	background-color: #1B1E24;
-	color: #EDF0F4;
+	background-color: #292621;
+	color: #F3F0E9;
 	border: none;
-	border-left: 2px solid #E8543F;
-	border-bottom: 1px solid #262B33;
-	padding: 8px 8px 7px 10px;
-	font-size: 13px;
-	font-weight: 600;
+	border-left: 3px solid #DFA52E;
+	border-bottom: 1px solid #565049;
+	padding: 7px 8px 6px 10px;
+	font-size: 14px;
+	font-weight: 700;
 	text-align: left;
 }
 
@@ -335,98 +398,113 @@ QDockWidget::close-button,
 QDockWidget::float-button {
 	background: transparent;
 	border: none;
-	border-radius: 4px;
-	width: 20px;
-	height: 20px;
+	border-radius: 5px;
+	width: 22px;
+	height: 22px;
 	padding: 0px;
 	icon-size: 12px;
 }
 
 QDockWidget::close-button:hover,
 QDockWidget::float-button:hover {
-	background-color: #2A2F38;
+	background-color: #3C3732;
 }
 
 QDockWidget::close-button:pressed,
 QDockWidget::float-button:pressed {
-	background-color: #B33F2E;
+	background-color: #100E0B;
 }
 
 
 /* ------------------------------------------------------- menus, menu bar -- */
 
+/* The menu bar is part of the window frame, so it sits on bg.void. A selected
+   item therefore LIFTS to bg.raised (1.281:1) -- the bar is already the floor
+   and there is nothing below it to recess into. */
 QMenuBar {
-	background-color: #16181D;
+	background-color: #100E0B;
 	border: none;
-	border-bottom: 1px solid #262B33;
-	padding: 3px 6px;
+	border-bottom: 1px solid #403B35;
+	padding: 3px 8px;
 	spacing: 2px;
 }
 
 QMenuBar::item {
 	background: transparent;
-	color: #C6CCD6;
-	padding: 5px 10px;
-	margin: 1px 1px;
+	color: #E4DFD7;
+	padding: 6px 10px;
+	margin: 0px 0px;
 	border: none;
-	border-radius: 4px;
+	border-radius: 5px;
 }
 
 QMenuBar::item:selected {
-	background-color: #2A2F38;
-	color: #EDF0F4;
+	background-color: #3C3732;
+	color: #F3F0E9;
 }
 
+/* The menu is open: accent at 0.24 over bg.void composites to #423213, a
+   1.558:1 plate, with text.hi on it at 10.87:1. */
 QMenuBar::item:pressed {
-	background-color: rgba(232, 84, 63, 0.26);
-	color: #EDF0F4;
+	background-color: rgba(223, 165, 46, 0.24);
+	color: #F3F0E9;
 }
 
 QMenuBar::item:disabled {
-	color: #59606B;
+	color: #7F786A;
 }
 
 /* Square corners on purpose: a rounded top-level popup leaves the corner
    pixels showing whatever is behind the window on Windows. */
 QMenu {
-	background-color: #2A2F38;
-	color: #C6CCD6;
-	border: 1px solid #343A45;
+	background-color: #4A4640;
+	color: #E4DFD7;
+	border: 1px solid #746D64;
 	border-radius: 0px;
-	padding: 5px 3px;
+	padding: 5px 4px;
 }
 
 QMenu::item {
 	background: transparent;
-	color: #C6CCD6;
-	padding: 6px 28px 6px 28px;
-	margin: 1px 2px;
+	color: #E4DFD7;
+	padding: 6px 30px 6px 30px;
+	margin: 1px 3px;
 	border: none;
-	border-radius: 4px;
+	border-radius: 5px;
 }
 
 /* A menu item has no :hover -- Qt marks the item under the cursor :selected --
-   so the wash has to carry both meanings here. */
+   so this one rule carries both meanings.
+
+   SELECTION HERE RECESSES rather than tinting, and that is measured rather
+   than stylistic: no accent alpha over bg.overlay keeps body text at 7:1
+   (0.16 alpha gives 5.49:1, 0.24 gives 4.81:1). Dropping to bg.raised gives
+   body text 8.87:1, and the 2px accent left rule reads at 5.36:1 against it.
+   This is the one surface in the sheet where selection goes DOWN. */
 QMenu::item:selected {
-	background-color: rgba(232, 84, 63, 0.26);
-	color: #EDF0F4;
+	background-color: #3C3732;
+	color: #F3F0E9;
+	border-left: 2px solid #DFA52E;
+	padding-left: 28px;
 }
 
 QMenu::item:disabled {
 	background: transparent;
-	color: #59606B;
+	color: #7F786A;
 }
 
+/* stroke.hi, not stroke: on bg.overlay stroke measures 1.18:1 and is simply
+   not there. stroke.hi is 1.84:1. */
 QMenu::separator {
 	height: 1px;
-	background-color: #343A45;
+	background-color: #746D64;
 	margin: 5px 12px;
 }
 
 QMenu::indicator {
 	width: 14px;
 	height: 14px;
-	left: 8px;
+	left: 9px;
 }
 
 QMenu::indicator:non-exclusive:checked,
@@ -443,7 +521,7 @@ QMenu::right-arrow {
 	image: url(themes/CrimsonSlate/images/right_arrow.png);
 	width: 5px;
 	height: 8px;
-	margin-right: 9px;
+	margin-right: 10px;
 }
 
 QMenu::right-arrow:disabled {
@@ -452,27 +530,32 @@ QMenu::right-arrow:disabled {
 
 QMenu::scroller,
 QMenu::tearoff {
-	background-color: #2A2F38;
+	background-color: #4A4640;
 }
 
 
 /* --------------------------------------------------------------- toolbar -- */
 
+/* The DOCKED toolbar. bg.raised, one hairline lid. The floating cards drawn
+   over the 3D view are a different thing entirely and are styled at the end of
+   this file. */
 QToolBar {
-	background-color: #22262E;
+	background-color: #3C3732;
 	border: none;
-	border-bottom: 1px solid #262B33;
-	spacing: 2px;
+	border-bottom: 1px solid #403B35;
+	spacing: 4px;
 	padding: 4px;
+	min-height: 36px;
 }
 
 QToolBar:vertical {
 	border-bottom: none;
-	border-right: 1px solid #262B33;
+	border-right: 1px solid #403B35;
+	min-height: 0px;
 }
 
 QToolBar::separator {
-	background-color: #343A45;
+	background-color: #565049;
 	width: 1px;
 	height: 1px;
 	margin: 5px 4px;
@@ -493,40 +576,29 @@ QToolBar::handle:vertical {
 
 /* ----------------------------------------------------------- status bar -- */
 
-/* The status bar carries tile coordinates, client and server position, zone,
-   in-game time, FPS and the loaded/rendered counts. It is chrome reporting on
-   content, so it takes the recessed surface and a hairline lid.
+/* Seven readouts, every one a bare QLabel with no object name -- MapView
+   builds _status_position, _status_selection, _status_area, _status_time,
+   _status_fps, _status_culling and _status_database and hands each straight to
+   addWidget. This sheet cannot make one out-rank another; what it can do is
+   stop them running together, with a hairline before each field. QSS has no
+   :first-child, so the leftmost field also gets a leading rule; it lands
+   against the window edge and reads as part of the frame.
 
-   It carries SEVEN separate readouts, every one of them a bare QLabel with no
-   object name and no dynamic property -- MapView builds _status_position,
-   _status_selection, _status_area, _status_time, _status_fps, _status_culling
-   and _status_database and hands each straight to addWidget. There is nothing
-   in the widget tree for a selector to grab hold of, so this sheet cannot make
-   one readout out-rank another. What it CAN do is stop them running together:
+   The readouts are text on bg.void (14.53:1); the transient showMessage text
+   QStatusBar paints itself stays at 11/400 text.dim (9.70:1), so a five-second
+   "Map saved" no longer looks louder than the position.
 
-     * a hairline before each field, which turns one long sentence into seven
-       addressable slots. QSS has no :first-child, so the leftmost field also
-       gets a leading rule; it lands against the window edge where it reads as
-       part of the frame.
-     * the readouts at text (11.0:1 on bg.sunken) rather than text.dim (5.72:1),
-       because they are the content of the bar, not its caption. The transient
-       showMessage() text QStatusBar paints itself stays at text.dim, so a
-       five-second "Map saved" no longer looks louder than the position.
-
-   The per-field emphasis still needs one line of C++ each: the
-   QLabel[state="value"] rule further down is the mechanism and nothing in src/
-   calls setProperty("state", ...), so it has never fired. That rule carries an
-   attribute selector and therefore outranks the plain descendant rule below --
-   wire it up on FPS, position and the loaded/rendered counts and they lift to
-   text.hi semibold without anything here changing. Set it once at
-   construction, before the first polish, and no unpolish/polish is needed. */
+   Per-field emphasis needs one line of C++ each: QLabel[state="value"] below
+   is the mechanism and it carries an attribute selector, so it outranks the
+   plain descendant rule here. Set it once at construction on FPS, position and
+   the loaded/rendered counts and they lift to 12/600 text.hi. */
 QStatusBar {
-	background-color: #16181D;
-	color: #8A93A0;
+	background-color: #100E0B;
+	color: #BFB7AA;
 	border: none;
-	border-top: 1px solid #262B33;
+	border-top: 1px solid #403B35;
 	font-size: 11px;
-	min-height: 24px;
+	min-height: 26px;
 	padding: 0px 2px;
 }
 
@@ -535,14 +607,14 @@ QStatusBar::item {
 }
 
 QStatusBar QLabel {
-	color: #C6CCD6;
-	border-left: 1px solid #262B33;
+	color: #E4DFD7;
+	border-left: 1px solid #403B35;
 	font-size: 11px;
-	padding: 1px 10px;
+	padding: 2px 10px;
 }
 
 QStatusBar QLabel:disabled {
-	color: #59606B;
+	color: #7F786A;
 }
 
 QSizeGrip {
@@ -555,53 +627,64 @@ QSizeGrip {
 
 /* --------------------------------------------------------------- buttons -- */
 
+/* A button COMES FORWARD (bg.raised) and an input GOES BACK (bg.void). That
+   one difference is what stops "press this" and "type here" looking like the
+   same object, and it is the reason the previous sheet -- where both sat on
+   bg.raised with the same border -- read as a wireframe.
+
+   HOVER LIFTS, PRESS RECESSES. The press drops two whole surface levels to
+   bg.void, which is unmistakable against a hover that went up one.
+
+   Geometry is identical in all five states: 1px border everywhere, so nothing
+   reflows. Measured height 28px (probe: sizeHint 65x28). */
 QPushButton {
-	background-color: #22262E;
-	color: #C6CCD6;
-	border: 1px solid #343A45;
-	border-radius: 4px;
-	padding: 4px 10px;
+	background-color: #3C3732;
+	color: #E4DFD7;
+	border: 1px solid #565049;
+	border-radius: 5px;
+	padding: 5px 12px;
 	min-height: 16px;
 }
 
 QPushButton:hover {
-	background-color: #2A2F38;
-	border: 1px solid #454C59;
-	color: #EDF0F4;
+	background-color: #4A4640;
+	border: 1px solid #746D64;
+	color: #F3F0E9;
 }
 
 QPushButton:pressed {
-	background-color: #B33F2E;
-	border: 1px solid #B33F2E;
-	color: #EDF0F4;
+	background-color: #100E0B;
+	border: 1px solid #565049;
+	color: #F3F0E9;
 }
 
 QPushButton:checked {
-	background-color: rgba(232, 84, 63, 0.26);
-	border: 1px solid #E8543F;
-	color: #EDF0F4;
+	background-color: #100E0B;
+	border: 1px solid #DFA52E;
+	color: #F3F0E9;
 }
 
 QPushButton:checked:hover {
-	background-color: rgba(232, 84, 63, 0.36);
-	border: 1px solid #E8543F;
+	background-color: #1D1916;
+	border: 1px solid #DFA52E;
+	color: #F3F0E9;
 }
 
 /* Focus is a border colour change and nothing else -- no glow, no outline, no
    size change, so nothing reflows when focus moves. */
 QPushButton:focus {
-	border: 1px solid #E8543F;
+	border: 1px solid #DFA52E;
 }
 
 QPushButton:default {
-	border: 1px solid #E8543F;
-	color: #EDF0F4;
+	border: 1px solid #DFA52E;
+	color: #F3F0E9;
 }
 
 QPushButton:disabled {
-	background-color: #1B1E24;
-	color: #59606B;
-	border: 1px solid #262B33;
+	background-color: #292621;
+	color: #7F786A;
+	border: 1px solid #403B35;
 }
 
 QPushButton:flat {
@@ -610,13 +693,13 @@ QPushButton:flat {
 }
 
 QPushButton:flat:hover {
-	background-color: #2A2F38;
+	background-color: #4A4640;
 	border: 1px solid transparent;
 }
 
 QPushButton:flat:pressed {
-	background-color: #B33F2E;
-	color: #EDF0F4;
+	background-color: #100E0B;
+	color: #F3F0E9;
 }
 
 QPushButton::menu-indicator {
@@ -629,151 +712,143 @@ QPushButton::menu-indicator {
 }
 
 QDialogButtonBox QPushButton {
-	min-width: 84px;
-	padding: 4px 16px;
+	min-width: 88px;
+	padding: 5px 16px;
 }
 
 /* Destructive actions. Set from C++ with  btn->setProperty("state", "danger");
-   and, if the button already existed, style()->unpolish(btn); polish(btn); */
+   and, if the button already existed, style()->unpolish(btn); polish(btn);
+
+   THE RED IS THE EDGE, NOT THE TEXT, and that is measured: bad #E86F62 as text
+   on bg.raised is 3.86:1 and fails the body floor. As a 1px border it clears
+   the 3:1 non-text floor, and the label stays text at 8.87:1. Hover is the
+   state that commits to the fill, where ink on bad is 6.31:1.
+
+   The press used to darken to #C4574A, which put ink at 4.41:1 -- below the
+   4.5 floor, on a control that is ENABLED, so nothing exempted it. The fill
+   is now bad.press #C85F54: ink 4.79:1, still 1.32:1 darker than the hover
+   fill it steps down from, and 3.75:1 against the bg.panel dialog body. */
 QPushButton[state="danger"] {
-	background-color: #2A1B1B;
-	color: #E0574B;
-	border: 1px solid #5E2C29;
+	background-color: #3C3732;
+	color: #E4DFD7;
+	border: 1px solid #E86F62;
 }
 
 QPushButton[state="danger"]:hover {
-	background-color: #E0574B;
-	color: #16181D;
-	border: 1px solid #E0574B;
+	background-color: #E86F62;
+	color: #100E0B;
+	border: 1px solid #E86F62;
 }
 
 QPushButton[state="danger"]:pressed {
-	background-color: #B8443A;
-	color: #16181D;
+	background-color: #C85F54;
+	color: #100E0B;
+	border: 1px solid #C85F54;
 }
 
 /* The confirming action in a two-button row. Set from C++ the same way danger
    is:  btn->setProperty("state", "primary");  and unpolish/polish if the
-   button already existed.
+   button already existed. At most one per window, marking the one action the
+   window exists to perform.
 
-   It exists because "Save" and "Discard" in the settings window were the same
-   grey button in the same size beside each other, and the only thing telling
-   them apart was the word -- which is precisely the case where a filled
-   accent earns its keep. This is NOT the accent-everywhere failure the tool
-   strip has: there is at most one of these per window, and it marks the one
-   action the window exists to perform.
+   Ink on the fill, not white: #100E0B on #DFA52E is 8.77:1. Gold also removes
+   the special case crimson needed -- ink on accent.press is 5.64:1, so the
+   press no longer has to invert to light text.
 
-   Ink on the fill, not white: #16181D on #E8543F is 4.88:1 where #EDF0F4 is
-   3.18:1 and fails. That is the same choice QPalette::HighlightedText makes
-   in ApplicationEntry.cpp, so a primary button and a selected row agree.
-   Hover lifts to accent.hi #EE6852 (ink 5.70:1). Pressed drops to accent.dim
-   and flips to text.hi, 5.01:1 -- ink on accent.dim would be 3.10:1, below
-   the floor, which is why the press is the one state that inverts.
-
-   :disabled is spelled out because a bare QPushButton:disabled ties with this
-   rule on Qt specificity (one attribute against one pseudo-state, 257 each)
-   and would then be decided by document order alone. Two conditions here, so
-   it wins outright and a disabled primary is grey like everything else. */
+   :disabled is spelled out with two conditions because a bare
+   QPushButton:disabled ties with a one-attribute rule on Qt specificity (257
+   each) and would then be decided by document order alone. */
 QPushButton[state="primary"] {
-	background-color: #E8543F;
-	color: #16181D;
-	border: 1px solid #E8543F;
+	background-color: #DFA52E;
+	color: #100E0B;
+	border: 1px solid #DFA52E;
 	font-weight: 600;
 }
 
 QPushButton[state="primary"]:hover {
-	background-color: #EE6852;
-	color: #16181D;
-	border: 1px solid #EE6852;
+	background-color: #F0BA4A;
+	color: #100E0B;
+	border: 1px solid #F0BA4A;
 }
 
 QPushButton[state="primary"]:pressed {
-	background-color: #B33F2E;
-	color: #EDF0F4;
-	border: 1px solid #B33F2E;
+	background-color: #B8801F;
+	color: #100E0B;
+	border: 1px solid #B8801F;
 }
 
 QPushButton[state="primary"]:focus {
-	border: 1px solid #EDF0F4;
+	border: 1px solid #F3F0E9;
 }
 
 QPushButton[state="primary"]:disabled {
-	background-color: #1B1E24;
-	color: #59606B;
-	border: 1px solid #262B33;
+	background-color: #292621;
+	color: #7F786A;
+	border: 1px solid #403B35;
 }
 
 
 /* ----------------------------------------------------------- tool buttons -- */
 
-/* The tool strip down the left edge and the toolbar across the top. Flat, no
-   border, no box -- the ONLY thing that marks the active tool is a 2px accent
-   bar on the leading edge plus the raised hover surface. The bar is reserved
-   as transparent in every state so switching tools does not shift the icon by
-   two pixels. */
+/* The base rule for every QToolButton in the application. HOVER LIFTS, ACTIVE
+   RECESSES: the two can never be confused because they move in opposite
+   directions. On the default bg.raised surface a hover goes up to bg.overlay
+   and a checked button drops to bg.void, a 1.638:1 recess, with a 3px accent
+   leading rule at 5.36:1 and a gold glyph.
+
+   Both the 1px border and the 3px border-left are declared in every state at
+   those exact widths, so switching tools cannot reflow a bar. Only colours
+   move.
+
+   NOTE ON SPECIFICITY, carried forward and still true: an ancestor
+   pseudo-state (QToolBar:horizontal QToolButton) is parsed and silently
+   DISCARDED by Qt -- QCss::StyleSelector exposes virtuals for a node name, ids
+   and attributes but none for its pseudo-state. Scope by object name, class
+   name or attribute only. check_qss.py fails the sheet if one reappears. */
 QToolButton {
 	background: transparent;
-	color: #C6CCD6;
+	color: #E4DFD7;
 	border: 1px solid transparent;
-	border-left: 2px solid transparent;
-	border-radius: 4px;
+	border-left: 3px solid transparent;
+	border-radius: 5px;
 	padding: 4px 6px;
 	min-width: 24px;
 	min-height: 24px;
 }
 
 QToolButton:hover {
-	background-color: #2A2F38;
-	color: #EDF0F4;
-	border: 1px solid transparent;
-	border-left: 2px solid transparent;
+	background-color: #4A4640;
+	color: #F3F0E9;
+	border: 1px solid #746D64;
+	border-left: 3px solid transparent;
 }
 
 QToolButton:pressed {
-	background-color: #2A2F38;
-	border-left: 2px solid #B33F2E;
+	background-color: #B8801F;
+	color: #100E0B;
+	border: 1px solid #B8801F;
+	border-left: 3px solid #B8801F;
 }
 
-/* Checked is an accent WASH plus the bar, not bg.overlay plus the bar. Checked
-   against the running editor: bg.overlay on a bg.raised toolbar is a 1.13
-   contrast step, which at icon-button size is invisible, so the bar was left
-   carrying the whole signal -- and a 2px vertical line between two icons reads
-   as a SEPARATOR, not as state. The wash makes the button itself the mark and
-   demotes the bar to its edge.
-
-   This rule is now the EXCLUSIVE-SELECTION look: the left tool strip, whose
-   actions share one QActionGroup, so exactly one of them is checked and accent
-   means "the tool you are editing with". The independent view toggles are
-   overridden by class near the end of the file.
-
-   The obvious way to write that override would have been
-       QToolBar:horizontal QToolButton:checked
-   and it does not work. QCss::Selector::pseudoClass() reads
-   basicSelectors.last() and nothing else, and QCss::StyleSelector
-   (qcssparser_p.h:654-687) exposes virtuals for a node's name, ids and
-   attributes but NONE for its pseudo-state -- there is no hook with which an
-   ancestor's :horizontal could ever be evaluated. Qt parses the selector,
-   silently drops the ancestor pseudo, and the rule then matches every toolbar
-   in the app including this one. Ancestors may be matched by class name, by
-   #objectName or by [attribute]; never by pseudo-state. check_qss.py fails the
-   sheet if one is reintroduced. */
 QToolButton:checked {
-	background-color: rgba(232, 84, 63, 0.26);
-	color: #EDF0F4;
+	background-color: #100E0B;
+	color: #F3F0E9;
 	border: 1px solid transparent;
-	border-left: 2px solid #E8543F;
+	border-left: 3px solid #DFA52E;
 }
 
 QToolButton:checked:hover {
-	background-color: rgba(232, 84, 63, 0.36);
-	border-left: 2px solid #E8543F;
+	background-color: #1D1916;
+	color: #F3F0E9;
+	border: 1px solid #746D64;
+	border-left: 3px solid #DFA52E;
 }
 
 QToolButton:disabled {
 	background: transparent;
-	color: #59606B;
+	color: #7F786A;
 	border: 1px solid transparent;
-	border-left: 2px solid transparent;
+	border-left: 3px solid transparent;
 }
 
 QToolButton[popupMode="1"] {
@@ -783,12 +858,12 @@ QToolButton[popupMode="1"] {
 QToolButton::menu-button {
 	background: transparent;
 	border: none;
-	border-left: 1px solid #343A45;
+	border-left: 1px solid #565049;
 	width: 14px;
 }
 
 QToolButton::menu-button:hover {
-	background-color: #343A45;
+	background-color: #4A4640;
 }
 
 QToolButton::menu-arrow,
@@ -806,35 +881,38 @@ QToolButton::menu-indicator:disabled {
 
 /* ---------------------------------------------------------------- inputs -- */
 
-/* Every text-entry control is one shape: 26px tall, 4px radius, bg.raised,
-   1px stroke. Focus turns the stroke accent and does nothing else.
+/* A FIELD IS A WELL. It goes back to bg.void while a button comes forward to
+   bg.raised; that is how the two stop looking alike. 28px tall, 5px radius,
+   1px stroke at 2.42:1 against the fill, contents in text.hi at 16.93:1.
 
-   The three classes need THREE DIFFERENT vertical paddings to arrive at the
-   same 26px, because their size hints do not agree about what min-height
-   means. Measured on Qt 5.15.2, font-size 12px, 1px border:
-     QPushButton     h = min-height + 2 + 2*vpad     -> mh 16, vpad 4
-     QLineEdit       h = 26 + 2*vpad, min-height IGNORED below its own floor
-     QAbstractSpinBox  as QLineEdit                  -> vpad 0
-     QComboBox       h = 23 + vpad_top + vpad_bottom, min-height IGNORED,
-                     so an even total can only reach 25 or 27 -- the 2px/1px
-                     split below is what lands it exactly on 26.
+   Focus is TWO cues and no reflow: the fill lifts one hair to bg.alt and the
+   border turns accent (8.77:1 against the fill). A focused field is NEVER
+   tinted -- the tint is reserved for warn and error, and it is what separates
+   an orange-bordered field from a gold-bordered one when the two hues are only
+   15.8 degrees apart.
+
+   MEASURED heights (Qt 5.15.2 probe, Fusion, Segoe UI 12px, 1px border):
+     QLineEdit        padding 1px 8px, min-height 16   -> 28
+     QAbstractSpinBox as above plus padding-right 20   -> 28
+     QComboBox        h = 19 + vpad_top + vpad_bottom  -> 5px/4px lands on 28
    Change a padding here and you have changed the height; re-measure. */
 QLineEdit,
 QTextEdit,
 QPlainTextEdit,
 QAbstractSpinBox,
 QComboBox {
-	background-color: #22262E;
-	color: #EDF0F4;
-	border: 1px solid #343A45;
-	border-radius: 4px;
-	selection-background-color: rgba(232, 84, 63, 0.36);
-	selection-color: #EDF0F4;
+	background-color: #100E0B;
+	color: #F3F0E9;
+	border: 1px solid #565049;
+	border-radius: 5px;
+	font-weight: 600;
+	selection-background-color: rgba(223, 165, 46, 0.34);
+	selection-color: #F3F0E9;
 }
 
 QLineEdit,
 QAbstractSpinBox {
-	padding: 0px 8px;
+	padding: 1px 8px;
 	min-height: 16px;
 }
 
@@ -843,7 +921,7 @@ QTextEdit:hover,
 QPlainTextEdit:hover,
 QAbstractSpinBox:hover,
 QComboBox:hover {
-	border: 1px solid #454C59;
+	border: 1px solid #746D64;
 }
 
 QLineEdit:focus,
@@ -851,8 +929,8 @@ QTextEdit:focus,
 QPlainTextEdit:focus,
 QAbstractSpinBox:focus,
 QComboBox:focus {
-	background-color: #2A2F38;
-	border: 1px solid #E8543F;
+	background-color: #1D1916;
+	border: 1px solid #DFA52E;
 }
 
 QLineEdit:disabled,
@@ -860,66 +938,81 @@ QTextEdit:disabled,
 QPlainTextEdit:disabled,
 QAbstractSpinBox:disabled,
 QComboBox:disabled {
-	background-color: #1B1E24;
-	color: #59606B;
-	border: 1px solid #262B33;
+	background-color: #292621;
+	color: #7F786A;
+	border: 1px solid #403B35;
 }
 
 QLineEdit:read-only {
-	background-color: #1B1E24;
-	color: #8A93A0;
-	border: 1px solid #262B33;
+	background-color: #292621;
+	color: #BFB7AA;
+	border: 1px solid #403B35;
+	font-weight: 400;
 }
 
-/* Reports, the Lua console log and any SQL preview want tabular figures. */
+/* Reports, the Lua console log and any SQL preview want tabular figures. They
+   are containers rather than single-line controls, so they take the 8px
+   container radius and body weight. */
 QTextEdit,
 QPlainTextEdit {
 	font-family: "Consolas";
 	font-size: 12px;
+	font-weight: 400;
+	color: #E4DFD7;
+	border-radius: 8px;
 	padding: 8px;
 }
 
 /* Error and warning states on an input. Set from C++ with
-   setProperty("state", "error") / ("state", "warn") plus unpolish/polish;
-   the colour stays here, the semantics stay in the code. */
+   setProperty("state", "error") / ("state", "warn") plus unpolish/polish.
+
+   THE TINT IS LOAD-BEARING. Border alone is not enough: warn #E2803C and the
+   accent #DFA52E are 15.8 degrees apart, so a bordered-only warn field and a
+   focused field would be told apart by hue alone. The 14%-alpha fill over
+   bg.void is a difference in KIND. Composited: bad -> #2E1C17, warn ->
+   #2D1E12; the border reads 5.32:1 and 5.66:1 against its own fill and the
+   contents stay at 14.25:1 and 14.13:1. */
 QLineEdit[state="error"],
 QAbstractSpinBox[state="error"],
 QComboBox[state="error"] {
-	border: 1px solid #E0574B;
+	background-color: #2E1C17;
+	border: 1px solid #E86F62;
 }
 
 QLineEdit[state="warn"],
 QAbstractSpinBox[state="warn"],
 QComboBox[state="warn"] {
-	border: 1px solid #E0A33E;
+	background-color: #2D1E12;
+	border: 1px solid #E2803C;
 }
 
 QLabel[state="error"] {
-	color: #E0574B;
+	color: #E86F62;
 }
 
 QLabel[state="warn"] {
-	color: #E0A33E;
+	color: #E2803C;
 }
 
 QLabel[state="ok"] {
-	color: #4FB477;
+	color: #4FB87E;
 }
 
-/* A label carrying a live value -- the status bar readouts, the current radius,
-   a spawn GUID. Lifted out of the label text around it. */
+/* A label carrying a live value -- the status bar readouts, the current
+   radius, a spawn GUID. The "value" rank: 12/600 text.hi. */
 QLabel[state="value"] {
-	color: #EDF0F4;
+	color: #F3F0E9;
+	font-size: 12px;
 	font-weight: 600;
 }
 
 
 /* ------------------------------------------------------------ spin boxes -- */
 
-/* The steppers are a strip inside the field rather than two chiclets bolted to
-   it: no fill of their own until hovered, one hairline dividing them off. */
+/* The steppers are a strip inside the well rather than two chiclets bolted to
+   it: no fill of their own until hovered, one 1px divider. */
 QAbstractSpinBox {
-	padding-right: 18px;
+	padding-right: 20px;
 }
 
 QAbstractSpinBox::up-button {
@@ -927,9 +1020,9 @@ QAbstractSpinBox::up-button {
 	subcontrol-position: top right;
 	background: transparent;
 	border: none;
-	border-left: 1px solid #343A45;
-	border-top-right-radius: 3px;
-	width: 15px;
+	border-left: 1px solid #565049;
+	border-top-right-radius: 4px;
+	width: 17px;
 	margin: 1px 1px 0px 0px;
 }
 
@@ -938,26 +1031,26 @@ QAbstractSpinBox::down-button {
 	subcontrol-position: bottom right;
 	background: transparent;
 	border: none;
-	border-left: 1px solid #343A45;
-	border-bottom-right-radius: 3px;
-	width: 15px;
+	border-left: 1px solid #565049;
+	border-bottom-right-radius: 4px;
+	width: 17px;
 	margin: 0px 1px 1px 0px;
 }
 
 QAbstractSpinBox::up-button:hover,
 QAbstractSpinBox::down-button:hover {
-	background-color: #2A2F38;
+	background-color: #4A4640;
 }
 
 QAbstractSpinBox::up-button:pressed,
 QAbstractSpinBox::down-button:pressed {
-	background-color: #B33F2E;
+	background-color: #B8801F;
 }
 
 QAbstractSpinBox::up-button:disabled,
 QAbstractSpinBox::down-button:disabled {
 	background: transparent;
-	border-left: 1px solid #262B33;
+	border-left: 1px solid #403B35;
 }
 
 QAbstractSpinBox::up-arrow {
@@ -985,15 +1078,18 @@ QAbstractSpinBox::down-arrow:off {
 
 /* -------------------------------------------------------------- combo box -- */
 
-/* 2px top / 1px bottom is not a typo -- see the note on the input rule. It is
-   the only split that makes a combo exactly as tall as the button next to it. */
+/* 5px top / 4px bottom is measured, not chosen: a combo lays out at
+   19 + vpad_top + vpad_bottom, so 9px of vertical padding is the only way to
+   land on the same 28px as the button beside it. A sweep of every pair from
+   3/2 to 7/6 was run through the probe; 3/2 -- what the design note asked for
+   -- produces 24px. */
 QComboBox {
-	padding: 2px 24px 1px 8px;
+	padding: 5px 24px 4px 10px;
 	min-height: 16px;
 }
 
 QComboBox:on {
-	border: 1px solid #E8543F;
+	border: 1px solid #DFA52E;
 }
 
 QComboBox::drop-down {
@@ -1001,20 +1097,20 @@ QComboBox::drop-down {
 	subcontrol-position: top right;
 	background: transparent;
 	border: none;
-	border-left: 1px solid #343A45;
-	border-top-right-radius: 3px;
-	border-bottom-right-radius: 3px;
-	width: 18px;
+	border-left: 1px solid #565049;
+	border-top-right-radius: 4px;
+	border-bottom-right-radius: 4px;
+	width: 20px;
 	margin: 1px;
 }
 
 QComboBox::drop-down:hover {
-	background-color: #2A2F38;
+	background-color: #4A4640;
 }
 
 QComboBox::drop-down:disabled {
 	background: transparent;
-	border-left: 1px solid #262B33;
+	border-left: 1px solid #403B35;
 }
 
 QComboBox::down-arrow {
@@ -1031,30 +1127,35 @@ QComboBox::down-arrow:disabled {
 	image: url(themes/CrimsonSlate/images/down_arrow_disabled.png);
 }
 
-/* The popup is a separate top-level widget and does not inherit the combo's
-   own rule, so it has to be styled by name. */
+/* The popup is a separate top-level widget and does not inherit the combo own
+   rule, so it has to be styled by name. It is a popup: bg.overlay, stroke.hi,
+   square corners. Selection RECESSES to bg.raised for the same measured reason
+   the menu does -- no accent alpha over bg.overlay keeps body text at 7:1. */
 QComboBox QAbstractItemView {
-	background-color: #2A2F38;
-	color: #C6CCD6;
-	border: 1px solid #343A45;
+	background-color: #4A4640;
+	color: #E4DFD7;
+	border: 1px solid #746D64;
 	border-radius: 0px;
-	padding: 3px;
+	padding: 4px;
 	outline: 0;
-	selection-background-color: rgba(232, 84, 63, 0.26);
-	selection-color: #EDF0F4;
+	selection-background-color: #3C3732;
+	selection-color: #F3F0E9;
 }
 
 
 /* ------------------------------------------------- check boxes and radios -- */
 
 /* The nine-radio brush type grid is the most prominent control in the editor.
-   The indicator is a plain 16px circle on bg.raised with a stroke ring,
-   flooded accent with an ink dot when checked -- no bevel, no inner shadow,
-   nothing that needs a glyph font to be legible. */
+   The indicator is a 16px well with a 2px stroke ring, flooded accent with an
+   ink glyph when checked. All artwork is generated PNG: change the constants
+   in generate_icons.py and re-run it, never hand-draw.
+
+   Label colour follows the four ranks: text at rest, text.hi on hover and when
+   checked, text.off when disabled. */
 QCheckBox,
 QRadioButton {
 	background: transparent;
-	color: #C6CCD6;
+	color: #E4DFD7;
 	spacing: 8px;
 	padding: 3px 0px;
 	border: none;
@@ -1062,17 +1163,17 @@ QRadioButton {
 
 QCheckBox:hover,
 QRadioButton:hover {
-	color: #EDF0F4;
+	color: #F3F0E9;
 }
 
 QCheckBox:checked,
 QRadioButton:checked {
-	color: #EDF0F4;
+	color: #F3F0E9;
 }
 
 QCheckBox:disabled,
 QRadioButton:disabled {
-	color: #59606B;
+	color: #7F786A;
 }
 
 QCheckBox::indicator,
@@ -1147,41 +1248,33 @@ QRadioButton::indicator:checked:disabled {
 
 /* -------------------------------------------------------------- group box -- */
 
-/* THE BIG ONE. Stock Qt draws a group box as a bordered rectangle with a
-   centred bold underlined title, and the tool panels are nothing but group
-   boxes, so the right-hand dock reads as a stack of 1998 dialog frames. Here
-   there is no box at all: the title is a small dim caption sitting top-left in
-   the widget's own top margin, one hairline runs under it, and that hairline
-   is the only mark on screen. Everything below it is just spacing.
+/* Stock Qt draws a group box as a bordered rectangle with a centred bold
+   underlined title, and the tool panels are nothing but group boxes, so the
+   right-hand dock would read as a stack of 1998 dialog frames. Here there is
+   no box: the title is a heading in the widget own top margin, one rule runs
+   under it, and that rule is the only mark.
 
-   Mechanically: margin-top opens 20px above the frame for the title to occupy,
-   border-top paints the rule at the top of the frame -- i.e. directly under
-   the title -- and padding-bottom is the gap to the next section.
+   The rule is stroke #565049 and not stroke.soft. On bg.panel stroke.soft is
+   1.36:1 and stroke is 1.89:1, and this is the application primary structural
+   divider -- the quietest line that can still be found without knowing it is
+   there.
 
-   TOO QUIET, and both halves of the mark were at fault. The caption was
-   11/600 in text.dim, 5.38:1 against the panel, and the rule under it was
-   stroke.soft #262B33, 1.17:1 -- which is a hairline you can only find if you
-   already know it is there. Rendered under a probe and looked at rather than
-   reasoned about, "Settings" and "Type" simply did not register as headings
-   and the dock read as one undifferentiated column of controls.
-
-   The caption is now 11/700 in text (#C6CCD6, 10.34:1) and the rule is stroke
-   #343A45 (1.46:1, the same weight this sheet already gives an input border,
-   which is the quietest line in the app you can actually see). It is still a
-   caption and not a headline: 11px, still smaller than body, still ranked
-   below the 13/600 text.hi dock title above it, and the SIZE did not move, so
-   nothing in any tool panel reflows. Only weight and colour changed. */
+   REFLOW, stated so nobody is surprised: the title goes 11/700 -> 13/700, the
+   section-heading rank. Its line box measures 17px (probe: QFontMetrics, Segoe
+   UI 13px, any weight). margin-top therefore goes 20px -> 22px and the title
+   padding-bottom 6px -> 5px, so 17 + 5 = 22 fits the margin exactly. Every
+   group section grows by 2px and nothing else moves. */
 QGroupBox {
 	background: transparent;
 	border: none;
-	border-top: 1px solid #343A45;
+	border-top: 1px solid #565049;
 	border-radius: 0px;
-	margin-top: 20px;
+	margin-top: 22px;
 	margin-bottom: 4px;
-	padding: 12px 0px 14px 0px;
-	color: #8A93A0;
-	font-size: 11px;
-	font-weight: 600;
+	padding: 12px 0px 12px 0px;
+	color: #BFB7AA;
+	font-size: 13px;
+	font-weight: 700;
 	spacing: 8px;
 }
 
@@ -1189,20 +1282,20 @@ QGroupBox::title {
 	subcontrol-origin: margin;
 	subcontrol-position: top left;
 	background: transparent;
-	color: #C6CCD6;
+	color: #F3F0E9;
 	left: 0px;
-	padding: 0px 8px 6px 0px;
+	padding: 0px 8px 5px 0px;
+	font-size: 13px;
 	font-weight: 700;
 }
 
 QGroupBox::title:disabled {
-	color: #59606B;
+	color: #7F786A;
 }
 
-/* Follows the enabled rule one step down the stroke ramp, so a disabled
-   section is quieter than a live one by the same margin it always was. */
+/* A disabled section drops one step down the stroke ramp. */
 QGroupBox:disabled {
-	border-top: 1px solid #262B33;
+	border-top: 1px solid #403B35;
 }
 
 /* A group box nested inside another one gets no rule of its own, or the panel
@@ -1222,12 +1315,13 @@ QGroupBox::indicator {
 /* ------------------------------------------------------------------- tabs -- */
 
 /* No raised boxes and no pane frame: the selected tab is marked by a 2px
-   accent rule on its own edge, and the pane is separated from the strip by a
-   single hairline. */
+   accent rule on its own edge (6.86:1 against the panel) and by the value
+   rank, 12/600 text.hi. The 2px rule is reserved as transparent at rest, so
+   selecting a tab never moves the strip. */
 QTabWidget::pane {
-	background-color: #1B1E24;
+	background-color: #292621;
 	border: none;
-	border-top: 1px solid #262B33;
+	border-top: 1px solid #403B35;
 	border-radius: 0px;
 	top: -1px;
 }
@@ -1244,36 +1338,39 @@ QTabBar {
 
 QTabBar::tab {
 	background: transparent;
-	color: #8A93A0;
+	color: #BFB7AA;
 	border: none;
 	border-bottom: 2px solid transparent;
-	padding: 7px 14px;
-	min-width: 46px;
+	padding: 8px 16px;
+	min-width: 52px;
 	font-size: 12px;
+	font-weight: 400;
 }
 
 QTabBar::tab:hover {
-	background-color: #22262E;
-	color: #EDF0F4;
+	background-color: #3C3732;
+	border-top-left-radius: 5px;
+	border-top-right-radius: 5px;
+	color: #F3F0E9;
 }
 
 QTabBar::tab:selected {
 	background: transparent;
-	color: #EDF0F4;
-	border-bottom: 2px solid #E8543F;
+	color: #F3F0E9;
+	border-bottom: 2px solid #DFA52E;
 	font-weight: 600;
 }
 
 QTabBar::tab:disabled {
-	color: #59606B;
+	color: #7F786A;
 }
 
 QTabBar::tab:left,
 QTabBar::tab:right {
 	border-bottom: none;
-	padding: 14px 7px;
+	padding: 16px 8px;
 	min-width: 0px;
-	min-height: 46px;
+	min-height: 52px;
 }
 
 QTabBar::tab:left {
@@ -1281,7 +1378,7 @@ QTabBar::tab:left {
 }
 
 QTabBar::tab:left:selected {
-	border-right: 2px solid #E8543F;
+	border-right: 2px solid #DFA52E;
 }
 
 QTabBar::tab:right {
@@ -1289,7 +1386,7 @@ QTabBar::tab:right {
 }
 
 QTabBar::tab:right:selected {
-	border-left: 2px solid #E8543F;
+	border-left: 2px solid #DFA52E;
 }
 
 QTabBar::close-button {
@@ -1303,14 +1400,17 @@ QTabBar::close-button:hover {
 }
 
 QTabBar QToolButton {
-	background-color: #22262E;
-	border: 1px solid #262B33;
-	border-left: 1px solid #262B33;
+	background-color: #3C3732;
+	border: 1px solid #565049;
+	border-left: 1px solid #565049;
 }
 
 
 /* ---------------------------------------------------------------- toolbox -- */
 
+/* A toolbox tab is a section heading, so it takes the section-heading rank
+   verbatim: 13/700, a 2px leading rule reserved transparent, and the same
+   recess-plus-accent mark every other selected thing in the sheet uses. */
 QToolBox {
 	background: transparent;
 	border: none;
@@ -1318,110 +1418,126 @@ QToolBox {
 
 QToolBox::tab {
 	background: transparent;
-	color: #8A93A0;
+	color: #BFB7AA;
 	border: none;
 	border-left: 2px solid transparent;
-	border-bottom: 1px solid #262B33;
+	border-bottom: 1px solid #403B35;
 	padding: 8px 10px;
-	font-size: 11px;
-	font-weight: 600;
+	font-size: 13px;
+	font-weight: 700;
 }
 
 QToolBox::tab:hover {
-	background-color: #22262E;
-	color: #EDF0F4;
+	background-color: #3C3732;
+	color: #F3F0E9;
 }
 
 QToolBox::tab:selected {
-	background-color: #22262E;
-	color: #EDF0F4;
-	border-left: 2px solid #E8543F;
+	background-color: #3C3732;
+	color: #F3F0E9;
+	border-left: 2px solid #DFA52E;
 }
 
 QToolBox::tab:disabled {
-	color: #59606B;
+	color: #7F786A;
 }
 
 
 /* ------------------------------------------------------------- item views -- */
 
-/* Selection is an accent WASH, never a saturated fill. In the texture and
-   asset browsers the cell contents are the data; flooding them would hide the
-   very thing that was picked. */
+/* AN ITEM VIEW IS A WELL, the same shape an input is: bg.void inside a
+   stroke.soft hairline at the 8px container radius. That is what fixes the
+   project-row contrast matrix for free -- over a bg.void well the worst
+   reading in the whole five-state selection matrix is 4.88:1, against 3.80:1
+   in the previous sheet, which is why the extra text.mid token this sheet used
+   to carry has been deleted rather than maintained.
+
+   Selection is an accent WASH over the well and a 2px accent leading rule; in
+   the texture and asset browsers the cell contents are the data, so those keep
+   an outline instead and are overridden further down. */
 QAbstractItemView {
-	background-color: #22262E;
-	alternate-background-color: #1E222A;
-	color: #C6CCD6;
-	border: 1px solid #262B33;
-	border-radius: 4px;
-	padding: 3px;
+	background-color: #100E0B;
+	alternate-background-color: #1D1916;
+	color: #E4DFD7;
+	border: 1px solid #403B35;
+	border-radius: 8px;
+	padding: 4px;
 	outline: 0;
 	show-decoration-selected: 1;
-	selection-background-color: rgba(232, 84, 63, 0.26);
-	selection-color: #EDF0F4;
+	selection-background-color: rgba(223, 165, 46, 0.24);
+	selection-color: #F3F0E9;
 }
 
 QAbstractItemView:disabled {
-	background-color: #1B1E24;
-	color: #59606B;
-	border: 1px solid #262B33;
+	background-color: #292621;
+	color: #7F786A;
+	border: 1px solid #403B35;
 }
 
 QAbstractItemView::item {
 	background: transparent;
 	border: none;
-	padding: 5px 6px;
-	min-height: 18px;
+	border-left: 2px solid transparent;
+	padding: 6px 8px;
+	min-height: 24px;
 }
 
+/* A row hover LIFTS from the well to bg.panel, a 1.279:1 step. */
 QAbstractItemView::item:hover {
-	background-color: #2A2F38;
-	color: #EDF0F4;
+	background-color: #292621;
+	color: #F3F0E9;
 }
 
 /* Four distinct selection states, not one. Without :!active a panel that has
    lost focus still screams "this row is selected" as loudly as the one you are
-   actually working in. */
+   actually working in.
+
+   Measured over the bg.void well: 0.24 alpha composites to #423213, a 1.558:1
+   plate carrying text.hi at 10.87:1 and text.dim at 6.23:1. Hovered as well,
+   0.34 gives #564117, 1.986:1, text.hi 8.53:1 and text.dim 4.88:1. */
 QAbstractItemView::item:selected:active {
-	background-color: rgba(232, 84, 63, 0.26);
-	color: #EDF0F4;
+	background-color: rgba(223, 165, 46, 0.24);
+	border-left: 2px solid #DFA52E;
+	color: #F3F0E9;
 }
 
 QAbstractItemView::item:selected:!active {
-	background-color: #2A2F38;
-	color: #C6CCD6;
+	background-color: #3C3732;
+	border-left: 2px solid #746D64;
+	color: #E4DFD7;
 }
 
 QAbstractItemView::item:selected:hover {
-	background-color: rgba(232, 84, 63, 0.36);
-	color: #EDF0F4;
+	background-color: rgba(223, 165, 46, 0.34);
+	border-left: 2px solid #DFA52E;
+	color: #F3F0E9;
 }
 
 QAbstractItemView::item:disabled {
-	color: #59606B;
+	color: #7F786A;
 }
 
 QListView {
-	background-color: #22262E;
-	border: 1px solid #262B33;
+	background-color: #100E0B;
+	border: 1px solid #403B35;
 }
 
 QListView::item {
-	min-height: 18px;
+	min-height: 24px;
 }
 
 QTreeView {
-	background-color: #22262E;
-	border: 1px solid #262B33;
+	background-color: #100E0B;
+	border: 1px solid #403B35;
 	paint-alternating-row-colors-for-empty-area: 0;
 }
 
 QTreeView::item {
-	padding: 4px 2px;
+	padding: 5px 4px;
 }
 
 /* No dotted connector lines. The chevron alone is the affordance, which is
-   what every modern tree does and what survives at small sizes. */
+   what survives at small sizes. */
 QTreeView::branch {
 	background: transparent;
 	border-image: none;
@@ -1441,23 +1557,23 @@ QTreeView::branch:open:has-children:has-siblings {
 }
 
 QTreeView::branch:selected {
-	background-color: rgba(232, 84, 63, 0.26);
+	background-color: rgba(223, 165, 46, 0.24);
 }
 
 QTableView {
-	background-color: #22262E;
-	alternate-background-color: #1E222A;
-	gridline-color: #262B33;
-	border: 1px solid #262B33;
-	selection-background-color: rgba(232, 84, 63, 0.26);
-	selection-color: #EDF0F4;
+	background-color: #100E0B;
+	alternate-background-color: #1D1916;
+	gridline-color: #403B35;
+	border: 1px solid #403B35;
+	selection-background-color: rgba(223, 165, 46, 0.24);
+	selection-color: #F3F0E9;
 }
 
 QTableView QTableCornerButton::section {
-	background-color: #1B1E24;
+	background-color: #3C3732;
 	border: none;
-	border-right: 1px solid #262B33;
-	border-bottom: 1px solid #262B33;
+	border-right: 1px solid #403B35;
+	border-bottom: 1px solid #403B35;
 }
 
 QHeaderView {
@@ -1465,30 +1581,34 @@ QHeaderView {
 	border: none;
 }
 
+/* The table-header rank: 11/700 text.dim, 5.92:1 on bg.raised. A header is a
+   label for a column, not content, so it is the one place in the sheet where a
+   700 weight sits at the smallest size. */
 QHeaderView::section {
-	background-color: #1B1E24;
-	color: #8A93A0;
+	background-color: #3C3732;
+	color: #BFB7AA;
 	border: none;
-	border-right: 1px solid #262B33;
-	border-bottom: 1px solid #262B33;
+	border-right: 1px solid #403B35;
+	border-bottom: 1px solid #403B35;
 	padding: 6px 8px;
+	min-height: 26px;
 	font-size: 11px;
-	font-weight: 600;
+	font-weight: 700;
 }
 
 QHeaderView::section:hover {
-	background-color: #2A2F38;
-	color: #EDF0F4;
+	background-color: #4A4640;
+	color: #F3F0E9;
 }
 
 QHeaderView::section:checked {
-	background-color: #22262E;
-	color: #EDF0F4;
-	border-bottom: 2px solid #E8543F;
+	background-color: #3C3732;
+	color: #F3F0E9;
+	border-bottom: 2px solid #DFA52E;
 }
 
 QHeaderView::section:disabled {
-	color: #59606B;
+	color: #7F786A;
 }
 
 QHeaderView::section:last,
@@ -1517,49 +1637,49 @@ QHeaderView::up-arrow {
 
 /* ------------------------------------------------------------ scroll bars -- */
 
-/* 10px, no arrows, no track. The trough is the recessed surface so it
-   disappears against the chrome; only the thumb is visible, and only the thumb
-   moves. */
+/* 12px, not 10: ten pixels is under every platform minimum comfortable drag
+   target. No arrows, no page fill. The trough is bg.void so it disappears into
+   the chrome; only the thumb is visible and only the thumb moves. */
 QScrollBar:vertical {
-	background-color: #16181D;
+	background-color: #100E0B;
 	border: none;
-	width: 10px;
+	width: 12px;
 	margin: 0px;
 }
 
 QScrollBar:horizontal {
-	background-color: #16181D;
+	background-color: #100E0B;
 	border: none;
-	height: 10px;
+	height: 12px;
 	margin: 0px;
 }
 
 QScrollBar::handle:vertical {
-	background-color: #343A45;
+	background-color: #565049;
 	border: none;
-	border-radius: 3px;
+	border-radius: 4px;
 	margin: 2px;
-	min-height: 28px;
+	min-height: 32px;
 }
 
 QScrollBar::handle:horizontal {
-	background-color: #343A45;
+	background-color: #565049;
 	border: none;
-	border-radius: 3px;
+	border-radius: 4px;
 	margin: 2px;
-	min-width: 28px;
+	min-width: 32px;
 }
 
 QScrollBar::handle:hover {
-	background-color: #454C59;
+	background-color: #746D64;
 }
 
 QScrollBar::handle:pressed {
-	background-color: #E8543F;
+	background-color: #DFA52E;
 }
 
 QScrollBar::handle:disabled {
-	background-color: #22262E;
+	background-color: #292621;
 }
 
 QScrollBar::add-line,
@@ -1586,7 +1706,7 @@ QScrollBar::right-arrow {
 }
 
 QAbstractScrollArea::corner {
-	background-color: #16181D;
+	background-color: #100E0B;
 	border: none;
 }
 
@@ -1594,56 +1714,31 @@ QAbstractScrollArea::corner {
 /* --------------------------------------------------------------- sliders -- */
 
 /* Every Radius / Inner Radius / Speed row in the tool panels ends in one of
-   these, so it is the most repeated control in the editor after the label.
-   The filled portion is accent: the groove is a readout, not a rail.
+   these, so it is the most repeated control in the editor after the label. The
+   filled portion is accent at 8.77:1 against the bg.void groove: the groove is
+   a readout, not a rail.
 
-   THE HANDLE IS A GRIP, NOT A TICK. It used to be 6px wide -- and that is
-   measured, not read off this sheet: a standalone Qt probe built against
-   5.15.2, loading this file and nothing else, reported
+   The handle is a 16px round grip -- 12px of fill plus a 2px bg.void ring each
+   side, radius 8, which is half of 16 and therefore a full circle. margin -5px
+   makes it overhang the 6px groove by 5px on each side so it reads as ON the
+   track. The ring gives 16.93:1 against the groove and separates the grip from
+   the accent fill it sits at the end of.
 
-     subControlRect(CC_Slider, SC_SliderHandle) = 6 x 16 at x=34/135/236
-     subControlRect(CC_Slider, SC_SliderGroove) = 276 x 4
+   ONLY THE FILL AND THE RING MOVE BETWEEN STATES. The 16px box and the radius
+   are declared once on the base rules and never restated, so a hover cannot
+   resize the grip and drag the row with it.
 
-   for a 276x16 slider at 12 / 50 / 88 percent. Six pixels is narrower than the
-   accent fill it sits at the end of, so the control read as a progress bar
-   with a scratch on it and there was nothing obvious to grab. Confirmed by
-   grabbing the probe's render: the eye goes to the red fill and never finds
-   the handle.
-
-   The handle is now a 16px round grip: 12px of fill plus a 2px ink ring on
-   each side, at border-radius 8px, which is half of 16 and therefore a full
-   circle. The ring is what separates it from BOTH the accent sub-page (ink on
-   accent 4.88:1) and the sunken add-page (ink on #16181D is the same colour,
-   so the ring reads there as the fill's own edge, which is what a
-   groove-coloured moat is for).
-
-   The groove goes 4px -> 6px in the same pass. A 4px rail under a 16px grip
-   is the "hairline track" complaint; 6px still leaves the handle overhanging
-   by 5px on each side, which is what makes it read as ON the track rather
-   than as a segment OF it. -5px handle margin is that overhang, and 6 + 5 + 5
-   closes on the 16px box exactly.
-
-   WHAT THIS BLOCK DOES AND DOES NOT CHANGE. It changes what is PAINTED: the
-   grip goes from 6x16 to 16x16, 2.7x the drawn area, and a control that read
-   as a progress bar now has something on it that looks grabbable. It does not
-   change the hit target and cannot. Qt derives SC_SliderHandle from the
-   WIDGET's height, never from the QSS handle box, so how many pixels actually
-   start a drag is decided by the height ExtendedSliderUi pins on the widget
-   -- a different file, owned elsewhere, and its value is deliberately not
-   restated here because a number copied across a file boundary is a number
-   that goes stale silently. An earlier revision of this comment asserted "a
-   2.7x larger hit target"; that was the painted area being reported as the
-   grabbable one, and it was wrong. Whatever that pin is, this box is 16px and
-   centres in it, so a taller band leaves empty rail above and below the grip
-   and nothing here clips. Nothing about the range, the step, the page step or
-   the emitted value moves either way. */
+   HONEST LIMIT, unchanged: Qt derives SC_SliderHandle from the WIDGET height,
+   never from the QSS handle box, so this changes what is PAINTED and not the
+   hit target. Nothing about the range, the step, the page step or the emitted
+   value moves either way. */
 QSlider {
 	background: transparent;
 	border: none;
 }
 
 QSlider::groove:horizontal {
-	background-color: #16181D;
+	background-color: #100E0B;
 	border: none;
 	border-radius: 3px;
 	height: 6px;
@@ -1651,20 +1746,20 @@ QSlider::groove:horizontal {
 }
 
 QSlider::sub-page:horizontal {
-	background-color: #E8543F;
+	background-color: #DFA52E;
 	border: none;
 	border-radius: 3px;
 }
 
 QSlider::add-page:horizontal {
-	background-color: #16181D;
+	background-color: #100E0B;
 	border: none;
 	border-radius: 3px;
 }
 
 QSlider::handle:horizontal {
-	background-color: #C6CCD6;
-	border: 2px solid #16181D;
+	background-color: #F3F0E9;
+	border: 2px solid #100E0B;
 	border-radius: 8px;
 	width: 12px;
 	height: 12px;
@@ -1672,7 +1767,7 @@ QSlider::handle:horizontal {
 }
 
 QSlider::groove:vertical {
-	background-color: #16181D;
+	background-color: #100E0B;
 	border: none;
 	border-radius: 3px;
 	width: 6px;
@@ -1680,87 +1775,89 @@ QSlider::groove:vertical {
 }
 
 QSlider::sub-page:vertical {
-	background-color: #16181D;
+	background-color: #100E0B;
 	border: none;
 	border-radius: 3px;
 }
 
 QSlider::add-page:vertical {
-	background-color: #E8543F;
+	background-color: #DFA52E;
 	border: none;
 	border-radius: 3px;
 }
 
 QSlider::handle:vertical {
-	background-color: #C6CCD6;
-	border: 2px solid #16181D;
+	background-color: #F3F0E9;
+	border: 2px solid #100E0B;
 	border-radius: 8px;
 	height: 12px;
 	width: 12px;
 	margin: 0px -5px;
 }
 
-/* Only the FILL moves between states. Every state below leaves border and
-   border-radius to the two rules above, which is what stops a hover from
-   resizing the grip and dragging the whole row with it. */
+/* Hover keeps the fill and moves the RING to accent, so the box never resizes
+   and the state is still legible at the end of the filled run. */
 QSlider::handle:hover {
-	background-color: #EDF0F4;
+	background-color: #F3F0E9;
+	border: 2px solid #DFA52E;
 }
 
 QSlider::handle:pressed {
-	background-color: #E8543F;
+	background-color: #DFA52E;
+	border: 2px solid #100E0B;
 }
 
 /* The ring goes with it, or a disabled handle keeps a hard black outline and
    still reads as the liveliest thing in a greyed-out group. */
 QSlider::handle:disabled {
-	background-color: #343A45;
-	border: 2px solid #1B1E24;
+	background-color: #565049;
+	border: 2px solid #292621;
 }
 
 QSlider::sub-page:horizontal:disabled,
 QSlider::add-page:vertical:disabled {
-	background-color: #343A45;
+	background-color: #565049;
 }
 
 
 /* ---------------------------------------------------------- progress bar -- */
 
 QProgressBar {
-	background-color: #16181D;
-	color: #C6CCD6;
+	background-color: #100E0B;
+	color: #E4DFD7;
 	border: none;
-	border-radius: 4px;
+	border-radius: 5px;
 	text-align: center;
 	font-size: 11px;
-	min-height: 18px;
+	min-height: 20px;
 }
 
 QProgressBar::chunk {
-	background-color: #E8543F;
+	background-color: #DFA52E;
 	border: none;
-	border-radius: 4px;
+	border-radius: 5px;
 }
 
 QProgressBar:disabled {
-	color: #59606B;
+	color: #7F786A;
 }
 
 QProgressBar::chunk:disabled {
-	background-color: #343A45;
+	background-color: #565049;
 }
 
 
 /* -------------------------------------------------------------- tool tip -- */
 
-/* The single most jarring thing about the shipped themes was a light system
-   tool tip on a dark app: neither of them had a QToolTip rule at all. */
+/* A tool tip floats, so it takes bg.overlay and stroke.hi like every other
+   popup. text.hi on it is 8.23:1; a multi-line tip that falls back to body
+   text is still 7.07:1. */
 QToolTip {
-	background-color: #2A2F38;
-	color: #EDF0F4;
-	border: 1px solid #343A45;
+	background-color: #4A4640;
+	color: #F3F0E9;
+	border: 1px solid #746D64;
 	border-radius: 0px;
-	padding: 5px 8px;
+	padding: 6px 10px;
 	font-size: 12px;
 }
 
@@ -1769,8 +1866,8 @@ QToolTip {
 
 /* QScrollArea, its viewport and its content widget are three separate widgets.
    Left alone they pick up three different backgrounds and you get a visible
-   seam down the middle of every tool panel. Item views are QAbstractScrollArea,
-   not QScrollArea, so they keep their own surface above. */
+   seam down the middle of every tool panel. Item views are QAbstractScrollArea
+   and not QScrollArea, so they keep the well surface above. */
 QScrollArea {
 	background: transparent;
 	border: none;
@@ -1780,25 +1877,16 @@ QScrollArea > QWidget > QWidget {
 	background: transparent;
 }
 
-/* The right-hand tool dock. This used to claim it was what stopped every
-   control in the panel from touching the dock edge, and it was not: the only
-   thing in the tree that sets the object name "dockWidgetScrollArea" is the
-   Advanced Docking System (external/QtAdvancedDockingSystem/src/DockWidget.cpp),
-   which is linked but never instantiated -- see the ADS block at the bottom.
-   The rule has therefore never matched anything.
+/* The right-hand tool dock. The ADS name is kept so the rule is still there if
+   the Advanced Docking System is ever switched on; the scroll area the tool
+   dock actually builds is named "scrollArea" in ToolPanelScroll.ui.
 
-   The scroll area the tool dock actually builds comes from
-   src/noggit/ui/tools/ToolPanel/ToolPanelScroll.ui, where it is named
-   "scrollArea" and its content widget "scrollAreaWidgetContents". Both names
-   are unique in this tree. All four layout margins in that form are 0, so the
-   panel has genuinely had no horizontal breathing room.
-
-   The ADS name is kept so the rule is still there if ADS is ever switched on.
-   HONEST LIMIT: whether Qt honours `padding` as a layout inset on a
-   QScrollArea / plain QWidget is not something this sheet can prove, and it
-   was not verified against a running editor. If it does nothing it costs
-   nothing -- but do not read this rule as evidence that the padding is
-   applied. The reliable fix is contentsMargins in the form. */
+   HONEST LIMIT, restated: whether Qt honours `padding` as a layout inset on a
+   QScrollArea is not something this sheet can prove and it was not verified
+   against a running editor. The reliable fix for the missing panel margin is
+   contentsMargins(12, 8, 12, 8) in the FORM, which is a different file and is
+   not owned by this pass. Do not read this rule as evidence that the padding
+   is applied. */
 QScrollArea#dockWidgetScrollArea,
 QScrollArea#scrollArea {
 	background: transparent;
@@ -1813,36 +1901,31 @@ QWidget#scrollAreaWidgetContents {
 
 
 /* ================================================================ Noggit == */
-/* Application-specific selectors. Class names use Qt's convention of "--" for
+/* Application-specific selectors. Class names use Qt convention of "--" for
    "::", so Noggit::Ui::PaletteList is Noggit--Ui--PaletteList. The shipped
    themes spelled these with a single dash in the first position, which matches
    nothing; both spellings are listed here so neither is silently dead.       */
 
 /* --- the frameless window title bar ------------------------------------- */
 
-/* Only ever on screen when systemWindowFrame is off, which is not the default
-   -- read the measured assessment at the top of FramelessWindow.hpp before
-   turning it on. Styled all the same, because a half-dressed alternative is
-   worse than no alternative.
-
-   setupUi names the holder "TitleBar", and FramelessWindow.hpp sets
-   WA_StyledBackground on it so this rule paints at all. bg.sunken, not
-   bg.base: a title bar is the outermost chrome there is, and this sheet's
-   surfaces recede as they go back. The hairline is the seam between the bar
-   and the first real surface below it. */
+/* Only ever on screen when systemWindowFrame is off, which is not the default.
+   Styled all the same, because a half-dressed alternative is worse than no
+   alternative. setupUi names the holder "TitleBar" and FramelessWindow.hpp
+   sets WA_StyledBackground on it, so this rule paints at all. bg.void: a title
+   bar is the outermost chrome there is. */
 QWidget#TitleBar {
-	background-color: #16181D;
+	background-color: #100E0B;
 	border: none;
-	border-bottom: 1px solid #262B33;
+	border-bottom: 1px solid #403B35;
 }
 
-/* 13/600 text.hi, the window-title rank in the type scale at the top of this
-   file. It was inheriting the plain 12/400 body rule, so the name of the
-   window carried the same weight as a check box caption. */
+/* The window-title rank: 15/600 text.hi, 16.93:1 on bg.void. It used to
+   inherit the plain 12/400 body rule, so the name of the window carried the
+   same weight as a check box caption. */
 QLabel[accessibleName="titlebar_title"] {
 	background: transparent;
-	color: #EDF0F4;
-	font-size: 13px;
+	color: #F3F0E9;
+	font-size: 15px;
 	font-weight: 600;
 	padding-left: 2px;
 }
@@ -1862,43 +1945,56 @@ QPushButton[accessibleName="titlebar_close"] {
 	background: transparent;
 	border: none;
 	border-radius: 0px;
-	min-width: 36px;
+	min-width: 40px;
 	padding: 0px;
 }
 
 QPushButton[accessibleName="titlebar_minimize"]:hover,
 QPushButton[accessibleName="titlebar_maximize"]:hover,
 QPushButton[accessibleName="titlebar_restore"]:hover {
-	background-color: #2A2F38;
+	background-color: #3C3732;
 }
 
 QPushButton[accessibleName="titlebar_minimize"]:pressed,
 QPushButton[accessibleName="titlebar_maximize"]:pressed,
 QPushButton[accessibleName="titlebar_restore"]:pressed {
-	background-color: #343A45;
+	background-color: #4A4640;
 }
 
-/* Close is the one control that goes fully saturated on hover, because it is
-   the one control you cannot undo. */
+/* Close is the one control that goes red on hover, because it is the one
+   control you cannot undo.
+
+   WHY THE FILL IS NOT bad. This button's glyph is a PNG named by
+   qproperty-icon, and Qt resolves qproperty-* once at polish time -- it does
+   not restate itself when a pseudo-state changes. So ONE pen has to serve the
+   resting bar and every fill, and the resting bar is bg.void: an ink glyph is
+   1.00:1 there, i.e. invisible, so the pen has to be light and is text.hi.
+   The fill is therefore the half that had to move. It was bad #E86F62, on
+   which text.hi measures 2.68:1 -- and the comment that used to sit here
+   claimed "ink on bad, 6.31:1", describing a glyph this theme has never
+   shipped. generate_icons.py writes that pixel as text.hi and says so.
+
+   Measured on what is actually drawn:
+     text.hi #F3F0E9 on close.hover #A75047   4.75:1   (was 2.68 on bad)
+     text.hi #F3F0E9 on close.press #974840   5.56:1   (was 3.84)
+   and the plate itself is a graphical state mark against the bg.void bar, so
+   it carries the 3:1 floor rather than 4.5:
+     close.hover vs bg.void  3.56:1     close.press vs bg.void  3.04:1
+   with close.press 1.17:1 below close.hover so the press still reads as a
+   step. Both fills keep bad's hue; they are darker, not greyer. */
 QPushButton[accessibleName="titlebar_close"]:hover {
-	background-color: #E0574B;
+	background-color: #A75047;
 }
 
 QPushButton[accessibleName="titlebar_close"]:pressed {
-	background-color: #B8443A;
+	background-color: #974840;
 }
 
 /* Real PNG icons rather than Font Awesome glyphs, so the window controls are
-   identifiable with no icon font installed.
-
-   The maximise control now has TWO names, and that is how the icon swaps.
-   FramelessWindow.hpp renames it to titlebar_restore whenever the window
-   reports itself maximised -- through QWindow::windowStateChanged, so Aero
-   Snap and a double click on the caption reach it as well as the button does
-   -- and repolishes. Renaming rather than calling setIcon is deliberate: the
-   icon belongs to the theme, and a setIcon from C++ would be silently undone
-   by the next polish. A theme that defines only titlebar_maximize still gets
-   a working button, just a static icon. */
+   identifiable with no icon font installed. The maximise control has TWO
+   names: FramelessWindow.hpp renames it to titlebar_restore whenever the
+   window reports itself maximised and repolishes, which is how the icon swaps
+   without a setIcon that the next polish would undo. */
 QPushButton[accessibleName="titlebar_minimize"] {
 	qproperty-icon: url(themes/CrimsonSlate/images/icon_window_minimize.png);
 	qproperty-iconSize: 12px 12px;
@@ -1921,91 +2017,63 @@ QPushButton[accessibleName="titlebar_close"] {
 
 /* --- icon-font buttons --------------------------------------------------- */
 
-/* These two accessible names exist to tint the icon fonts. Font Awesome is not
-   shipped, so this often colours a short text fallback instead of a glyph;
-   either way it must be neutral -- an icon is not a link and not a selection.
-
-   THESE TWO RULES ARE NOT ORDINARY WIDGET STYLING. They are the only input to
+/* THESE TWO RULES ARE NOT ORDINARY WIDGET STYLING. They are the only input to
    the pen colour of every icon in the application. Both icon engines resolve
-   it by polishing one parentless probe widget carrying one of these names and
-   reading its palette back -- see `iconPenColor` in `FontAwesome.hpp` -- and
-   because QSS `color` writes WindowText, Text and ButtonText together, a
-   sheet gets exactly TWO slots here and there is no third. The engine spends
-   them as:
+   it by polishing one parentless probe widget carrying one of these accessible
+   names and reading its QPalette back -- see `iconPenColor` in
+   FontAwesome.hpp -- and because QSS `color` writes WindowText, Text and
+   ButtonText together, a sheet gets exactly TWO slots here and there is no
+   third. The engine spends them as:
 
-     this rule          QIcon::On       = CHECKED
-     the :disabled rule QIcon::Off      = UNCHECKED, and also
-                        QIcon::Disabled = genuinely disabled, which the engine
-                                          separates by painting at 0.45 alpha
-                                          on top of the same pen (it has no
-                                          colour left to separate them with)
+     this rule            QIcon::On   = CHECKED
+     the :disabled rule   QIcon::Off  = UNCHECKED, and also QIcon::Disabled,
+                          which the engine separates by painting the same pen
+                          at ICON_DISABLED_OPACITY = 0.45
 
-   Nothing else in the application has either accessible name -- the probes are
-   the only widgets that carry them -- so these two declarations reach the icon
-   pen and nothing besides it. `color` on a QToolButton rule elsewhere in this
-   file colours that button's TEXT; it cannot reach the glyph.
+   `color` on a QToolButton rule elsewhere in this file colours that button
+   TEXT and cannot reach the glyph. Hover is not a slot at all: Qt reports a
+   hovered button as QIcon::Active and the engine derives it as
+   QColor::lighter(125) on whichever pen the state resolved to.
 
-   THE :disabled SLOT IS THEREFORE THE UNCHECKED COLOUR, AND IT MUST BE
-   LEGIBLE. It used to hold text.off #59606B, read as "disabled" from the
-   selector name. That measured 2.12:1 on a floating bar and 2.39:1 on a
-   button -- and unchecked is the resting state of most of the chrome, so the
-   left tool strip and the view-toggle bar had 15 of 16 and 12 of 20 of their
-   glyphs sitting under any legibility floor at once. The visible remainder was
-   the checked one, on its accent plate or over its accent underline, which is
-   the whole of why the chrome read as accent-coloured: the accent was not
-   spreading, the neutrals had gone.
+   OFF is text.dim #BFB7AA. WHY NOT text OR text.hi -- two reasons, both
+   measured. First, lighter(125) on text #E4DFD7 CLIPS TO PURE #FFFFFF (HSL
+   lightness 0.869 x 1.25 = 1.000) and text.hi clips too, and this palette
+   forbids pure white; #BFB7AA has HSL lightness 0.708, lifts to 0.885 and
+   lands on #E6E3DD with room to spare, so it is the only candidate in the text
+   ramp that gives a working hover at all. Second, thirty-six icons are on
+   screen at once (16 tools plus 20 toggles); at `text` they would all sit at
+   7.07:1 and the two bars would be the loudest thing in the application.
 
-   MEASURED, NOT DERIVED. A standalone Qt 5.15.2 probe loads this sheet and
-   nothing else, polishes a widget carrying each of these two accessible names,
-   reads its QPalette back and runs `iconPenColor` / `iconPenColorForMode`
-   verbatim over it, then lays a real QToolBar out inside a real
-   `leftToolbarHolder`, grabs it and samples pixels. It reports, before and
-   after this change:
+   MEASURED, per surface an icon actually rests on:
 
-     QPalette Normal   WindowText  #C6CCD6      #C6CCD6   (checked, unchanged)
-     QPalette Disabled WindowText  #59606B  ->  #A0A8B4   (unchecked)
-     resolved (Active, Off) hover  #6F7886  ->  #C8D2E1
+                       OFF #BFB7AA   HOVER #E6E3DD   ON #DFA52E
+     bg.void  #100E0B      9.70          15.05          8.77
+     bg.alt   #1D1916      8.79          13.63          7.95
+     bg.panel #292621      7.58          11.77          6.86
+     bg.raised#3C3732      5.92           9.19          5.36
+     bg.overlay #4A4640    4.72           7.32          4.27
+     bg.hover #5B5651      3.65           5.66          3.30
 
-   and the sampled strip afterwards gives the checked glyph #C6CCD6 on the
-   checked face #6E3C3A at 5.49:1 and the unchecked glyph #A0A8B4 on the bar
-   #2A2F38 at 5.60:1, matching the table below to a rounding step. Note the
-   hover row: the OLD unchecked hover pen measured 1.94:1 on the hover plate,
-   i.e. pointing at an unreadable icon made it very slightly less readable.
+   The OFF -> HOVER step between the two pens is 1.551:1, a real and visible
+   response. OFF -> CHECKED is only 1.106:1 in luminance but 105 degrees in
+   hue, and it is never asked to carry the state alone: the checked face drops
+   2.057:1 and a 2px or 3px accent rule appears. The pen is the supporting cue.
+   Checked-and-hovered derives to #E8BE68, 9.97:1 on bg.alt.
 
-   text.mid #A0A8B4, measured over each surface an icon actually rests on,
-   with the checked pen beside it:
-
-                          unchecked      checked
-     bg.overlay #2A2F38    5.60           8.33      view-toggle bar, tool strip
-     bg.raised  #22262E    6.32           9.39      ordinary icon buttons
-     bg.base    #1B1E24    6.96          10.34      dialogs
-     bg.sunken  #16181D    7.40          11.00      menu bar, status bar
-
-   plus the two states the engine derives rather than reads. HOVER is
-   `QColor::lighter(125)` on whichever pen the state resolved to, so unchecked
-   hover is #C8D2E1 and measures 5.66:1 on the stroke.hi hover plate #454C59
-   both bars use, and 3.75:1 during the momentary accent.dim press. Checked
-   hover resolves to #F8FBFF, 8.32:1 on that plate. DISABLED is the same pen
-   at 0.45 alpha: it composites to #5F6570 on bg.overlay, 2.29:1, against
-   #3F454F and 1.39:1 before. That is deliberately still sub-threshold --
-   disabled is the one state that is allowed to be dim, and it is the state
-   the sheet's own text.off note calls "deliberately sub-threshold, that IS
-   the disabled signal". What changed is that it is no longer IDENTICAL to
-   unchecked; the engine's 0.45 alpha now has a real difference to express.
-
-   Unchecked to checked is a 1.49:1 step between the two pens. That is a
-   supporting cue and is not asked to carry the state on its own: the tool
-   strip marks checked with an accent plate and a 2px leading edge, and the
-   view bar with a 2px underline at 3.69:1, both of which are the primary
-   mark and both of which are untouched here. */
+   DISABLED is the OFF pen at 0.45 alpha: #5F5A53 on bg.void (2.82:1), #6C675F
+   on bg.panel (2.69:1), #777168 on bg.raised (2.44:1), #7F7970 on bg.overlay
+   (2.17:1). Deliberately sub-threshold -- that IS the disabled signal and WCAG
+   1.4.3 exempts inactive components. What matters is that it is no longer
+   identical to unchecked; the 0.45 alpha now has a 2.2x difference to
+   express. */
 QWidget[accessibleName="FontNoggitButtonStyle"],
 QWidget[accessibleName="FontAwesomeButtonStyle"] {
-	color: #C6CCD6;
+	color: #DFA52E;
 }
 
 QWidget[accessibleName="FontNoggitButtonStyle"]:disabled,
 QWidget[accessibleName="FontAwesomeButtonStyle"]:disabled {
-	color: #A0A8B4;
+	color: #BFB7AA;
 }
 
 /* --- the viewport overlay ------------------------------------------------ */
@@ -2020,149 +2088,127 @@ QWidget#leftSecondaryToolbarHolder {
 	background: transparent;
 }
 
-/* Floating bars sit on top of the render. QSS has no box-shadow; the border
-   and the lighter fill are what separate them from the viewport behind.
+/* FLOATING VIEWPORT CARDS. QSS has no box-shadow; the dark fill, the stroke.hi
+   edge and the 8px container radius are what separate a card from the render
+   behind it. bg.overlay is 2.057:1 lighter than the application own darkest
+   chrome and far darker than snow, so against snowy Dun Morogh or sunlit
+   Arathi the card never washes out.
 
-   KNOWN DEAD, LEFT IN PLACE: Noggit--Ui--toolbar (the left tool strip) matches
-   nothing. Qt resolves a QSS type selector against metaObject()->className()
-   and its superclass chain, and Noggit::Ui::toolbar carries no Q_OBJECT macro
-   (src/noggit/ui/Toolbar.h) -- there is no moc_Toolbar.cpp among the 580
-   generated in build/noggit_autogen, so its className is literally "QToolBar".
-   The left strip consequently falls through to the plain QToolBar rule further
-   up and is drawn as a docked bar rather than a floating one.
-
-   The type selector is still dead and is still kept. What has changed is that
-   the strip is now reached by POSITION instead, immediately below: the holder
-   it lives in does have an object name, and MapView::setupToolbars puts
-   exactly one widget in it (src/noggit/MapView.cpp -- a QVBoxLayout on
-   _viewport_overlay_ui->leftToolbarHolder with _toolbar as its only member),
-   so the child selector cannot reach anything else. The one-line Q_OBJECT fix
-   in Toolbar.h remains the tidier answer and is deliberately NOT taken here,
-   because it depends on whether AUTOMOC has that header in its scan set --
-   a CMake question this change is not allowed to answer. Reaching the strip
-   through its holder needs no build system at all, and outranks both the
-   plain QToolBar rule (specificity 1) and QToolBar:vertical (11) at 102, so
-   it wins by cascade rather than by document order. */
+   KNOWN DEAD, LEFT IN PLACE: Noggit--Ui--toolbar matches nothing. Qt resolves
+   a QSS type selector against metaObject()->className() and Noggit::Ui::toolbar
+   carries no Q_OBJECT macro, so its class name is literally "QToolBar". The
+   strip is reached by POSITION instead -- QWidget#leftToolbarHolder > QToolBar
+   -- which outranks both QToolBar (1) and QToolBar:vertical (257) at 65538 and
+   therefore wins by cascade rather than by document order. */
 Noggit--Ui--toolbar,
 QWidget#leftToolbarHolder > QToolBar,
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar,
 QWidget#gizmoBar {
-	background-color: #2A2F38;
-	border: 1px solid #343A45;
-	border-radius: 4px;
-	padding: 4px;
+	background-color: #4A4640;
+	border: 1px solid #746D64;
+	border-radius: 8px;
+	padding: 5px;
 	spacing: 2px;
+	min-height: 0px;
 }
 
 /* --- the left tool strip ------------------------------------------------- */
 
-/* Sixteen editing tools down the left edge of the viewport, in one
-   QActionGroup, so exactly one is checked at a time.
+/* Sixteen editing tools down the left edge of the viewport in one
+   QActionGroup, so exactly one is checked. HOVER LIFTS, ACTIVE RECESSES.
 
-   THE CARD is the holder selector in the shared floating-bar rule above, NOT
-   anything in this block. Without it the strip took QToolBar #22262E plus
-   QToolBar:vertical's 1px #262B33 right edge, so the most prominent chrome in
-   the editor rendered as an opaque square-cornered slab forty pixels from a
-   rounded, bordered, lighter floating card carrying the view toggles. Same
-   surface, same distance from the camera, two design languages.
+     INACTIVE      transparent, the card shows through. Icon text.dim, 4.72:1.
+     HOVER         bg.hover #5B5651, a 1.292:1 LIFT over the card, 1px
+                   stroke.hi. Icon derives to #E6E3DD, 5.66:1.
+     ACTIVE        bg.void #100E0B, a 2.057:1 RECESS below the card, 3px accent
+                   leading rule at 4.27:1 against the card, icon accent at
+                   8.77:1 on the recessed face. Three simultaneous cues, and
+                   against a hovered neighbour that has gone UP one level the
+                   direction alone is unmistakable.
+     ACTIVE+HOVER  bg.alt #1D1916, 1.863:1 -- still clearly down, but lifted
+                   from the resting active state so the hover is felt. Icon
+                   accent 7.95:1.
+     PRESSED       accent.press fill, the 3px accent rule held at full strength
+                   so a click cannot erase the state it is about to change.
+                   Icon ink 5.64:1.
+     DISABLED      transparent everywhere, no state mark, icon at 0.45 alpha.
 
-   No rule here cancels the plain QToolBar edges, and none is needed: the
-   shared rule's `border: 1px solid #343A45` is a four-edge shorthand at
-   specificity 65538 against 257 for QToolBar:vertical and 1 for QToolBar, so
-   it replaces both. A "border-bottom: none" tidy-up placed after it would
-   have been read as removing the card's own bottom edge, which is worse than
-   the problem it was written for.
+   BUTTON BOX 34x34, and it has to be written here because the base QToolButton
+   rule min-width/min-height of 24px overrides any setFixedSize in C++. QSS
+   min-/max- size the CONTENT rect, so the box arithmetic is
+     width  = 3 (left border) + 3 (pad) + 22 (content) + 5 (pad) + 1 = 34
+     height = 1 + 4 + 24 + 4 + 1                                     = 34
+   Measured with the standalone probe: actual 34x34. The asymmetric horizontal
+   padding pays for the 3px leading rule, so the 20px icon still centres.
 
-   HOVER had to be restated. The base QToolButton:hover fills with bg.overlay
-   #2A2F38, which is exactly what the strip's surface has just become, so
-   pointing at a tool would have measured 1.000:1 -- the identical defect the
-   view-toggle bar block further down documents at length. It takes the same
-   answer: the stroke.hi plate at 1.556:1 with a 1px text.off edge at 2.119:1.
+   Every state restates border 1px and border-left 3px at those exact widths,
+   so switching tools cannot reflow the strip; only colours move. */
+QWidget#leftToolbarHolder > QToolBar QToolButton {
+	background: transparent;
+	color: #BFB7AA;
+	border: 1px solid transparent;
+	border-left: 3px solid transparent;
+	border-radius: 5px;
+	padding: 4px 5px 4px 3px;
+	min-width: 22px;
+	max-width: 22px;
+	min-height: 24px;
+	max-height: 24px;
+	icon-size: 20px;
+}
 
-   CHECKED. The base rule's accent wash is rgba(232, 84, 63, 0.26), authored
-   against bg.overlay; over the slab the strip used to be it composited to
-   #553232 and measured 1.37:1, which this sheet's own standard calls
-   invisible at icon-button size. Raised to 0.36 it composites over the card
-   and measures 1.52:1, in the same band as the hover plate the sheet already
-   accepts. The 2px accent leading edge at 3.694:1 stays the primary mark and
-   is untouched -- and the base rule's objection that a 2px line between two
-   icons reads as a SEPARATOR is an argument about a HORIZONTAL row, where the
-   line falls in the gap between neighbours. This strip is vertical: the line
-   sits on one button's leading edge and touches none of the others.
-
-   GEOMETRY. Nothing here changes a button's box. Every state restates border
-   1px and border-left 2px at the widths the base rule already reserves in all
-   six of its states, so switching tools cannot reflow the strip. Only colours
-   move.
-
-   MEASURED, not derived. A QToolBar built inside a QWidget named
-   leftToolbarHolder, laid out off-screen under this sheet, grabbed and
-   sampled:
-
-     surface between the buttons        #2A2F38   (was #22262E)
-     resting button face                #2A2F38
-     checked button face                #6E3C3A   1.52:1 against the surface
-     checked button leading edge        #E8543F   3.69:1
-     button box, checked and unchecked  42 x 37   identical, so no reflow
-     bar box                            52 x 86 against 50 x 84 before
-
-   The bar grows by exactly the 1px card border on each of the four edges and
-   the buttons inside it do not move. One correction to the numbers elsewhere
-   in this file: the toolbar icon size measured 24 x 24, not 22 -- these bars
-   set none, so it is Fusion's PM_ToolBarIconSize and the same on both. */
 QWidget#leftToolbarHolder > QToolBar QToolButton:hover {
-	background-color: #454C59;
-	color: #EDF0F4;
-	border: 1px solid #59606B;
-	border-left: 2px solid #59606B;
+	background-color: #5B5651;
+	color: #F3F0E9;
+	border: 1px solid #746D64;
+	border-left: 3px solid transparent;
 }
 
 QWidget#leftToolbarHolder > QToolBar QToolButton:checked {
-	background-color: rgba(232, 84, 63, 0.36);
-	color: #EDF0F4;
+	background-color: #100E0B;
+	color: #F3F0E9;
 	border: 1px solid transparent;
-	border-left: 2px solid #E8543F;
+	border-left: 3px solid #DFA52E;
 }
 
-/* Both marks at once, 1.71:1 for the plate. Two pseudo-states, so it outranks
-   the two single-state rules above whichever order Qt walks them in. */
+/* Both marks at once. Two pseudo-states, so it outranks the two single-state
+   rules above whichever order Qt walks them in. */
 QWidget#leftToolbarHolder > QToolBar QToolButton:checked:hover {
-	background-color: rgba(232, 84, 63, 0.46);
-	color: #EDF0F4;
-	border: 1px solid #59606B;
-	border-left: 2px solid #E8543F;
+	background-color: #1D1916;
+	color: #F3F0E9;
+	border: 1px solid #746D64;
+	border-left: 3px solid #DFA52E;
 }
 
-/* :pressed ties with :hover on specificity and wins on document order, so it
-   is spelled out rather than left to chance. The press fills with accent.dim
-   because it is momentary; the checked press keeps the full-accent leading
-   edge so a click cannot erase the state it is about to change. */
+/* :pressed ties with :hover on specificity and wins on document order, and
+   :checked:pressed ties with :checked:hover the same way, so all four are
+   spelled out rather than left to chance. */
 QWidget#leftToolbarHolder > QToolBar QToolButton:pressed {
-	background-color: #B33F2E;
-	color: #EDF0F4;
-	border: 1px solid #B33F2E;
-	border-left: 2px solid #B33F2E;
+	background-color: #B8801F;
+	color: #100E0B;
+	border: 1px solid #B8801F;
+	border-left: 3px solid #B8801F;
 }
 
 QWidget#leftToolbarHolder > QToolBar QToolButton:checked:pressed {
-	background-color: #B33F2E;
-	color: #EDF0F4;
-	border: 1px solid #B33F2E;
-	border-left: 2px solid #E8543F;
+	background-color: #B8801F;
+	color: #100E0B;
+	border: 1px solid #B8801F;
+	border-left: 3px solid #DFA52E;
 }
 
 /* Last of the single-pseudo rules, so a disabled tool shows no state mark. */
 QWidget#leftToolbarHolder > QToolBar QToolButton:disabled {
 	background: transparent;
-	color: #59606B;
+	color: #7F786A;
 	border: 1px solid transparent;
-	border-left: 2px solid transparent;
+	border-left: 3px solid transparent;
 }
 
-/* The strip's group separators sit on bg.overlay now, where the base rule's
-   stroke colour is very nearly the surface itself. */
+/* The strip group separators sit on bg.overlay, where `stroke` is 1.18:1 and
+   simply not there. stroke.hi is 1.84:1. */
 QWidget#leftToolbarHolder > QToolBar::separator {
-	background-color: #454C59;
+	background-color: #746D64;
 	margin: 4px 5px;
 }
 
@@ -2172,189 +2218,116 @@ QWidget#leftToolbarHolder > QToolBar::separator {
    doodads, WMO exterior, Terrain, Water, Lines, Hole lines, Wireframe,
    Contours, Climb, Vertex Color, Baked Shadows, Animations, Fog, Flight
    bounds, Models with box, Hidden models, Show Minimap, Details info. Twenty
-   is a count of the live add_tool_icon calls in ViewToolbar's second
-   constructor, not an estimate -- three further calls in that file are
-   commented out, and the twenty-first button on the bar is the history
-   QPushButton, which is neither a QToolButton nor checkable.
-
-   EIGHT of the twenty are ON at startup, not "most": _draw_models, _draw_wmo,
+   is a count of the live add_tool_icon calls in the second ViewToolbar
+   constructor; the twenty-first button on the bar is the history QPushButton,
+   which is not checkable. EIGHT are ON at startup -- _draw_models, _draw_wmo,
    _draw_wmo_doodads, _draw_wmo_exterior, _draw_terrain, _draw_water,
    _draw_vertex_color and _draw_model_animations, read off the
-   BoolToggleProperty initialisers in MapView.h. The other twelve default OFF.
-   Two things had to be fixed here and that 8/20 split is why the first answer
-   to each of them was wrong.
+   BoolToggleProperty initialisers in MapView.h.
 
-   ONE -- HOVER. The base QToolButton:hover fills with bg.overlay #2A2F38 and
-   this bar's own surface IS bg.overlay, so pointing at a button did literally
-   nothing: 1.000:1. The first re-basing of this block picked stroke #343A45,
-   which measures 1.176:1 -- and the base QToolButton:checked comment above
-   rejects a 1.13 step as invisible at icon-button size for the identical
-   case, so that was the same defect one shade along, not a fix for it. Hover
-   is now the stroke.hi plate at 1.556:1 carrying a 1px text.off edge at
-   2.119:1: two cues, both clear of the 1.13--1.18 band this sheet calls
-   invisible.
+   Same recess model as the tool strip, rotated: the rule goes on the BOTTOM
+   edge at 2px and the left reserve drops to 1px. Eight recessed dark wells
+   with gold glyphs along a bar reads as a row of latched switches, which is
+   exactly what it is -- louder than a bare underline, quieter than eight
+   saturated boxes, because the loudness is carried by a DARK plate rather than
+   by a saturated one.
 
-   TWO -- ON. What stood here before this block existed was the base
-   QToolButton:checked look, and it was NOT a filled red box. The accent wash
-   rgba(232, 84, 63, 0.26) composites over this bar to #5B393A and measures
-   1.339:1; the signal was the base rule's 2px accent LEFT border at 3.694:1.
-   Replacing that with a stroke.hi plate (1.556:1) edged in text.off (2.119:1)
-   therefore did not remove a loud fill. It removed the only element on the
-   button that cleared 3:1 and capped the whole ON signal at 2.119:1.
+   BOX 34x34, content-rect arithmetic as above:
+     width  = 1 + 6 + 20 + 6 + 1                      = 34
+     height = 1 (top) + 5 + 23 + 3 + 2 (bottom rule)  = 34
+   The bottom padding is 3px rather than 5px precisely so the 2px rule is paid
+   for and the box does not change height between states. Measured 34x34.
 
-   That cap is worse than it looks, because the glyph no longer helps. The
-   icon engines used to paint an unchecked icon in the disabled colour and a
-   checked one in the normal colour; that was a legibility bug and has been
-   fixed to key off QIcon::Mode, so the glyph is #C6CCD6 whichever way the
-   toggle sits. `color` in the rules below cannot reach it either -- the
-   engines resolve their pen from their own probe widget, not from the button.
-   The border and background below ARE the entire ON signal.
-
-   So ON goes back to accent, but as an EDGE rather than a face: 2px of
-   border-bottom in #E8543F, 3.694:1 against the bar. That is the only mark in
-   this palette which clears the 3:1 floor for a graphical state indicator on
-   a bg.overlay surface -- the best available neutral, text.off, is 2.119:1
-   and stroke.hi is 1.556:1. Loudness is bounded by AREA instead of by
-   contrast, not by dulling the colour: the button renders 42x38 with a 22px
-   icon, so the mark covers 2 rows of 38, 5.3% of the face, against 100% for a
-   wash. Eight of those at rest reads as a broken rule along the foot of the
-   bar, not as eight red boxes.
-
-   38 is measured, not derived. The obvious arithmetic -- min-height 24, plus
-   1+2 border, plus 4+3 padding -- gives 34 and is wrong, because a 22px icon
-   makes the content box 28px and the min-height floor never binds. Every
-   number in this block was taken off a render: a throwaway Qt 5.15.2 program
-   declaring a class whose metaObject name really is
-   Noggit::Ui::Tools::ViewToolbar::Ui::ViewToolbar, applying this sheet,
-   forcing each state through the members QToolButton::initStyleOption reads
-   (WA_UnderMouse, setDown, setChecked) and sampling the pixels. All eight
-   combinations measured -- including hover AND pressed together, which is what
-   a real click produces and which the document-order tie-breaks below have to
-   resolve -- come back 42x38, so no transition reflows the bar.
-
-   The base QToolButton:checked comment objects that a 2px accent line between
-   two icons reads as a SEPARATOR rather than as state. That is an argument
-   about a LEFT border on a horizontal row, where the line lands in the gap
-   between neighbours. It does not transfer to a bottom border, which lands
-   under one button and touches none of the others. The left strip keeps its
-   wash; this is not a proposal to change it.
-
-   ON and HOVER are on deliberately different axes -- hover is the plate, ON
-   is the underline, and hovering something that is ON shows both. That is why
-   ON gets no plate of its own: if it did, a hovered OFF button and a resting
-   ON button would differ by a border colour alone.
-
-   GEOMETRY. Nothing below changes a button's box. The base rule reserves 2px
-   on the LEFT for the tool strip's accent bar; this bar has no left bar, so
-   it is narrowed to 1px and restated in every state, :disabled included. The
-   2px BOTTOM the underline needs is reserved as transparent in every state
-   for the same reason, and bottom padding drops 4px -> 3px to pay for it. The
-   render confirms that pays exactly: the button stays 38px tall, the same
-   height the base rule alone produces, and the icon sits 8px from the top in
-   every state including the two that draw a bottom border. Only the WIDTH
-   differs from the base rule, 42px against 43px, which is the deliberate 2px
-   -> 1px left-border narrowing and applies to all of this bar's buttons
-   equally.
-
-   Scoped by class name rather than by QToolBar:horizontal, which Qt would
-   parse and then throw away -- the reasoning is on the base QToolButton:checked
-   rule. The class is safe to scope on: the two other ViewToolbar instances
-   (the top secondary bar and the vertical left secondary bar) are filled
-   entirely with QWidgetActions -- check boxes, sliders, labels, push buttons --
-   and contain no QToolButton at all. */
+   Scoped by CLASS NAME rather than by QToolBar:horizontal, which Qt parses and
+   then throws away. The class is safe to scope on: the two other ViewToolbar
+   instances are filled entirely with QWidgetActions and contain no
+   QToolButton. */
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton {
 	background: transparent;
-	color: #C6CCD6;
-	padding: 4px 6px 3px 6px;
+	color: #BFB7AA;
 	border: 1px solid transparent;
 	border-left: 1px solid transparent;
 	border-bottom: 2px solid transparent;
+	border-radius: 5px;
+	padding: 5px 6px 3px 6px;
+	min-width: 20px;
+	max-width: 20px;
+	min-height: 23px;
+	max-height: 23px;
+	icon-size: 20px;
 }
 
-/* OFF, pointer on it. Plate 1.556:1 against the bar, edge 2.119:1. The edge
-   runs all the way round, bottom segment included, so the plate is closed and
-   the reserved 2px slot is never an empty gap; ON is then that one segment
-   going accent. */
+/* OFF, pointer on it: the plate LIFTS to bg.hover, 1.292:1 over the card, with
+   a stroke.hi edge at 1.84:1. Icon derives to #E6E3DD, 5.66:1 on the plate. */
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:hover {
-	background-color: #454C59;
-	color: #EDF0F4;
-	border: 1px solid #59606B;
-	border-left: 1px solid #59606B;
-	border-bottom: 2px solid #59606B;
+	background-color: #5B5651;
+	color: #F3F0E9;
+	border: 1px solid #746D64;
+	border-left: 1px solid #746D64;
+	border-bottom: 2px solid #746D64;
 }
 
-/* ON, at rest. No fill: the underline is the mark, at 3.694:1 against the bar
-   above it and the bar below it. */
+/* ON: the face RECESSES to bg.void, 2.057:1 below the card, and the bottom
+   rule turns accent at 4.27:1 against the card. Icon accent, 8.77:1. */
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:checked {
-	background: transparent;
-	color: #EDF0F4;
+	background-color: #100E0B;
+	color: #F3F0E9;
 	border: 1px solid transparent;
 	border-left: 1px solid transparent;
-	border-bottom: 2px solid #E8543F;
+	border-bottom: 2px solid #DFA52E;
 }
 
-/* ON, pointer on it: both marks at once. Two pseudo-states, so this outranks
-   both single-state rules above it no matter which order Qt walks them in.
-   The underline now has the plate above it rather than the bar, 2.37:1, and
-   the bar still below it at 3.694:1. */
+/* ON, pointer on it: lifted off the resting ON face to bg.alt (1.863:1 recess,
+   so still clearly down) with the stroke.hi edge and the accent rule held.
+   Icon accent 7.95:1. */
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:checked:hover {
-	background-color: #454C59;
-	color: #EDF0F4;
-	border: 1px solid #59606B;
-	border-left: 1px solid #59606B;
-	border-bottom: 2px solid #E8543F;
+	background-color: #1D1916;
+	color: #F3F0E9;
+	border: 1px solid #746D64;
+	border-left: 1px solid #746D64;
+	border-bottom: 2px solid #DFA52E;
 }
 
 /* :pressed ties with :hover and :checked on specificity and wins on document
    order; :checked:pressed ties with :checked:hover and wins the same way. Both
-   are spelled out rather than left to chance. The press is the one state on
-   this bar that fills, because it is momentary and because the click is the
-   moment the answer to "is this on" is about to change anyway. Glyph #C6CCD6
-   on accent.dim is 3.55:1, so it stays readable through the flash; the ON
-   underline is held at full accent so a press does not erase the state.
-   Measured 2.348:1 against the bar, where the base QToolButton:pressed rule
-   this bar used to inherit fills with bg.overlay and so rendered a press at
-   1.000:1 -- the third invisible state on this bar, and the one nobody had
-   noticed. */
+   are spelled out. The ON rule is held at full accent so a press cannot erase
+   the state it is about to change. */
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:pressed {
-	background-color: #B33F2E;
-	color: #EDF0F4;
-	border: 1px solid #B33F2E;
-	border-left: 1px solid #B33F2E;
-	border-bottom: 2px solid #B33F2E;
+	background-color: #B8801F;
+	color: #100E0B;
+	border: 1px solid #B8801F;
+	border-left: 1px solid #B8801F;
+	border-bottom: 2px solid #B8801F;
 }
 
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:checked:pressed {
-	background-color: #B33F2E;
-	color: #EDF0F4;
-	border: 1px solid #B33F2E;
-	border-left: 1px solid #B33F2E;
-	border-bottom: 2px solid #E8543F;
+	background-color: #B8801F;
+	color: #100E0B;
+	border: 1px solid #B8801F;
+	border-left: 1px solid #B8801F;
+	border-bottom: 2px solid #DFA52E;
 }
 
 /* Last of the single-pseudo rules, so it beats :checked on document order and
-   a disabled toggle shows no state mark. Nothing on this bar is ever disabled
-   today; the rule exists so that if something starts disabling them, the
-   result is a greyed glyph rather than a half-live underline. */
+   a disabled toggle shows no state mark. */
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:disabled {
 	background: transparent;
-	color: #59606B;
+	color: #7F786A;
 	border: 1px solid transparent;
 	border-left: 1px solid transparent;
 	border-bottom: 2px solid transparent;
 }
 
-/* The separators between the four groups on this bar sit on bg.overlay, where
-   the stroke colour the base rule uses is nearly the bar itself. */
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar::separator {
-	background-color: #454C59;
+	background-color: #746D64;
 	margin: 5px 4px;
 }
 
 QWidget#gizmoBar QPushButton {
 	background: transparent;
+	color: #BFB7AA;
 	border: 1px solid transparent;
-	border-radius: 4px;
+	border-radius: 5px;
 	min-width: 28px;
 	min-height: 28px;
 	padding: 2px;
@@ -2363,20 +2336,22 @@ QWidget#gizmoBar QPushButton {
 }
 
 QWidget#gizmoBar QPushButton:hover {
-	background-color: #343A45;
-	border: 1px solid transparent;
-	color: #EDF0F4;
+	background-color: #5B5651;
+	border: 1px solid #746D64;
+	color: #F3F0E9;
 }
 
+/* Same recess model as the two bars beside it, so the three read as one
+   family: the checked face drops to bg.void and the glyph turns accent. */
 QWidget#gizmoBar QPushButton:checked {
-	background-color: #E8543F;
-	border: 1px solid #E8543F;
-	color: #16181D;
+	background-color: #100E0B;
+	border: 1px solid #DFA52E;
+	color: #DFA52E;
 }
 
 QWidget#gizmoBar QPushButton:disabled {
 	background: transparent;
-	color: #59606B;
+	color: #7F786A;
 	border: 1px solid transparent;
 }
 
@@ -2390,7 +2365,7 @@ QPushButton#gizmoTranslateButton,
 QPushButton#gizmoVisibleButton {
 	font-weight: 600;
 	font-size: 13px;
-	border-radius: 4px;
+	border-radius: 5px;
 }
 
 /* Overlay sliders and labels are drawn straight over the render. */
@@ -2406,8 +2381,9 @@ QSlider[accessibleName="overlay_slider_horizontal"] {
 
 QLabel[accessibleName="overlay_label"] {
 	background: transparent;
-	color: #EDF0F4;
+	color: #F3F0E9;
 	padding: 0px 10px;
+	font-size: 12px;
 	font-weight: 600;
 }
 
@@ -2418,28 +2394,21 @@ QLabel[accessibleName="overlay_label"] {
 
    HALF OF THIS IS DEAD, and it is the same Q_OBJECT problem as the left tool
    strip. Noggit::Ui::TextureList has the macro and is reachable;
-   Noggit::Ui::PaletteList (src/noggit/ui/texture_palette_small.hpp) does not --
-   only texture_palette_small in that file does -- so Qt sees the class as a
-   plain QListWidget and every PaletteList rule below is discarded. The small
-   texture palette therefore still selects with the generic item-view accent
-   wash from the item-views section, which fills the cell and hides the
-   texture: exactly what these rules exist to prevent.
-
-   It cannot be fixed from here. PaletteList sets no object name and no
-   accessible name (texture_palette_small.cpp:91 just news it up), so there is
-   no hook. One Q_OBJECT line in that header makes all four rules live.
-   Reproduce with:  python check_qss.py theme.qss . --moc <build>/noggit_autogen
-
-   The Noggit-Ui-- single-dash spellings are the ones the shipped Dark theme
-   used. They match nothing in any build and are kept only so that a reader
-   comparing the two sheets can see the pair; the checker names them too. */
+   Noggit::Ui::PaletteList does not -- only texture_palette_small in that file
+   does -- so Qt sees the class as a plain QListWidget and every PaletteList
+   rule below is discarded. One Q_OBJECT line in that header makes all four
+   live. Reproduce with:
+     python check_qss.py theme.qss . --moc <build>/noggit_autogen
+   The Noggit-Ui-- single-dash spellings are what the shipped Dark theme used;
+   they match nothing in any build and are kept only so a reader comparing the
+   two sheets can see the pair. */
 Noggit--Ui--PaletteList::item,
 Noggit-Ui--PaletteList::item,
 Noggit--Ui--TextureList::item,
 Noggit-Ui--TextureList::item {
 	background: transparent;
 	border: 2px solid transparent;
-	border-radius: 4px;
+	border-radius: 5px;
 	padding: 1px;
 }
 
@@ -2448,7 +2417,7 @@ Noggit-Ui--PaletteList::item:hover,
 Noggit--Ui--TextureList::item:hover,
 Noggit-Ui--TextureList::item:hover {
 	background: transparent;
-	border: 2px solid #454C59;
+	border: 2px solid #746D64;
 }
 
 Noggit--Ui--PaletteList::item:selected,
@@ -2456,48 +2425,49 @@ Noggit-Ui--PaletteList::item:selected,
 Noggit--Ui--TextureList::item:selected,
 Noggit-Ui--TextureList::item:selected {
 	background: transparent;
-	border: 2px solid #E8543F;
-	color: #EDF0F4;
+	border: 2px solid #DFA52E;
+	color: #F3F0E9;
 }
 
 QTreeView[accessibleName="ab_treeview"]::item {
 	background: transparent;
 	border: none;
 	border-left: 2px solid transparent;
-	padding: 4px 2px;
+	padding: 5px 4px;
 }
 
 QTreeView[accessibleName="ab_treeview"]::item:hover {
-	background-color: #2A2F38;
-	color: #EDF0F4;
+	background-color: #292621;
+	color: #F3F0E9;
 }
 
 QTreeView[accessibleName="ab_treeview"]::item:selected {
-	background-color: rgba(232, 84, 63, 0.26);
-	border-left: 2px solid #E8543F;
-	color: #EDF0F4;
+	background-color: rgba(223, 165, 46, 0.24);
+	border-left: 2px solid #DFA52E;
+	color: #F3F0E9;
 }
 
-/* The texture brush level slider paints a black-to-white ramp; it is the one
-   control in the app whose groove is data rather than chrome, and therefore
-   the one gradient in this file. The widget sets this name with setObjectName,
-   while the shipped sheets only matched accessibleName -- which is why this
-   control has apparently never rendered as designed. Both spellings are
-   here. */
+/* The texture brush level slider paints a value ramp; it is the one control in
+   the app whose groove is DATA rather than chrome, and therefore the one
+   gradient in this file. Neither end is pure: #F2F0EC and #0C0A08, because the
+   editor has to stay readable beside a bright viewport. The widget sets this
+   name with setObjectName while the shipped sheets only matched accessibleName,
+   which is why this control has apparently never rendered as designed. Both
+   spellings are here. */
 QSlider#texturing_brush_level_slider::groove:vertical,
 QSlider[accessibleName="texturing_brush_level_slider"]::groove:vertical {
 	background-color: qlineargradient(x1:0.5, y1:0, x2:0.5, y2:1,
-	                                  stop:0 #F2F2F2, stop:1 #101216);
-	border: 1px solid #343A45;
-	border-radius: 4px;
+	                                  stop:0 #F2F0EC, stop:1 #0C0A08);
+	border: 1px solid #565049;
+	border-radius: 5px;
 	width: 30px;
 	margin: 0px;
 }
 
 QSlider#texturing_brush_level_slider::handle:vertical,
 QSlider[accessibleName="texturing_brush_level_slider"]::handle:vertical {
-	background-color: #E8543F;
-	border: 1px solid #16181D;
+	background-color: #DFA52E;
+	border: 1px solid #100E0B;
 	border-radius: 2px;
 	height: 6px;
 	width: 34px;
@@ -2515,36 +2485,49 @@ QSlider[accessibleName="texturing_brush_level_slider"]::sub-page:vertical {
 /* --- main menu / project list ------------------------------------------- */
 
 QWidget[accessibleName="main_menu_minimap_holder"] {
-	background-color: #16181D;
-	border: 1px solid #262B33;
-	border-radius: 4px;
+	background-color: #100E0B;
+	border: 1px solid #403B35;
+	border-radius: 8px;
 }
 
 /* The two headings on the project selection window -- "Recent Projects" and
-   "Getting Started". They used to carry an INLINE style sheet set from
-   NoggitProjectSelectionWindow.cpp, which outranks the application sheet, so
-   whichever theme was loaded they stayed 18px of default-coloured text. The
-   inline sheet is gone; this is the rule that dresses them now. */
+   "Getting Started". They head a whole window column rather than a section
+   inside a panel, so they take 17/600 text.hi, one rank above the 15px window
+   title. They used to carry an INLINE style sheet set from
+   NoggitProjectSelectionWindow.cpp, which outranks the application sheet; that
+   inline sheet is gone and this is the rule that dresses them now. */
 QLabel#project-section-title {
-	color: #EDF0F4;
+	color: #F3F0E9;
 	background: transparent;
-	font-size: 16px;
+	font-size: 17px;
 	font-weight: 600;
 	padding: 0px 0px 6px 0px;
 }
 
 /* The recent-projects list. Every row is a ProjectListItem widget laid over
    the item, so the ROW draws the hover and the ITEM draws the selection: the
-   widget's background is transparent (see below), which is what lets the
-   view's own selection wash show through from underneath it.
+   widget background is transparent, which is what lets the view own selection
+   wash show through from underneath it.
 
-   Rows are given no item padding of their own -- the widget carries its
-   margins -- and a 2px left rule on selection, the same "this is the thing you
-   are acting on" mark the dock title and the tool strip use. */
+   THE WELL IS WHAT FIXED THE ROW. In the previous sheet this list sat on
+   bg.base and its five selection states measured 5.38 / 4.75 / 4.35 / 3.80 /
+   4.33 for the secondary caption -- three of them under the 4.5 floor -- which
+   is what the extra `text.mid` token existed to paper over. On a bg.void well
+   the same five states measure, for text.dim:
+
+     row at rest            #100E0B    9.70
+     row hovered            #292621    7.58
+     row selected, active   #423213    6.23
+     row selected + hovered #564117    4.88
+     row selected, inactive #3C3732    5.92
+
+   The worst reading in the matrix is 4.88:1 against 3.80:1 before, so the
+   caption goes back to text.dim and text.mid is deleted rather than
+   maintained. */
 QListWidget[accessibleName="project_list"] {
-	background-color: #1B1E24;
-	border: 1px solid #262B33;
-	border-radius: 6px;
+	background-color: #100E0B;
+	border: 1px solid #403B35;
+	border-radius: 8px;
 	padding: 4px;
 }
 
@@ -2552,65 +2535,23 @@ QListWidget[accessibleName="project_list"]::item {
 	background: transparent;
 	border: none;
 	border-left: 2px solid transparent;
-	border-radius: 4px;
+	border-radius: 5px;
 	padding: 0px;
 	margin: 2px 2px;
 }
 
-/* THE WASH IS A TINT, THE EDGE IS THE MARK. A project row is three lines tall
-   and full panel width, so it is by some distance the largest surface in this
-   application that ever takes an accent wash -- and at 0.26 over bg.base that
-   composites to #502C2B, a saturated red-brown slab that shouted louder than
-   the 3D view it is a doorway to. Every other 0.26 wash in this sheet lands
-   on a control the size of an icon button, where the same alpha is a hint.
-   Area was the missing variable.
-
-   0.18 composites to #402829, 1.235:1 against the panel -- just above this
-   sheet's own bg.base -> bg.raised elevation step (1.101) and bg.raised ->
-   bg.overlay (1.128), i.e. about as visible as one surface sitting on
-   another, which is what a selected row is. The 2px accent edge is untouched
-   and is unambiguously the primary mark. The title, text.hi 14px/600, reads
-   11.83:1 on the tint (was 10.58). Border width does not change in any state,
-   so no row reflows. The alpha is kept at 0.18 for those reasons.
-
-   THE SECOND LINE WAS THE PROBLEM, NOT THE WASH. The earlier revision of this
-   comment claimed the text.dim project information was fine at 4.35:1 "above
-   the 3:1 floor this sheet uses for a caption on a tinted plate". Two things
-   are wrong with that. There is no such 3:1 floor -- 3:1 is the WCAG minimum
-   for a GRAPHICAL object or for large text, and this is 11px prose, so its
-   floor is 4.5:1 and 4.35 was under it. And 4.35 was measured on the ONE
-   state that happens to read best; the row has four, and the reading it never
-   took was the worst:
-
-                                        composite   text.dim   text.mid
-     row at rest, panel under it         #1B1E24      5.38       6.96
-     row hovered, +6% text wash          #25282F      4.75       6.15
-     row selected, window active         #402829      4.35       5.64
-     row selected AND hovered            #483233      3.80       4.92
-     row selected, window inactive       #2A2F38      4.33       5.60
-
-   Three of the five are below 4.5 and the worst is 3.80. Lifting the wash
-   cannot fix that column -- at 0.12, low enough that the tint stops reading
-   as an elevation step at all, selected-and-hovered still only reaches 4.13.
-   The text is what was wrong, so the text is what moves: #project-information
-   below takes text.mid, and the whole column clears the floor with the
-   minimum at 4.92:1. Nothing in the row's geometry, size or weight changes,
-   so the caption still reads as secondary to the 14px/600 title above it --
-   size and weight were always what carried that, not the 0.4 of a contrast
-   point being recovered here. */
 QListWidget[accessibleName="project_list"]::item:selected:active {
-	background-color: rgba(232, 84, 63, 0.18);
-	border-left: 2px solid #E8543F;
+	background-color: rgba(223, 165, 46, 0.24);
+	border-left: 2px solid #DFA52E;
 }
 
 QListWidget[accessibleName="project_list"]::item:selected:!active {
-	background-color: #2A2F38;
-	border-left: 2px solid #59606B;
+	background-color: #3C3732;
+	border-left: 2px solid #746D64;
 }
 
 /* The row widget itself. It is a plain QWidget, so it only paints a style
-   sheet background because the constructor sets WA_StyledBackground; without
-   that attribute both of these rules would be silently inert.
+   sheet background because the constructor sets WA_StyledBackground.
 
    Hover is a TRANSLUCENT lift rather than an opaque plate, deliberately: an
    opaque fill here would cover the selection wash the view painted underneath,
@@ -2618,27 +2559,24 @@ QListWidget[accessibleName="project_list"]::item:selected:!active {
 QWidget#project-list-item {
 	background: transparent;
 	border: none;
-	border-radius: 4px;
+	border-radius: 5px;
 }
 
 QWidget#project-list-item:hover {
-	background-color: rgba(198, 204, 214, 0.06);
+	background-color: rgba(228, 223, 215, 0.08);
 }
 
 QLabel#project-title-label {
-	color: #EDF0F4;
+	color: #F3F0E9;
 	background: transparent;
 	font-size: 14px;
 	font-weight: 600;
 	padding: 0px;
 }
 
-/* text.mid, not text.dim: this label is the one caption in the sheet that
-   spends most of its life on a surface LIGHTER than bg.base. See the wash
-   block above for the five-state measurement -- minimum 4.92:1 here against
-   3.80:1 before. */
+/* Back on text.dim: see the five-state table on the list rule above. */
 QLabel#project-information {
-	color: #A0A8B4;
+	color: #BFB7AA;
 	background: transparent;
 	font-size: 11px;
 	padding: 0px;
@@ -2649,113 +2587,82 @@ QLabel#project-icon-label {
 	padding: 0px;
 }
 
+/* A favourite or a pin is a marked state, not a warning, so it takes the
+   accent: 6.86:1 on the panel and 8.77:1 over the bg.void list well. */
 QLabel#project-favorite,
 QLabel#project-pinned {
 	background: transparent;
-	color: #E0A33E;
+	color: #DFA52E;
 }
 
 QPushButton#importPathField_browse,
 QPushButton#wmvLogPathField_browse {
-	margin-left: 6px;
+	margin-left: 8px;
 }
 
 /* --- settings window ----------------------------------------------------- */
 
-/* The settings window is where a user goes to CHANGE the theme, so it is the
-   one window that has no excuse for looking unfinished. Almost all of it is
-   already covered by the class rules above -- it is five tabs of plain
-   QCheckBox / QLineEdit / QSpinBox / QGroupBox and carries no inline style
-   sheet at all -- so only the footer needed anything.
-
-   The footer used to be a sentence in default 12/400 body text sitting level
-   with two identical grey buttons. Three things at the same weight, one of
-   which is the action the window exists to perform.
-
-   The fix for that was the Save button, and only the Save button. It takes the
-   primary treatment (set in SettingsPanel.cpp, see QPushButton[state="primary"]
-   above): an accent fill among two flat grey ones, which is a difference in
-   KIND and settles the hierarchy on its own. Demoting the sentence as well was
-   a second answer to a question already answered, and it was paid for out of
-   the wrong budget -- 12/400 text on bg.base is 10.34:1, 11/400 text.dim is
-   5.38:1, so the sentence lost nearly half its contrast and a sixth of its
-   size at once.
-
-   That sentence is "Changes may not take effect until next launch". It is the
-   only thing in the window that explains why a setting the user just changed
-   and saved appears to do nothing, and it has to compete with a saturated
-   accent button two inches to its right. A caption rank is for prose ABOUT a
-   control -- a unit, a range hint, something the user reads once and never
-   again. This is a consequence the user needs, so it goes back to body: 12px
-   text #C6CCD6, 10.34:1 on the bg.base footer.
-
-   It keeps the 12px right margin, which was the part of that pass that was
-   simply right -- the sentence used to butt against the buttons. */
+/* "Changes may not take effect until next launch" is the only thing in the
+   window that explains why a setting the user just saved appears to do
+   nothing, so it stays at body rank -- 12px text, 11.36:1 on the panel --
+   rather than being demoted to a caption. The hierarchy in that footer is
+   settled by the Save button taking the primary treatment, which is a
+   difference in KIND, not by making the sentence quieter. */
 QLabel#_restart_hint {
-	color: #C6CCD6;
+	color: #E4DFD7;
 	background: transparent;
 	font-size: 12px;
 	margin-right: 12px;
 }
 
 QPushButton#searchButton {
-	padding: 4px 10px;
+	padding: 5px 12px;
 	margin-right: 4px;
 }
 
 /* The collapsible section headers ExpanderWidget builds -- "Custom Brush" and
    friends. It still sets one inline declaration, text-align: left, and that
-   wins over this rule for that property alone. It has to: QPushButton has no
-   setAlignment and no reachable style option, so a theme that says nothing
-   about this button would centre a section caption.
+   wins over this rule for that property alone; it has to, because QPushButton
+   has no setAlignment and a theme that said nothing would centre a section
+   caption.
 
-   It used to set "font-weight: bold; border: none;" as well, and both of those
-   beat this rule -- bold is 700 against the 600 below, and border: none erased
-   the top hairline that is the only separation between two collapsed sections
-   plus the 2px left reservation that stops the accent bar shifting the caption
-   when it appears. Both are gone from the widget, so everything below except
-   text-align is now live.
-
-   It takes the QGroupBox heading treatment verbatim -- 11/700 text on a stroke
-   rule -- because it IS the same rank. "Custom Brush" heads a section exactly
-   the way "Settings" does, and the only reason the two ever looked different
-   is that one is a QGroupBox and the other is a QPushButton pretending to be
-   one. The weight lands back at the 700 the widget used to force inline; the
-   difference is that it is now this sheet's decision and a theme can change
-   it. */
+   It takes the QGroupBox heading treatment verbatim -- now 13/700 text.hi on a
+   stroke rule -- because it IS the same rank. "Custom Brush" heads a section
+   exactly the way "Settings" does, and the only reason the two ever looked
+   different is that one is a QGroupBox and the other is a QPushButton
+   pretending to be one. */
 QPushButton#__qt__passive_button {
 	background: transparent;
-	color: #C6CCD6;
+	color: #F3F0E9;
 	border: none;
-	border-top: 1px solid #343A45;
+	border-top: 1px solid #565049;
 	border-left: 2px solid transparent;
 	border-radius: 0px;
 	padding: 8px 8px;
-	font-size: 11px;
+	font-size: 13px;
 	font-weight: 700;
 	text-align: left;
 }
 
 QPushButton#__qt__passive_button:hover {
-	background-color: #22262E;
-	color: #EDF0F4;
+	background-color: #3C3732;
+	color: #F3F0E9;
 }
 
 QPushButton#__qt__passive_button:checked {
-	color: #EDF0F4;
-	border-left: 2px solid #E8543F;
+	color: #F3F0E9;
+	border-left: 2px solid #DFA52E;
 }
 
 /* --- ground effects tool -------------------------------------------------- */
 
 /* The four weight cells under a ground-effect set. The tool used to draw them
-   with an inline "1px solid darkGray", the Qt colour name -- #A9A9A9, which is
-   brighter than any text colour in this palette and read as four lit boxes in
-   a dark panel. The list takes NoSelection, so the cell is a container and not
-   a control: stroke, not stroke.hi. */
+   with an inline "1px solid darkGray", the Qt colour name -- #A9A9A9, brighter
+   than any text colour in this palette. The list takes NoSelection, so the
+   cell is a container and not a control: stroke, not stroke.hi. */
 QListWidget[accessibleName="ge_weight_list"]::item {
-	border: 1px solid #343A45;
-	border-radius: 4px;
+	border: 1px solid #565049;
+	border-radius: 5px;
 	padding-right: 6px;
 }
 
@@ -2768,10 +2675,12 @@ QListWidget[accessibleName="ge_weight_list"]::item {
    QSS margins on a QLabel are honoured by the form layout as extra row height,
    which is why the spacing does not need a spacer item. */
 QLabel#help-section-header {
-	color: #EDF0F4;
+	color: #F3F0E9;
 	background: transparent;
-	margin-top: 10px;
-	margin-bottom: 2px;
+	font-size: 13px;
+	font-weight: 700;
+	margin-top: 12px;
+	margin-bottom: 4px;
 	margin-left: 0px;
 }
 
@@ -2782,29 +2691,29 @@ QPushButton[accessibleName="map_wizard_remove_button"],
 QPushButton[accessibleName="map_wizard_save_button"],
 QPushButton[accessibleName="map_wizard_discard_button"] {
 	qproperty-iconSize: 14px 14px;
-	padding: 4px 10px;
+	padding: 5px 12px;
 }
 
 QPushButton[accessibleName="map_wizard_remove_button"] {
-	margin-left: 6px;
+	margin-left: 8px;
 }
 
 QPushButton[accessibleName="map_wizard_save_button"] {
-	margin-right: 6px;
+	margin-right: 8px;
 }
 
 /* --- colour widgets ------------------------------------------------------ */
 
 color_widgets--ColorSelector {
 	min-width: 100px;
-	max-height: 26px;
-	border: 1px solid #343A45;
-	border-radius: 4px;
+	max-height: 28px;
+	border: 1px solid #565049;
+	border-radius: 5px;
 }
 
 color_widgets--ColorPreview {
-	border: 1px solid #343A45;
-	border-radius: 4px;
+	border: 1px solid #565049;
+	border-radius: 5px;
 }
 
 color_widgets--ColorWheel {
@@ -2812,13 +2721,14 @@ color_widgets--ColorWheel {
 	padding: 16px;
 }
 
-/* A QLineEdit subclass, so it needs the same vpad 0 the base class needs to
-   come out 26px tall rather than 34. */
+/* A QLineEdit subclass, so it needs the same padding the base class needs to
+   come out 28px tall. */
 color_widgets--ColorLineEdit {
-	background-color: #22262E;
-	border: 1px solid #343A45;
-	border-radius: 4px;
-	padding: 0px 8px;
+	background-color: #100E0B;
+	color: #F3F0E9;
+	border: 1px solid #565049;
+	border-radius: 5px;
+	padding: 1px 8px;
 	min-height: 16px;
 }
 
@@ -2831,58 +2741,60 @@ color_widgets--ColorLineEdit {
 ads--CDockContainerWidget,
 ads--CDockAreaWidget,
 ads--CDockWidget {
-	background-color: #1B1E24;
+	background-color: #292621;
 	border: none;
 }
 
 ads--CDockContainerWidget ads--CDockSplitter::handle {
-	background-color: #16181D;
+	background-color: #100E0B;
 }
 
 ads--CDockAreaTitleBar {
-	background-color: #1B1E24;
+	background-color: #292621;
 	border: none;
-	border-bottom: 1px solid #262B33;
+	border-bottom: 1px solid #403B35;
 }
 
 ads--CDockWidgetTab {
 	background: transparent;
-	color: #8A93A0;
+	color: #BFB7AA;
 	border: none;
 	border-bottom: 2px solid transparent;
-	padding: 5px 12px;
-	max-height: 28px;
+	padding: 6px 12px;
+	max-height: 30px;
+	font-size: 13px;
+	font-weight: 700;
 }
 
 ads--CDockWidgetTab:hover {
-	background-color: #22262E;
-	color: #EDF0F4;
+	background-color: #3C3732;
+	color: #F3F0E9;
 }
 
 ads--CDockWidgetTab[activeTab="true"] {
 	background: transparent;
-	color: #EDF0F4;
-	border-bottom: 2px solid #E8543F;
+	color: #F3F0E9;
+	border-bottom: 2px solid #DFA52E;
 }
 
 ads--CDockWidgetTab QLabel {
-	color: #8A93A0;
+	color: #BFB7AA;
 	background: transparent;
 }
 
 ads--CDockWidgetTab[activeTab="true"] QLabel {
-	color: #EDF0F4;
+	color: #F3F0E9;
 }
 
 ads--CTitleBarButton {
 	background: transparent;
 	border: none;
-	border-radius: 4px;
+	border-radius: 5px;
 	padding: 2px;
 }
 
 ads--CTitleBarButton:hover {
-	background-color: #2A2F38;
+	background-color: #3C3732;
 }
 
 QToolButton#tabCloseButton,
@@ -2913,7 +2825,7 @@ QLabel#floatingTitleLabel,
 QLabel#dockWidgetTabLabel,
 QLabel#DockWidgetAreaLabel {
 	background: transparent;
-	color: #8A93A0;
+	color: #BFB7AA;
 	font-size: 11px;
-	font-weight: 600;
+	font-weight: 700;
 }

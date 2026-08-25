@@ -2,6 +2,7 @@
 
 #include <noggit/Camera.hpp>
 #include <noggit/Sky.h>
+#include <noggit/ui/DesignTokens.hpp>
 #include <noggit/ui/minimap_widget.hpp>
 #include <noggit/World.h>
 
@@ -9,6 +10,7 @@
 #include <QEvent>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QPen>
 #include <QToolTip>
 
 namespace
@@ -19,6 +21,77 @@ namespace
   // placeholder follows the application font instead of naming a family this file cannot
   // guarantee is installed.
   int const PLACEHOLDER_FONT_PIXEL_SIZE = 13;
+
+  // WHY EVERY MARKER ON THIS WIDGET IS DRAWN TWICE. NO EXCEPTIONS -- READ THIS BEFORE ADDING A
+  // painter.setPen HERE.
+  //
+  // This is the one surface in the application where the design system's contrast tables do not
+  // apply, because there is no surface token underneath: the markers are drawn over the map's
+  // own minimap image, which spans the entire brightness range the game has. No single flat pen
+  // survives that. Ratios below are WCAG 2.1, sRGB, (Lmax + 0.05) / (Lmin + 0.05), recomputed
+  // for this comment rather than carried over from anywhere.
+  //
+  // The bounding case is not "snow" and "dark rock", it is white and black, because a minimap
+  // tile can hold a specular highlight or an unlit cave mouth. Against BOTH extremes at once:
+  //
+  //                    on #FFFFFF   on #000000
+  //     Qt::red           4.00          5.25     <- what the camera arrow used to be
+  //     Qt::blue          8.59          2.44     <- what the sky spheres used to be
+  //     #FFFF00           1.07         19.56     <- what the dirty-tile rectangle used to be
+  //     ACCENT alone      2.20          9.56
+  //     WARN alone        2.84          7.39
+  //     INFO alone        2.40          8.76
+  //     TEXT_DIM alone    1.99         10.57
+  //
+  // Every palette token fails on white, and by arithmetic that is unavoidable: a flat colour
+  // clears 3:1 against black AND white only if its relative luminance lies in [0.100, 0.300],
+  // and every token whose MEANING fits a marker here sits above that band (ACCENT 0.428,
+  // WARN 0.319, INFO 0.388, TEXT_DIM 0.478). Swapping the pure primaries for palette tokens and
+  // stopping there makes the markers WORSE on snow than the colours they replaced -- #FFFF00 to
+  // WARN alone is 1.07 -> 2.84, still under the floor, and Qt::blue to INFO alone is 8.59 ->
+  // 2.40, a token that PASSED on white turned into one that does not.
+  //
+  // So each marker is stroked in INK at MARKER_HALO_WIDTH first and then in its own token at
+  // MARKER_PEN_WIDTH on top, and the legible mark is the PAIR. INK is 19.27:1 on white and the
+  // token core is 7.39:1 to 10.57:1 on black, so whichever extreme the terrain reaches, exactly
+  // one of the two strokes is far over the 3:1 graphical floor and neither extreme leaves both
+  // weak. The marker also always reads against its own outline rather than against the map --
+  // ACCENT on INK 8.77:1, WARN on INK 6.78:1, INFO on INK 8.04:1, TEXT_DIM on INK 9.70:1 -- and
+  // not one of those four numbers moves with the terrain.
+  //
+  // Cost is one extra stroke per marker: one line for the camera, one rectangle for the global
+  // WMO, one ellipse per sky, and one rectangle per dirty or selected tile. Sky counts are in
+  // the tens; the tile loop is 64x64 but only marked tiles pay.
+  //
+  // Functions rather than namespace-scope QPen objects: a QPen built at static-initialisation
+  // time runs before QApplication exists, and the ordering between translation units is not
+  // defined. Both are trivial to construct and this widget already builds a QPainter per paint.
+  constexpr qreal MARKER_PEN_WIDTH = 1.0;
+  constexpr qreal MARKER_HALO_WIDTH = 3.0;
+
+  QPen markerHaloPen (qreal width = MARKER_HALO_WIDTH)
+  {
+    return QPen (Noggit::Ui::Design::color (Noggit::Ui::Design::INK), width);
+  }
+
+  QPen markerPen (char const* token)
+  {
+    return QPen (Noggit::Ui::Design::color (token), MARKER_PEN_WIDTH);
+  }
+
+  // The tile markers are the one place the halo cannot simply be MARKER_HALO_WIDTH. They are
+  // stroked on a path inset 1px inside a cell that is (min(w,h)/64) pixels across, so the cell
+  // is 16px at this widget's 1024px maximum, 8px at its 512px sizeHint and 2px at its 128px
+  // minimum. A 3px pen is centred on the path and therefore reaches 1.5px outside it, which is
+  // half a pixel past the cell edge -- harmless at 8px and above, but at a 2px cell it would
+  // paint a 3x3 ink blob over both neighbours and turn a sparse selection into a dark smear.
+  // Clamped to the cell width, and floored at MARKER_PEN_WIDTH + 1 so there is always at least
+  // half a pixel of ink showing on each side of the core and the halo never degenerates into
+  // being completely overpainted by it.
+  qreal tileMarkerHaloWidth (int tile_size)
+  {
+    return qBound (MARKER_PEN_WIDTH + 1.0, qreal (tile_size), MARKER_HALO_WIDTH);
+  }
 }
 
 namespace Noggit
@@ -278,26 +351,51 @@ namespace Noggit
                                        )
                                );
 
+              QRect const marker_rect ( tile_size * i + 1
+                                      , tile_size * j + 1
+                                      , tile_size - 2
+                                      , tile_size - 2
+                                      );
+
               if (changed)
               {
-                painter.setPen(QColor::fromRgbF(1.0f, 1.0f, 0.0f, 1.f));
-                painter.drawRect ( QRect ( tile_size * i + 1
-                                         , tile_size * j + 1
-                                         , tile_size - 2
-                                         , tile_size - 2
-                                         )
-                                 );
+                // WARN. The design system names this exact state -- an edited tile that has not
+                // been written out is `db.dirty`, and dirty is warn everywhere in the editor.
+                // It was pure #FFFF00, which is not in the palette, is the single most
+                // eye-grabbing colour available, and made an ordinary unsaved tile shout louder
+                // than the selection did.
+                //
+                // Haloed like every other marker on this widget, and this is the marker where
+                // skipping it does the most damage: #FFFF00 was 1.07:1 on white but WARN alone
+                // is only 2.84:1, so a bare token pen leaves the ONE mark that says "you have
+                // not saved this" under the 3:1 floor on any snowfield. Haloed it is 19.27:1
+                // there and 7.39:1 on black.
+                painter.setPen (markerHaloPen (tileMarkerHaloWidth (tile_size)));
+                painter.drawRect (marker_rect);
+
+                painter.setPen (markerPen (Design::WARN));
+                painter.drawRect (marker_rect);
               }
-              
+
               if (_use_selection && _selected_tiles->at(64 * i + j))
               {
-                painter.setPen(QColor::fromRgbF(1.0f, 0.0f, 0.0f, 1.f));
-                painter.drawRect ( QRect ( tile_size * i + 1
-                    , tile_size * j + 1
-                    , tile_size - 2
-                    , tile_size - 2
-                    )
-                );
+                // ACCENT, matching every other selection in the application. This was pure
+                // #FF0000 -- the same red as the camera arrow, the same red as the global-WMO
+                // outline, and under the previous scheme the same red as "error" and "delete".
+                // Selecting a tile is not a warning about it.
+                //
+                // Haloed: ACCENT alone is 2.20:1 on white, i.e. a bare token pen would hide the
+                // selection on exactly the terrain #FF0000 was still visible on (4.00:1). The
+                // pair is 19.27:1 on white and 9.56:1 on black.
+                //
+                // Drawn on the same path as the dirty marker above and therefore still covering
+                // it when a tile is both, which is what the bare pens did too -- unchanged on
+                // purpose.
+                painter.setPen (markerHaloPen (tileMarkerHaloWidth (tile_size)));
+                painter.drawRect (marker_rect);
+
+                painter.setPen (markerPen (Design::ACCENT));
+                painter.drawRect (marker_rect);
               }
             }
           }
@@ -310,8 +408,20 @@ namespace Noggit
             //! \todo Get actual color from sky.
             //! \todo Get actual radius.
             //! \todo Inner and outer radius?
-            painter.setPen (Qt::blue);
 
+            // Halo first, marker second -- see markerHaloPen for why every marker on this
+            // widget is drawn twice. INFO rather than the Qt::blue this was: pure #0000FF
+            // measures 2.44:1 against black, so a sky sphere over anywhere that was not snow
+            // was effectively invisible. The haloed pair is 19.27:1 on white, 8.76:1 on black.
+            painter.setPen (markerHaloPen());
+            painter.drawEllipse ( QPointF ( sky.pos.x * scale_factor
+                                          , sky.pos.z * scale_factor
+                                          )
+                                , 10.0 // radius
+                                , 10.0
+                                );
+
+            painter.setPen (markerPen (Design::INFO));
             painter.drawEllipse ( QPointF ( sky.pos.x * scale_factor
                                           , sky.pos.z * scale_factor
                                           )
@@ -323,7 +433,6 @@ namespace Noggit
 
         if (_camera)
         {
-          painter.setPen (Qt::red);
 
           // hackfix
           auto yaw = _camera->yaw();
@@ -344,13 +453,30 @@ namespace Noggit
                                );
           camera_vector.setLength (15.0);
 
+          // ACCENT, because the camera arrow is the one mark on this widget that says where YOU
+          // are -- the design system's accent means "the thing you are acting on" and nothing
+          // else on a minimap qualifies. It was Qt::red, i.e. pure #FF0000, which under the old
+          // scheme was also the selection colour, the error colour and the global-WMO outline
+          // below, so four unrelated things on one widget were the same red. Haloed pair:
+          // 19.27:1 on white, 9.56:1 on black.
+          painter.setPen (markerHaloPen());
+          painter.drawLine (camera_vector);
+
+          painter.setPen (markerPen (Design::ACCENT));
           painter.drawLine (camera_vector);
         }
-      
+
         if (_world->mapIndex.hasAGlobalWMO())
         {
-            painter.setPen(QColor::fromRgbF(1.0f, 0.0f, 0.0f, 1.f));
-
+            // TEXT_DIM: this rectangle is the extent of the map's single global WMO, which is
+            // structure rather than status, and it is deliberately the quietest of the three
+            // markers so it cannot compete with the camera. It was pure red too.
+            //
+            // Quietest does NOT mean unhaloed. TEXT_DIM is the lightest token used as a marker
+            // here and so the worst of them on white -- 1.99:1 alone, under the floor and below
+            // even the #FF0000 it replaced (4.00:1). Haloed the mark is 19.27:1 on white and
+            // 10.57:1 on black. The pens are set below, once the rectangle is known, so the
+            // halo and the core are stroked on one shared path.
             auto extents = _world->mWmoEntry.extents;
 
             // WMOInstance inst(_world->mWmoFilename, &_world->mWmoEntry, _world->_context);
@@ -365,12 +491,18 @@ namespace Noggit
 
             float width = max_point_x - min_point_x;
             float height = max_point_y - min_point_y;
-            painter.drawRect(QRectF(min_point_x
+
+            QRectF const wmo_rect (min_point_x
                 , min_point_y
                 , width // width
                 , height // height
-            )
             );
+
+            painter.setPen (markerHaloPen());
+            painter.drawRect (wmo_rect);
+
+            painter.setPen (markerPen (Design::TEXT_DIM));
+            painter.drawRect (wmo_rect);
         }
 }
       else
@@ -387,11 +519,13 @@ namespace Noggit
         // that was itself unreadable at every size below 348px.
         //
         // It is now the interface font at the caption size (75x17 px, fits from the 128px
-        // minimum up) in PlaceholderText, which darkPalette() sets to the text.dim token
-        // #8A93A0 -- 5.72:1 on the #16181D the minimap holder is painted, 5.38:1 on the
-        // #1B1E24 base the other hosts sit on, both comfortably over the 4.5:1 floor and
-        // deliberately under the body-text rank, because the whole point is that it recedes
-        // once a map is chosen.
+        // minimum up) in PlaceholderText, which darkPalette() sets to the design system's
+        // TEXT_DIM token #BFB7AA -- 9.70:1 on the BG_VOID #100E0B the minimap holder is
+        // painted, 7.58:1 on the BG_PANEL #292621 the other hosts sit on. Both clear the 7:1
+        // body floor with room, and both are deliberately under the body-text RANK, because
+        // the whole point is that it recedes once a map is chosen. (Under the previous
+        // near-neutral scheme the same two readings were 5.72:1 and 5.38:1 -- legal, but only
+        // just, and on a surface ladder whose four levels spanned 1.321:1 in total.)
         //
         // The font is a member rather than a temporary: paintEvent runs on every mouse move
         // over this widget (see the performance \todo above), and QFont construction resolves

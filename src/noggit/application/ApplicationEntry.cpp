@@ -43,20 +43,38 @@ namespace
   // indicators, the text cursor, item view branch guides. Fusion's stock palette is light, so
   // without this half the application stays light no matter which theme is loaded.
   //
-  // ok/warn/bad (#4FB477 / #E0A33E / #E0574B) are deliberately absent: QPalette has no role
-  // that means "this went well", so they exist only in the stylesheet.
-  QColor const TOKEN_BG_SUNKEN   (0x16, 0x18, 0x1D);
-  QColor const TOKEN_BG_BASE     (0x1B, 0x1E, 0x24);
-  QColor const TOKEN_BG_RAISED   (0x22, 0x26, 0x2E);
-  QColor const TOKEN_BG_OVERLAY  (0x2A, 0x2F, 0x38);
-  QColor const TOKEN_STROKE      (0x34, 0x3A, 0x45);
-  QColor const TOKEN_STROKE_SOFT (0x26, 0x2B, 0x33);
-  QColor const TOKEN_TEXT_HI     (0xED, 0xF0, 0xF4);
-  QColor const TOKEN_TEXT        (0xC6, 0xCC, 0xD6);
-  QColor const TOKEN_TEXT_DIM    (0x8A, 0x93, 0xA0);
-  QColor const TOKEN_TEXT_OFF    (0x59, 0x60, 0x6B);
-  QColor const TOKEN_ACCENT      (0xE8, 0x54, 0x3F);
-  QColor const TOKEN_ACCENT_DIM  (0xB3, 0x3F, 0x2E);
+  // The "Ironforge" palette: warm slate neutrals (hue 30-40 degrees, 6-19% saturation) with a
+  // gold accent. The accent moved from crimson to gold in this revision because crimson could
+  // not be both "the thing you are acting on" and "the thing that will destroy your data" --
+  // the old accent #E8543F and the old error #E0574B measured 1.024:1 apart in luminance and
+  // 4.0 degrees in hue, i.e. the same colour. Crimson survives as the destructive rank only.
+  //
+  // ok/warn/bad are deliberately absent: QPalette has no role that means "this went well", so
+  // they exist only in the stylesheet. TOKEN_INFO is here because QPalette::Link does have a
+  // meaning and a hyperlink is information rather than an action.
+  //
+  // Measured, and the numbers the roles below are chosen from (WCAG 2.1, sRGB):
+  //   surface ladder   void->panel 1.279  panel->raised 1.281  raised->overlay 1.256
+  //                    end to end 2.057:1, where the previous palette managed 1.321:1 total
+  //   text on panel    text.hi 13.24  text 11.36  text.dim 7.58  text.off 3.44
+  //   text on void     text.hi 16.93  text 14.53  text.dim 9.70  text.off 4.40
+  //   ink on accent    8.77:1, against 4.88:1 for the same ink on the old crimson
+  QColor const TOKEN_BG_VOID     (0x10, 0x0E, 0x0B);
+  QColor const TOKEN_BG_ALT      (0x1D, 0x19, 0x16);
+  QColor const TOKEN_BG_PANEL    (0x29, 0x26, 0x21);
+  QColor const TOKEN_BG_RAISED   (0x3C, 0x37, 0x32);
+  QColor const TOKEN_BG_OVERLAY  (0x4A, 0x46, 0x40);
+  // stroke #565049 is deliberately NOT here. It is a border token, lighter than bg.raised, and
+  // the only role it was ever assigned was QPalette::Mid -- which has to be DARKER than Button.
+  // See the shade ramp below.
+  QColor const TOKEN_STROKE_HI   (0x74, 0x6D, 0x64);
+  QColor const TOKEN_TEXT_HI     (0xF3, 0xF0, 0xE9);
+  QColor const TOKEN_TEXT        (0xE4, 0xDF, 0xD7);
+  QColor const TOKEN_TEXT_DIM    (0xBF, 0xB7, 0xAA);
+  QColor const TOKEN_TEXT_OFF    (0x7F, 0x78, 0x6A);
+  QColor const TOKEN_ACCENT      (0xDF, 0xA5, 0x2E);
+  QColor const TOKEN_ACCENT_PRESS(0xB8, 0x80, 0x1F);
+  QColor const TOKEN_INFO        (0x6F, 0xAE, 0xDC);
 
   char const* const DEFAULT_THEME_NAME = "CrimsonSlate";
   char const* const SYSTEM_THEME_NAME = "System";
@@ -72,39 +90,71 @@ namespace
 
     // The two-argument setColor() writes Active, Inactive and Disabled at once; the Disabled
     // overrides below then narrow the group that needs to differ.
-    palette.setColor (QPalette::Window, TOKEN_BG_BASE);
+    //
+    // Base is bg.void because an input and an item view are WELLS in this palette: a field goes
+    // BACK to the floor while a button comes FORWARD to bg.raised, and that difference in
+    // direction is what stops "press this" and "type here" looking like the same object.
+    palette.setColor (QPalette::Window, TOKEN_BG_PANEL);
     palette.setColor (QPalette::WindowText, TOKEN_TEXT);
-    palette.setColor (QPalette::Base, TOKEN_BG_SUNKEN);
-    palette.setColor (QPalette::AlternateBase, TOKEN_BG_RAISED);
+    palette.setColor (QPalette::Base, TOKEN_BG_VOID);
+    palette.setColor (QPalette::AlternateBase, TOKEN_BG_ALT);
     palette.setColor (QPalette::ToolTipBase, TOKEN_BG_OVERLAY);
     palette.setColor (QPalette::ToolTipText, TOKEN_TEXT_HI);
     palette.setColor (QPalette::Text, TOKEN_TEXT);
     palette.setColor (QPalette::Button, TOKEN_BG_RAISED);
     palette.setColor (QPalette::ButtonText, TOKEN_TEXT);
     palette.setColor (QPalette::BrightText, TOKEN_TEXT_HI);
-    palette.setColor (QPalette::Link, TOKEN_ACCENT);
-    palette.setColor (QPalette::LinkVisited, TOKEN_ACCENT_DIM);
+
+    // A hyperlink is information, not an action. The accent means "the thing you are acting on"
+    // and nothing else, so Link takes info (#6FAEDC, 6.29:1 on the panel) and only the visited
+    // state -- which is a past action -- borrows the accent's pressed value.
+    palette.setColor (QPalette::Link, TOKEN_INFO);
+    palette.setColor (QPalette::LinkVisited, TOKEN_ACCENT_PRESS);
     palette.setColor (QPalette::Highlight, TOKEN_ACCENT);
 
-    // Dark on the accent, not white: measured against #E8543F, #16181D gives 4.85:1 where
-    // #EDF0F4 gives only 3.19:1. Selected rows have to stay readable, so the darker one wins.
-    palette.setColor (QPalette::HighlightedText, TOKEN_BG_SUNKEN);
+    // Ink on the accent, not white: measured against #DFA52E, #100E0B gives 8.77:1 where
+    // #F3F0E9 gives only 1.93:1. Gold is a light accent, so the ink has to be the dark end of
+    // the palette; the old crimson managed 4.88:1 with the same ink, which is why the primary
+    // button was always marginal.
+    palette.setColor (QPalette::HighlightedText, TOKEN_BG_VOID);
     palette.setColor (QPalette::PlaceholderText, TOKEN_TEXT_DIM);
 
     // The 3-D shade ramp. Qt expects Light > Midlight > Button > Mid > Dark > Shadow, and
     // leaves every role the caller does not set at its light-palette default -- which is how a
     // "dark" palette ends up with pale bevels around frames, headers and sunken panels.
-    palette.setColor (QPalette::Light, TOKEN_STROKE);
+    // Anything the stylesheet does not select falls through to these six, so they have to
+    // agree with the surface ladder rather than merely being dark.
+    //
+    // THE ORDER IS THE CONTRACT, and it was broken here: Mid was stroke #565049 and Button was
+    // TOKEN_BG_RAISED, so Mid sat ABOVE Button -- above Midlight, in fact -- and the ramp read
+    // Light, Mid, Midlight, Button, Dark, Shadow. QStyle draws a bevel by taking Light on the
+    // lit edge and Mid or Dark on the shaded one, so an inverted ramp lights a frame from the
+    // wrong side and a sunken panel comes out embossed. STROKE is a border token; it was never
+    // a shade of the button and does not belong on this ladder at all.
+    //
+    // Below the button the ladder walks down the surfaces themselves, which is what "one step
+    // darker than the button" is supposed to mean. WCAG relative luminance, recomputed, one
+    // strictly decreasing sequence:
+    //
+    //   Light     stroke.hi   #746D64   0.155704
+    //   Midlight  bg.overlay  #4A4640   0.062063
+    //   Button    bg.raised   #3C3732   0.039233
+    //   Mid       bg.panel    #292621   0.019674
+    //   Dark      bg.alt      #1D1916   0.010144
+    //   Shadow    bg.void     #100E0B   0.004484
+    palette.setColor (QPalette::Light, TOKEN_STROKE_HI);
     palette.setColor (QPalette::Midlight, TOKEN_BG_OVERLAY);
-    palette.setColor (QPalette::Mid, TOKEN_STROKE_SOFT);
-    palette.setColor (QPalette::Dark, TOKEN_BG_BASE);
-    palette.setColor (QPalette::Shadow, TOKEN_BG_SUNKEN);
+    palette.setColor (QPalette::Mid, TOKEN_BG_PANEL);
+    palette.setColor (QPalette::Dark, TOKEN_BG_ALT);
+    palette.setColor (QPalette::Shadow, TOKEN_BG_VOID);
 
     // Disabled is the group that decides whether a greyed-out control is readable or invisible.
+    // Highlight drops to bg.raised so a selection in an unfocused, disabled view is a recess
+    // rather than a gold plate; HighlightedText is text.dim, 5.92:1 on it.
     palette.setColor (QPalette::Disabled, QPalette::WindowText, TOKEN_TEXT_OFF);
     palette.setColor (QPalette::Disabled, QPalette::Text, TOKEN_TEXT_OFF);
     palette.setColor (QPalette::Disabled, QPalette::ButtonText, TOKEN_TEXT_OFF);
-    palette.setColor (QPalette::Disabled, QPalette::Highlight, TOKEN_BG_OVERLAY);
+    palette.setColor (QPalette::Disabled, QPalette::Highlight, TOKEN_BG_RAISED);
     palette.setColor (QPalette::Disabled, QPalette::HighlightedText, TOKEN_TEXT_DIM);
 
     return palette;

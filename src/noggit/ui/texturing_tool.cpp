@@ -8,6 +8,7 @@
 #include <noggit/TextureManager.h>
 #include <noggit/ui/Checkbox.hpp>
 #include <noggit/ui/CurrentTexture.h>
+#include <noggit/ui/DesignTokens.hpp>
 #include <noggit/ui/GroundEffectsTool.hpp>
 #include <noggit/ui/texture_swapper.hpp>
 #include <noggit/ui/texturing_tool.hpp>
@@ -1018,23 +1019,59 @@ namespace Noggit
         opt.activeSubControls = QStyle::SC_None;
       }
 
-      // Draw the groove with a linear gradient
+      // THE ONE GRADIENT IN THE DESIGN SYSTEM, and it is here because this groove is DATA:
+      // it is the brush opacity ramp, so the track itself has to show the value the handle is
+      // pointing at. Everywhere else a groove is a rail and is flat BG_VOID.
+      //
+      // The stops were Qt::black and Qt::white, i.e. #000000 and #FFFFFF. The palette forbids
+      // both -- pure black and pure white are what stop an interface staying legible beside a
+      // bright 3D viewport -- so the ramp runs RAMP_LO to RAMP_HI instead. That is a 1.4% and a
+      // 5.1% trim off the two ends; the ramp still spans 17.36:1 and no user can read the
+      // difference in the ramp, which is the point of picking the near-extremes rather than
+      // visibly grey ones.
       QRect grooveRect = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderGroove, this);
       grooveRect.setLeft((width() - 35) / 2);
       grooveRect.setRight((width() + 35) / 2);
       QLinearGradient gradient(grooveRect.topLeft(), grooveRect.bottomLeft());
-      gradient.setColorAt(0, Qt::black);
-      gradient.setColorAt(1, Qt::white);
+      gradient.setColorAt(0, Design::color(Design::RAMP_LO));
+      gradient.setColorAt(1, Design::color(Design::RAMP_HI));
       p.fillRect(grooveRect.adjusted(0, 0, -1, -1), gradient);
 
-      // Draw the handle with red color
+      // THE HANDLE, and why it needs a border where no other handle in the application does.
+      //
+      // It was a pure-red 35x5 rectangle -- the crimson overload in its purest form, sitting on
+      // the one control where red cannot mean anything, since this slider has no error state
+      // and nothing here is destructive. It is now ACCENT, which is what the design system uses
+      // for "the thing you are acting on" and is exactly what a slider grip is.
+      //
+      // But a flat accent grip is unreadable at one end of this particular track, and that is
+      // measured, not suspected: ACCENT against RAMP_LO is 9.00:1 and against RAMP_HI only
+      // 1.93:1. Drag the opacity to full and a borderless gold grip would vanish into the pale
+      // end of its own ramp -- worse than the pure red it replaces, which held 4.00:1 there.
+      // The 1px INK border is therefore load-bearing rather than decoration: INK against
+      // RAMP_HI is 16.93:1 and against ACCENT 8.77:1, so the grip is outlined against the track
+      // at BOTH ends and outlined against its own fill as well. Contrast never drops below
+      // 8.77:1 anywhere on the range.
+      //
+      // Antialiasing is turned on for this rounded rectangle only, and the half-pixel inset is
+      // what centres a 1px cosmetic pen on the pixel boundary instead of straddling two rows.
+      constexpr qreal HANDLE_WIDTH = 34.0;
+      constexpr qreal HANDLE_HEIGHT = 6.0;
+      constexpr qreal HANDLE_RADIUS = 2.0;
+
       QRect handleRect = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, this);
-      handleRect.setLeft((width() - 35) / 2);
-      handleRect.setRight((width() + 35) / 2);
-      handleRect.setHeight(5); // Set handle height to 5
-      p.setBrush(Qt::red);
-      p.setPen(Qt::NoPen);
-      p.drawRect(handleRect);
+      QRectF const handle_box
+        ( (width() - HANDLE_WIDTH) / 2.0 + 0.5
+        , handleRect.top() + 0.5
+        , HANDLE_WIDTH - 1.0
+        , HANDLE_HEIGHT - 1.0
+        );
+
+      p.setRenderHint(QPainter::Antialiasing, true);
+      p.setBrush(Design::color(Design::ACCENT));
+      p.setPen(QPen(Design::color(Design::INK), 1.0));
+      p.drawRoundedRect(handle_box, HANDLE_RADIUS, HANDLE_RADIUS);
+      p.setRenderHint(QPainter::Antialiasing, false);
 
       // Draw the ticks if needed
       if (tickPosition() != NoTicks) {

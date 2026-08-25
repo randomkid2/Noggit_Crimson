@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # This file is part of Noggit3, licensed under GNU General Public License (version 3).
-"""Regenerate the Crimson Slate theme's PNG widget assets.
+"""Regenerate the Crimson Slate theme PNG widget assets (Ironforge palette).
 
 Usage:  python generate_icons.py images
         (run from dist/noggit-themes/CrimsonSlate/ -- dist/themes/ is a
@@ -26,25 +26,35 @@ SS = 4  # supersample factor
 # values derived from them (marked). Nothing here is a fourth palette: change a
 # token in theme.qss and change the same token here, or the PNG indicators will
 # drift away from the CSS-drawn controls beside them.
-SUNKEN     = (0x16, 0x18, 0x1D)   # bg.sunken
-PANEL      = (0x1B, 0x1E, 0x24)   # bg.base
-RAISED     = (0x22, 0x26, 0x2E)   # bg.raised
-HOVERBG    = (0x2A, 0x2F, 0x38)   # bg.overlay
-HAIRLINE   = (0x26, 0x2B, 0x33)   # stroke.soft
-CONTROL    = (0x34, 0x3A, 0x45)   # stroke
-CONTROL_HI = (0x45, 0x4C, 0x59)   # DERIVED  stroke.hi, hover outline
-ACCENT     = (0xE8, 0x54, 0x3F)   # accent
-ACCENT_HOV = (0xF1, 0x6A, 0x54)   # DERIVED  accent.hi, hover on a filled accent
-ACCENT_DIM = (0xB3, 0x3F, 0x2E)   # accent.dim
-INK        = (0x16, 0x18, 0x1D)   # bg.sunken, used as ink ON an accent fill
-TEXT_HI    = (0xED, 0xF0, 0xF4)   # text.hi
-TEXT_BODY  = (0xC6, 0xCC, 0xD6)   # text
-TEXT_DIM   = (0x8A, 0x93, 0xA0)   # text.dim
-TEXT_DIS   = (0x59, 0x60, 0x6B)   # text.off
+SUNKEN     = (0x10, 0x0E, 0x0B)   # bg.void
+PANEL      = (0x29, 0x26, 0x21)   # bg.panel
+RAISED     = (0x3C, 0x37, 0x32)   # bg.raised
+HOVERBG    = (0x4A, 0x46, 0x40)   # bg.overlay
+HAIRLINE   = (0x40, 0x3B, 0x35)   # stroke.soft
+CONTROL    = (0x56, 0x50, 0x49)   # stroke
+CONTROL_HI = (0x74, 0x6D, 0x64)   # stroke.hi, hover outline
+ACCENT     = (0xDF, 0xA5, 0x2E)   # accent
+ACCENT_HOV = (0xF0, 0xBA, 0x4A)   # accent.hi, hover on a filled accent
+ACCENT_DIM = (0xB8, 0x80, 0x1F)   # accent.press
+INK        = (0x10, 0x0E, 0x0B)   # bg.void, used as ink ON an accent fill
+TEXT_HI    = (0xF3, 0xF0, 0xE9)   # text.hi
+TEXT_BODY  = (0xE4, 0xDF, 0xD7)   # text
+TEXT_DIM   = (0xBF, 0xB7, 0xAA)   # text.dim
+TEXT_DIS   = (0x7F, 0x78, 0x6A)   # text.off
 
-# The unchecked indicator sits on the panel and reads as an input, so it takes
-# the same surface every other input takes: bg.raised, not a sunken well.
-INPUT      = RAISED
+# CHANGED with the Ironforge palette: an input is a WELL now, not a raised
+# slab, so the unchecked indicator takes bg.void and its stroke ring reads at
+# 2.42:1 against its own fill. Under the previous sheet this was bg.raised and
+# the indicator was the same surface as the button next to it.
+INPUT      = SUNKEN
+
+# Ring and corner geometry for the check box and radio indicators. Both are
+# drawn on a 32-unit canvas that the sheet displays at 16px, so a value here is
+# HALF a screen pixel per unit: RING 4.0 is the 2px ring the component spec
+# asks for, and RADIUS 8.0 is its 4px corner. The previous values (1.6 and 5.0)
+# drew a 0.8px ring with a 2.5px corner.
+RING       = 4.0
+RADIUS     = 8.0
 
 
 class Canvas:
@@ -164,7 +174,7 @@ def save(c, name, outdir):
     return name
 
 
-def box(c, size, fill, stroke, sw=1.6, inset=2.5, radius=5.0):
+def box(c, size, fill, stroke, sw=RING, inset=2.5, radius=RADIUS):
     """Rounded square centred in a size x size logical canvas."""
     s = SS
     cx = cy = size * s / 2.0
@@ -180,7 +190,7 @@ def box(c, size, fill, stroke, sw=1.6, inset=2.5, radius=5.0):
         c.fill_sdf(outer, fill)
 
 
-def disc(c, size, fill, stroke, sw=1.6, inset=2.5):
+def disc(c, size, fill, stroke, sw=RING, inset=2.5):
     s = SS
     cx = cy = size * s / 2.0
     r = (size / 2.0 - inset) * s
@@ -212,7 +222,7 @@ def build(outdir):
         ('icon_checkbox_unchecked_disabled.png', PANEL,   HAIRLINE,   None),
         ('icon_checkbox_checked.png',            ACCENT,  ACCENT,     INK),
         ('icon_checkbox_checked_hover.png',      ACCENT_HOV, ACCENT_HOV, INK),
-        ('icon_checkbox_checked_disabled.png',   HAIRLINE, HAIRLINE,  TEXT_DIS),
+        ('icon_checkbox_checked_disabled.png',   PANEL,   HAIRLINE,   TEXT_DIS),
     ]
     for name, fill, stroke, mark in specs:
         c = new(SZ, SZ)
@@ -222,7 +232,7 @@ def build(outdir):
         made.append(save(c, name, outdir))
 
     for name, fill, stroke, mark in (
-            ('icon_checkbox_indeterminate.png',          INPUT, CONTROL,  ACCENT),
+            ('icon_checkbox_indeterminate.png',          INPUT, ACCENT,   ACCENT),
             ('icon_checkbox_indeterminate_disabled.png', PANEL, HAIRLINE, TEXT_DIS)):
         c = new(SZ, SZ)
         box(c, SZ, fill, stroke)
@@ -236,7 +246,7 @@ def build(outdir):
         ('icon_radiobutton_unchecked_disabled.png', PANEL,      HAIRLINE,   None),
         ('icon_radiobutton_checked.png',            ACCENT,     ACCENT,     INK),
         ('icon_radiobutton_checked_hover.png',      ACCENT_HOV, ACCENT_HOV, INK),
-        ('icon_radiobutton_checked_disabled.png',   HAIRLINE,   HAIRLINE,   TEXT_DIS),
+        ('icon_radiobutton_checked_disabled.png',   PANEL,      HAIRLINE,   TEXT_DIS),
     ]
     for name, fill, stroke, dot in radios:
         c = new(SZ, SZ)
@@ -289,7 +299,24 @@ def build(outdir):
 
     close_icon('icon_close.png', TEXT_DIM)
     close_icon('icon_close_hover.png', TEXT_HI)
-    close_icon('icon_window_close.png', TEXT_BODY)
+
+    # qproperty-icon is applied at polish time, so a PNG icon named by the
+    # sheet cannot restate itself when the button's pseudo-state changes: ONE
+    # pen has to serve the resting title bar and every hover/press fill. The
+    # resting bar is bg.void, where ink is 1.00:1 -- invisible -- so the pen
+    # must be light, and text.hi is 16.93:1 there.
+    #
+    # That fixes the pen and leaves the FILL as the only free variable, which
+    # is where the sheet used to fail: against bad #E86F62 this glyph measures
+    # 2.68:1, not the "ink on bad, 6.31:1" the sheet's comment asserted -- that
+    # described a glyph nothing here has ever written. theme.qss now darkens
+    # the close fills to close.hover #A75047 and close.press #974840, on which
+    # this pen measures 4.75:1 and 5.56:1, and the plates still read 3.56:1 and
+    # 3.04:1 against the bar as state marks. Both keep bad's hue.
+    #
+    # So: change this colour and the two fills in theme.qss stop clearing the
+    # floor. They are a pair.
+    close_icon('icon_window_close.png', TEXT_HI)
 
     # float / restore: two offset outlines
     def restore_icon(name, colour):
@@ -320,12 +347,12 @@ def build(outdir):
     # ---- toolbar / splitter grip dots --------------------------------------
     c = new(8, 24)
     for y in (7.0, 12.0, 17.0):
-        c.fill_sdf(sdf_circle(4.0 * SS, y * SS, 1.1 * SS), CONTROL)
+        c.fill_sdf(sdf_circle(4.0 * SS, y * SS, 1.1 * SS), CONTROL_HI)
     made.append(save(c, 'handle_vertical.png', outdir))
 
     c = new(24, 8)
     for x in (7.0, 12.0, 17.0):
-        c.fill_sdf(sdf_circle(x * SS, 4.0 * SS, 1.1 * SS), CONTROL)
+        c.fill_sdf(sdf_circle(x * SS, 4.0 * SS, 1.1 * SS), CONTROL_HI)
     made.append(save(c, 'handle_horizontal.png', outdir))
 
     # ---- menu check mark (no box, for QMenu::indicator) --------------------

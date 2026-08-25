@@ -17,7 +17,11 @@ class MapView;
 class StackedWidget;
 class World;
 
+class QChildEvent;
+class QEvent;
+class QLabel;
 class QListWidget;
+class QObject;
 
 namespace BlizzardArchive
 {
@@ -90,6 +94,13 @@ namespace Noggit::Ui::Windows
 
       std::unordered_set<QWidget*> displayed_widgets;
       void buildMenu();
+
+    protected:
+      //! Watches the status bar for the seven readouts MapView reparents onto it, and gives each
+      //! one an object name and a rank. See NoggitWindow::prepareStatusBar for why identifying
+      //! them by arrival order is the only handle this window has on labels it does not build.
+      bool eventFilter(QObject* watched, QEvent* event) override;
+
     signals:
       void exitPromptOpened();
       void mapSelected(int map_id);
@@ -124,6 +135,17 @@ namespace Noggit::Ui::Windows
 
       void loadMap (int map_id);
 
+      //! Names the status bar and arms the readout filter. Appearance only.
+      void prepareStatusBar();
+
+      //! Gives one status-bar readout its object name and, for the three that carry a number the
+      //! user watches, the value rank.
+      void dressStatusReadout(QLabel* readout);
+
+      //! Re-states the map-detail header on the right-hand pane from whichever row the map list
+      //! currently has selected. Reads nothing from the client; every string comes from the row.
+      void updateMapDetail();
+
       void check_uid_then_enter_map ( glm::vec3 pos
                                     , math::degrees camera_pitch
                                     , math::degrees camera_yaw
@@ -150,6 +172,14 @@ namespace Noggit::Ui::Windows
       QListWidget* _continents_table;
       QString _filter_name;
       QTabWidget* _right_side;
+
+      //! The head of the right-hand pane: which map is selected, and what it is.
+      QLabel* _map_detail_title = nullptr;
+      QLabel* _map_detail_meta = nullptr;
+
+      //! How many status-bar readouts have been dressed. Positional, taken modulo the seven
+      //! MapView adds, because a second map entry produces a second burst.
+      int _status_readouts_seen = 0;
 
       void applyFilterSearch(const QString& name, int type, int expansion, bool wmo_maps);
 

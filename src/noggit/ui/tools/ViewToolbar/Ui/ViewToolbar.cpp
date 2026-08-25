@@ -10,6 +10,7 @@
 #include <QCheckBox>
 #include <QDialog>
 #include <QFontMetrics>
+#include <QSize>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -111,12 +112,38 @@ private:
   QSlider* _slider;
 };
 
+// The glyph size for every button on the three floating bars this class builds.
+//
+// NOTHING SET THIS BEFORE -- not this file, not MapView, and not the theme, which sets
+// qproperty-iconSize on the frameless window controls and the dock buttons but never on a tool
+// bar. So the size came from QStyle::PM_ToolBarIconSize, a per-style platform default that has
+// no idea what these buttons are.
+//
+// MEASURED with a standalone Qt 5.15.2 probe rather than assumed: on this machine the style is
+// windowsvista, PM_ToolBarIconSize is 36, and QToolBar::iconSize() reports 36x36 both with and
+// without the CrimsonSlate sheet applied. The design system specifies a 20px icon inside a
+// 34x34 tool button and the sheet's rule leaves a content box of about 22px after its 1px
+// border and 3-5px padding, so every one of the twenty toggle glyphs was rasterised at 36px and
+// then resampled down to roughly 22 -- a 61% reduction, which for a FONT GLYPH is the whole
+// difference between a crisp stem and a soft one. These are FontNoggitIconEngine icons and the
+// engine rasterises at exactly rect.height(), so this number is the glyph's real pixel size and
+// not a hint.
+//
+// Declared once and applied in all three constructors rather than refactored into a shared
+// init, because the three differ in orientation and size policy and merging them would change
+// more than appearance.
+namespace
+{
+  constexpr int TOOLBAR_ICON_EXTENT = 20;
+}
+
 ViewToolbar::ViewToolbar(MapView* mapView)
   : _tool_group(this)
 {
   setContextMenuPolicy(Qt::PreventContextMenu);
   setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
   setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+  setIconSize(QSize(TOOLBAR_ICON_EXTENT, TOOLBAR_ICON_EXTENT));
 
   IconAction* climb_icon = new IconAction(FontNoggitIcon{FontNoggit::VISIBILITY_CLIMB });
 
@@ -193,6 +220,7 @@ ViewToolbar::ViewToolbar(MapView *mapView, ViewToolbar *tb)
     setContextMenuPolicy(Qt::PreventContextMenu);
     setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
     setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+    setIconSize(QSize(TOOLBAR_ICON_EXTENT, TOOLBAR_ICON_EXTENT));
 
     add_tool_icon(mapView, &mapView->_draw_models, tr("Doodads"),
                   tr("Draw M2 models placed on the terrain."), tr("F1"), FontNoggit::VISIBILITY_DOODADS, tb);
@@ -339,6 +367,7 @@ ViewToolbar::ViewToolbar(MapView* mapView, editing_mode mode)
     setContextMenuPolicy(Qt::PreventContextMenu);
     setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
     setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Minimum);
+    setIconSize(QSize(TOOLBAR_ICON_EXTENT, TOOLBAR_ICON_EXTENT));
     setOrientation(Qt::Vertical);
     mapView->getLeftSecondaryToolbar()->hide();
 

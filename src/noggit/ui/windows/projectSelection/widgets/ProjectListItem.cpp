@@ -70,6 +70,14 @@ namespace Noggit::Ui::Widget
     // hint must not be derived from it.
     constexpr int ROW_HINT_WIDTH = 125;
 
+    // The accent, spelled out here because a QGraphicsColorizeEffect is not reachable from a
+    // style sheet: this is one of the handful of colours in the application that a theme change
+    // cannot move, so it has to be moved by hand or the star stays on the old accent while
+    // everything around it goes gold. Measured against the surfaces a row can sit on:
+    // 8.77:1 on bg.void #100E0B (the list well), 6.86:1 on bg.panel #292621 and 7.95:1 on the
+    // bg.alt #1D1916 of an alternating row -- all far over the 3:1 floor for a graphical mark.
+    constexpr QRgb ACCENT_GOLD = qRgb(0xDF, 0xA5, 0x2E);
+
     // The three text ranks. These are DEFAULTS, set through QFont rather than through an inline
     // style sheet: a style sheet on the widget itself outranks the application sheet, which is
     // how the previous revision pinned every row to one size no matter which theme was loaded.
@@ -170,9 +178,11 @@ namespace Noggit::Ui::Widget
       _project_favorite_icon->setToolTip("Favourite project -- loaded automatically on start");
 
       // Font Awesome renders the glyph as a monochrome pixmap and the icon engine takes no
-      // colour, so the gold has to be applied to the rendered pixels. Same effect as before.
+      // colour, so the gold has to be applied to the rendered pixels. This is one of the few
+      // colours in the application a style sheet cannot reach, which is exactly why it has to be
+      // carried forward by hand when the accent moves -- see ACCENT_GOLD above.
       auto const colour = new QGraphicsColorizeEffect(_project_favorite_icon);
-      colour->setColor(QColor(224, 163, 62));
+      colour->setColor(QColor(ACCENT_GOLD));
       colour->setStrength(1.0f);
       _project_favorite_icon->setGraphicsEffect(colour);
 

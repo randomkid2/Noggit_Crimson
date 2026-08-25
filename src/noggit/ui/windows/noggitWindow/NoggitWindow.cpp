@@ -21,6 +21,7 @@
 #include <noggit/ui/windows/noggitWindow/widgets/MapListItem.hpp>
 #include <noggit/ui/windows/projectSelection/NoggitProjectSelectionWindow.hpp>
 #include <noggit/ui/windows/settingsPanel/SettingsPanel.h>
+#include <noggit/ui/windows/UiStyle.hpp>
 #include <noggit/uid_storage.hpp>
 #include <noggit/World.h>
 
@@ -30,19 +31,25 @@
 #include <QCheckBox>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGroupBox>
 #include <QIcon>
 #include <QLineEdit>
 #include <QProcess>
 #include <QScrollArea>
+#include <QtCore/QChildEvent>
+#include <QtCore/QEvent>
 #include <QtGui/QCloseEvent>
+#include <QtWidgets/QAbstractItemView>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QHBoxLayout>
+#include <QtWidgets/QLabel>
 #include <QtWidgets/QListWidget>
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressDialog>
 #include <QtWidgets/QPushButton>
+#include <QtWidgets/QStatusBar>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QVBoxLayout>
 #include <QtWidgets/QWidget>
@@ -61,6 +68,39 @@
 
 #include "ui_TitleBar.h"
 #include <noggit/ui/tools/ViewportManager/ViewportManager.hpp>
+
+namespace
+{
+  namespace Style = Noggit::Ui::Windows::Style;
+
+  //! The left column of the map-selection screen. Unchanged in width; the number is lifted out
+  //! of the middle of buildMenu() so the one place that decides it is visible.
+  constexpr int MAP_COLUMN_WIDTH = 310;
+
+  //! Expansion and instance-type icons in the map list and in the detail header.
+  constexpr int MAP_DETAIL_ICON_EXTENT = 16;
+
+  //! The seven readouts MapView adds to the status bar, in the order it adds them. See
+  //! NoggitWindow::eventFilter for why the order is what identifies them.
+  constexpr int STATUS_READOUT_COUNT = 7;
+
+  char const* const STATUS_READOUT_NAMES[STATUS_READOUT_COUNT] =
+    { "status-position"
+    , "status-selection"
+    , "status-area"
+    , "status-time"
+    , "status-fps"
+    , "status-culling"
+    , "status-database"
+    };
+
+  //! Which of the seven carry a number the user is actually watching, and therefore take the
+  //! value rank -- 12px semibold at the highest text rank -- instead of the body rank the rest
+  //! of the bar uses. Position, frame rate and the loaded/rendered counts; the zone name, the
+  //! selection description, the in-game clock and the database line are context, not data.
+  bool const STATUS_READOUT_IS_VALUE[STATUS_READOUT_COUNT] =
+    { true, false, false, false, true, true, false };
+}
 
 namespace Noggit::Ui::Windows
 {
@@ -119,9 +159,19 @@ namespace Noggit::Ui::Windows
 
     _menuBar->setNativeMenuBar(settings.value("nativeMenubar", true).toBool());
 
-    auto file_menu(_menuBar->addMenu("&Noggit"));
+    // Named so the sheet can reach the editor's own bar without also selecting the one the
+    // frameless title bar embeds, and so it stops inheriting whatever QMainWindow's default
+    // QMenuBar rule happens to say.
+    _menuBar->setObjectName("editor-menu-bar");
 
+    auto file_menu(_menuBar->addMenu("&Noggit"));
+    file_menu->setObjectName("editor-menu-noggit");
+
+    // The four entries were one undifferentiated run of text. They are two groups -- "open
+    // something else" and "leave" -- and a separator plus a leading glyph is the whole of what
+    // QSS can do to say so, since a menu item's text rank is fixed by the sheet.
     auto settings_action(file_menu->addAction("Settings"));
+    settings_action->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::Icons::cog));
     QObject::connect(settings_action, &QAction::triggered, [&]
                      {
                        _settings->show();
@@ -129,13 +179,18 @@ namespace Noggit::Ui::Windows
     );
 
     auto about_action(file_menu->addAction("About"));
+    about_action->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::Icons::infocircle));
     QObject::connect(about_action, &QAction::triggered, [&]
                      {
                        _about->show();
                      }
     );
 
+    file_menu->addSeparator();
+
     auto proj_selec_action(file_menu->addAction("Exit to Project Selection"));
+    proj_selec_action->setIcon(
+        Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::Icons::signoutalt));
     QObject::connect(proj_selec_action, &QAction::triggered, [this]
         {
             // auto noggit = Noggit::Application::NoggitApplication::instance();
@@ -148,6 +203,7 @@ namespace Noggit::Ui::Windows
     );
 
     auto mapmenu_action(file_menu->addAction("Exit"));
+    mapmenu_action->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::Icons::poweroff));
     QObject::connect(mapmenu_action, &QAction::triggered, [this]
                      {
                        close();
@@ -156,11 +212,68 @@ namespace Noggit::Ui::Windows
 
     _menuBar->adjustSize();
 
+    prepareStatusBar();
+
     _buildMapListComponent = std::make_unique<Component::BuildMapListComponent>();
 
     _map_creation_wizard = new Noggit::Ui::Tools::MapCreationWizard::Ui::MapCreationWizard(_project, this);
 
     buildMenu();
+  }
+
+  void NoggitWindow::prepareStatusBar()
+  {
+    // THE PROBLEM. MapView adds seven QLabels to this window's status bar -- position,
+    // selection, zone, in-game time, frame rate, loaded/rendered counts and the database line --
+    // and gives none of them an object name or a rank. The sheet can therefore only reach them
+    // as `QStatusBar QLabel`, which paints all seven identically, and the bar reads as one long
+    // sentence of small grey text with no way in.
+    //
+    // THE MECHANISM, and why it is an event filter rather than seven lines at the call site.
+    // Those labels are constructed in MapView, which this pass does not own. What this window
+    // does own is the QStatusBar itself, and QStatusBar::addWidget reparents the label onto it,
+    // which posts QEvent::ChildAdded here. Measured with a standalone Qt 5.15.2 probe: the burst
+    // arrives as exactly seven ChildAdded events carrying a fully constructed QLabel, in
+    // addWidget order, interleaved with plain QObject children the filter ignores.
+    //
+    // THE HONEST LIMIT. Order is the only identity available, so the mapping is positional and
+    // is taken modulo seven -- MapView's labels are not destroyed when a map is left (they are
+    // reparented onto the bar and only hidden, also measured), so a second map entry produces a
+    // second burst of seven and the counter has to wrap. If some future code adds an eighth
+    // QLabel to this bar the names shift by one. The consequence of being wrong is a readout
+    // wearing the wrong rank; nothing reads these names back, so nothing can break.
+    QStatusBar* const bar = statusBar();
+    bar->setObjectName("editor-status-bar");
+    bar->installEventFilter(this);
+  }
+
+  void NoggitWindow::dressStatusReadout(QLabel* readout)
+  {
+    int const slot = _status_readouts_seen % STATUS_READOUT_COUNT;
+    ++_status_readouts_seen;
+
+    readout->setObjectName(QString::fromLatin1(STATUS_READOUT_NAMES[slot]));
+
+    if (STATUS_READOUT_IS_VALUE[slot])
+    {
+      // QLabel[state="value"] has existed in the shipped sheet since the theme was written and
+      // has never once fired, because nothing in src/ ever set the property. This is the wiring.
+      Style::markValue(readout);
+    }
+  }
+
+  bool NoggitWindow::eventFilter(QObject* watched, QEvent* event)
+  {
+    if (event->type() == QEvent::ChildAdded && watched == statusBar())
+    {
+      if (QLabel* const readout =
+              qobject_cast<QLabel*>(static_cast<QChildEvent*>(event)->child()))
+      {
+        dressStatusReadout(readout);
+      }
+    }
+
+    return QMainWindow::eventFilter(watched, event);
   }
 
   void NoggitWindow::check_uid_then_enter_map
@@ -333,6 +446,8 @@ namespace Noggit::Ui::Windows
 
     _minimap->world(getWorld());
 
+    updateMapDetail();
+
     //_project->ClientDatabase->UnloadTable("Map");
   }
 
@@ -344,14 +459,42 @@ namespace Noggit::Ui::Windows
     setCentralWidget(_stack_widget);
 
     auto widget(new QWidget(_stack_widget));
+    widget->setObjectName("map-selection-root");
     _stack_widget->addWidget(widget);
 
     auto layout(new QHBoxLayout(widget));
+
+    // SPACE_16 all round is the dialog content margin, SPACE_24 between the two major regions.
+    // The screen used to run on uic's default 9px frame and 6px gap, which put the map column
+    // hard against the window edge and left the two halves closer to each other than either was
+    // to its own contents.
+    layout->setContentsMargins(Style::SPACE_16, Style::SPACE_16, Style::SPACE_16, Style::SPACE_16);
+    layout->setSpacing(Style::SPACE_24);
+
+    // Measured, and left in place deliberately: setAlignment on a layout installed directly on a
+    // widget is ignored -- QWidget hands its layout the whole contents rect. A probe built this
+    // exact pair of tab widgets with and without the call and got byte-identical geometry
+    // (left 0,0 310x400; right 319,0 681x400 in both). It is not what leaves the right pane
+    // looking empty, so removing it would have bought nothing and is not claimed as a fix.
     layout->setAlignment(Qt::AlignLeft);
+
     QListWidget* bookmarks_table(new QListWidget(widget));
     _continents_table = new QListWidget(widget);
     _continents_table->setSelectionMode(QAbstractItemView::SelectionMode::SingleSelection);
     _continents_table->setSelectionBehavior(QAbstractItemView::SelectItems);
+
+    // The two lists become WELLS: the frame goes so the sheet's own border is the only edge, and
+    // both scroll per pixel instead of per item, so a wheel notch moves the list rather than
+    // snapping it a whole 60px row. Scroll RANGE and selection behaviour are untouched.
+    for (QListWidget* list : {_continents_table, bookmarks_table})
+    {
+      list->setFrameShape(QFrame::NoFrame);
+      list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+      list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    }
+
+    _continents_table->setAccessibleName("map_list");
+    bookmarks_table->setAccessibleName("bookmark_list");
 
     // in some situations like when returning to menu an item is selected and itemSelectionChanged won't fire when reclicking it
     // so might need to also connect itemClicked but then they both trigger at the same time.
@@ -368,26 +511,31 @@ namespace Noggit::Ui::Windows
 
 
     QTabWidget* entry_points_tabs(new QTabWidget(widget));
+    entry_points_tabs->setObjectName("map-entry-tabs");
     //entry_points_tabs->addTab(_continents_table, "Maps");
 
      auto add_btn = new QPushButton("Add New Map", this);
      add_btn->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::plus));
+     add_btn->setIconSize(QSize(MAP_DETAIL_ICON_EXTENT, MAP_DETAIL_ICON_EXTENT));
      add_btn->setAccessibleName("map_wizard_add_button");
+     add_btn->setCursor(Qt::PointingHandCursor);
 
     /* set-up widget for seaching etc... through _continents_table */
     {
         QWidget* _first_tab = new QWidget(this);
         QVBoxLayout* _first_tab_layout = new QVBoxLayout();
 
-        // Even gutters on all four sides and one consistent gap between the search box, the map
-        // list and the add button. The default 9px margin with a 6px gap plus a hand-placed 5px
-        // spacer gave three different distances down the same column.
-        _first_tab_layout->setContentsMargins(8, 8, 8, 8);
-        _first_tab_layout->setSpacing(8);
+        // Panel side margin is SPACE_12 on every edge, and one SPACE_8 gap between the search
+        // section, the map list and the add button. The column previously ran on 8px gutters
+        // beside a 9px one and a hand-placed 5px spacer -- three distances down one column.
+        _first_tab_layout->setContentsMargins(Style::SPACE_12, Style::SPACE_12,
+                                              Style::SPACE_12, Style::SPACE_12);
+        _first_tab_layout->setSpacing(Style::SPACE_8);
 
         _first_tab->setLayout(_first_tab_layout);
 
         QGroupBox* _group_search = new QGroupBox(tr("Search"), this);
+        _group_search->setObjectName("map-search-group");
 
         QLineEdit* _line_edit_search = new QLineEdit(this);
         QComboBox* _combo_search = new QComboBox(this);
@@ -441,21 +589,59 @@ namespace Noggit::Ui::Windows
                              applyFilterSearch(_line_edit_search->text(), _combo_search->currentIndex(), _combo_exp_search->currentIndex(), b);
                          });
 
+        // A placeholder, not a clear button: a clear button would ADD a control to the window,
+        // and this pass changes appearance only. Measured against the running application, the
+        // placeholder renders at text.dim #BFB7AA where the combo boxes beside it render their
+        // real content at text.hi #F3F0E9, so an empty filter cannot be mistaken for a set one.
+        _line_edit_search->setObjectName("map-search-name");
+        _line_edit_search->setPlaceholderText(tr("Filter by name"));
+
         QFormLayout* _group_layout = new QFormLayout();
-        _group_layout->addRow(tr("Name : "), _line_edit_search);
-        _group_layout->addRow(tr("Type : "), _combo_search);
-        _group_layout->addRow(tr("Expansion : "), _combo_exp_search);
+
+        // The trailing " : " on each label was doing the work a layout gap should do, and it put
+        // three different amounts of whitespace between a label and its field depending on how
+        // wide the label was. The colon goes; the gap is now one value from the scale.
+        _group_layout->setContentsMargins(0, 0, 0, 0);
+        _group_layout->setHorizontalSpacing(Style::SPACE_8);
+        _group_layout->setVerticalSpacing(Style::SPACE_8);
+        _group_layout->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        _group_layout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+        _group_layout->addRow(tr("Name"), _line_edit_search);
+        _group_layout->addRow(tr("Type"), _combo_search);
+        _group_layout->addRow(tr("Expansion"), _combo_exp_search);
         _group_layout->addRow( _wmo_maps_search);
         _group_search->setLayout(_group_layout);
 
         _first_tab_layout->addWidget(_group_search);
-        _first_tab_layout->addWidget(_continents_table);
+        _first_tab_layout->addWidget(_continents_table, 1);
         _first_tab_layout->addWidget(add_btn);
 
         entry_points_tabs->addTab(_first_tab, tr("Maps"));
 
-        entry_points_tabs->addTab(bookmarks_table, "Bookmarks");
-        entry_points_tabs->setFixedWidth(310);
+        // The bookmarks list used to BE the tab page, so it sat flush against the pane on all
+        // four sides while the Maps tab beside it had a 12px gutter -- switching tabs moved the
+        // whole column. It gets the same frame, and an empty state instead of a blank rectangle.
+        QWidget* const bookmarks_page = new QWidget(this);
+        QVBoxLayout* const bookmarks_layout = new QVBoxLayout(bookmarks_page);
+        bookmarks_layout->setContentsMargins(Style::SPACE_12, Style::SPACE_12,
+                                             Style::SPACE_12, Style::SPACE_12);
+        bookmarks_layout->setSpacing(Style::SPACE_8);
+        bookmarks_layout->addWidget(bookmarks_table, 1);
+
+        if (_project->Bookmarks.empty())
+        {
+          QLabel* const empty = new QLabel(
+              tr("No bookmarks yet.\nSave one from the editor to return to a spot."),
+              bookmarks_page);
+          empty->setObjectName(Style::NAME_SECONDARY);
+          empty->setAlignment(Qt::AlignCenter);
+          empty->setWordWrap(true);
+          bookmarks_layout->insertWidget(0, empty);
+        }
+
+        entry_points_tabs->addTab(bookmarks_page, "Bookmarks");
+        entry_points_tabs->setFixedWidth(MAP_COLUMN_WIDTH);
         layout->addWidget(entry_points_tabs);
 
         _buildMapListComponent->buildMapList(this);
@@ -516,14 +702,63 @@ namespace Noggit::Ui::Windows
     );
 
     _right_side = new QTabWidget(this);
+    _right_side->setObjectName("map-detail-tabs");
 
     auto minimap_holder = new QScrollArea(this);
     minimap_holder->setWidgetResizable(true);
     minimap_holder->setAlignment(Qt::AlignCenter);
     minimap_holder->setWidget(_minimap);
-
-    _right_side->addTab(minimap_holder, "Enter map");
+    minimap_holder->setFrameShape(QFrame::NoFrame);
     minimap_holder->setAccessibleName("main_menu_minimap_holder");
+
+    // WHY THE RIGHT PANE LOOKED EMPTY. It held one widget: a scroll area with a square minimap
+    // centred in it. Maximised, that is a 1200px-wide region containing a picture and no words
+    // at all -- the name of the map the user just clicked was only ever visible back in the list
+    // on the far side of the window, and there was nothing anywhere saying what to do next.
+    //
+    // The pane becomes a page with a head, a body and a foot: which map is selected and what it
+    // is, at the two top ranks; the minimap; and one line of instruction at the secondary rank.
+    // Every string comes from the row already selected in the list, so nothing new is read from
+    // the client and no lookup can fail.
+    QWidget* const map_detail_page = new QWidget(this);
+    map_detail_page->setObjectName("map-detail-page");
+
+    QVBoxLayout* const map_detail_layout = new QVBoxLayout(map_detail_page);
+    map_detail_layout->setContentsMargins(Style::SPACE_12, Style::SPACE_12,
+                                          Style::SPACE_12, Style::SPACE_12);
+    map_detail_layout->setSpacing(Style::SPACE_12);
+
+    QVBoxLayout* const map_detail_head = new QVBoxLayout();
+    map_detail_head->setContentsMargins(0, 0, 0, 0);
+    // SPACE_2: the title and its metadata are one unit, not two siblings.
+    map_detail_head->setSpacing(Style::SPACE_2);
+
+    // The pane's head is a LIVE VALUE -- it is the name of whichever map is selected -- so it
+    // takes the value rank's colour (text.hi) from the sheet by property, and its size from the
+    // window-title rank here. That composition is measured: the font-only widget sheet supplies
+    // 15px/600 and the sheet's QLabel[state="value"] rule still supplies #F3F0E9.
+    _map_detail_title = new QLabel(map_detail_page);
+    _map_detail_title->setObjectName("map-detail-title");
+    Style::markValue(_map_detail_title);
+    Style::applyRank(_map_detail_title, Style::RANK_WINDOW_TITLE_PIXELS,
+                     Style::RANK_WINDOW_TITLE_WEIGHT);
+
+    _map_detail_meta = new QLabel(map_detail_page);
+    _map_detail_meta->setObjectName(Style::NAME_SECONDARY);
+
+    map_detail_head->addWidget(_map_detail_title);
+    map_detail_head->addWidget(_map_detail_meta);
+
+    QLabel* const map_detail_hint = new QLabel(
+        tr("Double-click a tile on the minimap to enter the map there."), map_detail_page);
+    map_detail_hint->setObjectName(Style::NAME_SECONDARY);
+    map_detail_hint->setWordWrap(true);
+
+    map_detail_layout->addLayout(map_detail_head);
+    map_detail_layout->addWidget(minimap_holder, 1);
+    map_detail_layout->addWidget(map_detail_hint);
+
+    _right_side->addTab(map_detail_page, "Enter map");
 
     _map_wizard_connection = connect(_map_creation_wizard,
                                      &Noggit::Ui::Tools::MapCreationWizard::Ui::MapCreationWizard::map_dbc_updated, 
@@ -563,6 +798,51 @@ namespace Noggit::Ui::Windows
     //setCentralWidget (_stack_widget);
 
     _minimap->adjustSize();
+
+    updateMapDetail();
+  }
+
+  void NoggitWindow::updateMapDetail()
+  {
+    if (!_map_detail_title || !_map_detail_meta)
+      return;
+
+    QListWidgetItem* const item = _continents_table ? _continents_table->currentItem() : nullptr;
+    auto* const row = item
+        ? qobject_cast<Noggit::Ui::Widget::MapListItem*>(_continents_table->itemWidget(item))
+        : nullptr;
+
+    if (!row)
+    {
+      // The empty state is a state, not a blank. Before this the pane simply showed the
+      // minimap's own "Select a map" placeholder and nothing else.
+      _map_detail_title->setText(tr("No map selected"));
+      _map_detail_meta->setText(tr("Pick a map from the list to preview it."));
+      return;
+    }
+
+    _map_detail_title->setText(row->name());
+
+    // The same two facts the list row carries, spelled out: a bare "530" in a list is a hint, a
+    // header has room to say what the number is. The instance-type wording is deliberately the
+    // same string the Type filter above the list uses, so the two cannot disagree.
+    QString instance_type(tr("Unknown"));
+    switch (row->type())
+    {
+      case 0: instance_type = tr("Continent"); break;
+      case 1: instance_type = tr("Dungeon"); break;
+      case 2: instance_type = tr("Raid"); break;
+      case 3: instance_type = tr("Battleground"); break;
+      case 4: instance_type = tr("Arena"); break;
+      case 5: instance_type = tr("Scenario"); break;
+      default: break;
+    }
+
+    _map_detail_meta->setText(tr("Map %1  ·  %2%3")
+                                  .arg(row->id())
+                                  .arg(instance_type)
+                                  .arg(row->wmo_map() ? tr("  ·  WMO only, no terrain")
+                                                      : QString()));
   }
 
   void NoggitWindow::closeEvent(QCloseEvent* event)

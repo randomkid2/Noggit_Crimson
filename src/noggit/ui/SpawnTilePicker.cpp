@@ -2,6 +2,7 @@
 
 #include <noggit/ui/SpawnTilePicker.hpp>
 
+#include <noggit/ui/DesignTokens.hpp>
 #include <noggit/World.h>
 
 #include <QtGui/QPainter>
@@ -30,12 +31,50 @@ namespace
   constexpr int DENSITY_MIN_ALPHA = 45;
   constexpr int DENSITY_MAX_ALPHA = 195;
 
-  // The two "loaded" markers. Green for spawns that are actually rendered, amber for spawns that
-  // are in the cache and cannot be: two hues rather than two alphas of the same one, because the
-  // grid is already tinted by density and a brightness difference over a variable tint is not a
-  // difference anybody can read.
-  QColor const LOADED_DRAWN_COLOUR (60, 230, 90, 235);
-  QColor const LOADED_NOT_DRAWN_COLOUR (255, 170, 40, 235);
+  // Every colour on this grid, and all four are now design-system tokens rather than the
+  // hand-mixed values they were. The meanings did not move; the hexes did.
+  //
+  //   density tint       was (0, 190, 255)   -> INFO   -- neutral quantity, not a status
+  //   loaded AND drawn   was (60, 230, 90)   -> OK     -- what you asked for is on screen
+  //   loaded, NOT drawn  was (255, 170, 40)  -> WARN   -- cached but nothing renders it
+  //   selection outline  was (255, 40, 40)   -> ACCENT -- "the thing you are acting on"
+  //
+  // The selection is the one that mattered. It was a near-pure red, which under the previous
+  // scheme was also the accent, the error colour and the destructive colour -- so the outline
+  // around the tiles you had deliberately chosen looked exactly like a warning about them.
+  // ACCENT against BG_VOID is 8.77:1 where that red managed 5.13:1, so it is both unambiguous
+  // and brighter than what it replaces.
+  //
+  // The alpha stays where it was on all three markers: it is what lets the density tint show
+  // through, and it is not a colour decision.
+  //
+  // Two hues rather than two alphas of the same one for the loaded pair, because the grid is
+  // already tinted by density and a brightness difference over a variable tint is not a
+  // difference anybody can read. OK and WARN are 106.5 and 15.8 degrees off the accent
+  // respectively, and WARN is separated from the accent by FORM here -- it is a filled dot or a
+  // small inset outline, never the selection's full-cell rectangle.
+  constexpr int LOADED_ALPHA = 235;
+
+  QColor loadedDrawnColour()
+  {
+    QColor colour (Noggit::Ui::Design::color (Noggit::Ui::Design::OK));
+    colour.setAlpha (LOADED_ALPHA);
+    return colour;
+  }
+
+  QColor loadedNotDrawnColour()
+  {
+    QColor colour (Noggit::Ui::Design::color (Noggit::Ui::Design::WARN));
+    colour.setAlpha (LOADED_ALPHA);
+    return colour;
+  }
+
+  QColor densityColour (int alpha)
+  {
+    QColor colour (Noggit::Ui::Design::color (Noggit::Ui::Design::INFO));
+    colour.setAlpha (alpha);
+    return colour;
+  }
 
   // Buffer index for an ADT tile. The one place `64 * adt_x + adt_z` is written in this file, so
   // the base class's convention (minimap_widget.cpp:49, :60, :259) is stated once.
@@ -231,7 +270,7 @@ void SpawnTilePicker::paintEvent(QPaintEvent* paint_event)
 
         painter.fillRect
           ( QRect(cell * adt_x + 1, cell * adt_z + 1, cell - 1, cell - 1)
-          , QColor(0, 190, 255, alpha)
+          , densityColour(alpha)
           );
       }
     }
@@ -262,7 +301,7 @@ void SpawnTilePicker::paintEvent(QPaintEvent* paint_event)
         }
 
         QColor const colour
-          ( state == TileLoadState::DRAWN ? LOADED_DRAWN_COLOUR : LOADED_NOT_DRAWN_COLOUR);
+          ( state == TileLoadState::DRAWN ? loadedDrawnColour() : loadedNotDrawnColour());
 
         painter.setBrush(outline ? QBrush(Qt::NoBrush) : QBrush(colour));
         painter.setPen(colour);
@@ -290,7 +329,7 @@ void SpawnTilePicker::paintEvent(QPaintEvent* paint_event)
   // selection is the one thing the user is actively manipulating. Redrawing it last costs one
   // pass over the grid and keeps it readable over a dark tint.
   painter.setBrush(Qt::NoBrush);
-  painter.setPen(QColor(255, 40, 40, 255));
+  painter.setPen(Noggit::Ui::Design::color(Noggit::Ui::Design::ACCENT));
 
   for (int adt_x = 0; adt_x < 64; ++adt_x)
   {

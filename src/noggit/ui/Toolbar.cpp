@@ -4,8 +4,16 @@
 #include <noggit/Tool.hpp>
 #include <noggit/ui/FontNoggit.hpp>
 
+#include <QtCore/QSize>
+
 namespace
 {
+  // Kept beside the ViewToolbar's own TOOLBAR_ICON_EXTENT rather than shared through a header:
+  // the two bars are separate widgets with separate sheets, and a single constant would imply a
+  // coupling that does not exist. They agree at 20 because the design system gives both the same
+  // 34x34 button.
+  constexpr int TOOL_STRIP_ICON_EXTENT = 20;
+
   // The strip is icon-only, and hovering a tool used to show nothing but its bare name -- Qt
   // returns QAction::text() from toolTip() when no explicit tooltip is set. Nine of the sixteen
   // tools also have a number key, but that binding goes through MapView::addHotkey, a private
@@ -48,6 +56,33 @@ namespace Noggit
       setContextMenuPolicy(Qt::PreventContextMenu);
       setAllowedAreas(Qt::LeftToolBarArea);
       setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+
+      // The sixteen glyphs on the left strip, which sits over the 3D view for the whole session
+      // and is therefore the first thing anyone judges this editor by.
+      //
+      // This was never set anywhere -- not here, not in MapView, and not in the theme, which
+      // gives qproperty-iconSize to the window controls and the dock buttons but to no tool bar.
+      // The size fell through to QStyle::PM_ToolBarIconSize, a platform default that knows
+      // nothing about these buttons.
+      //
+      // MEASURED, not assumed, with a standalone Qt 5.15.2 probe on this machine -- and the
+      // number is much worse than the 24 that would be a reasonable guess:
+      //
+      //     style                 windowsvista
+      //     PM_ToolBarIconSize    36
+      //     QToolBar::iconSize()  36x36, both with and without the CrimsonSlate sheet applied
+      //
+      // The design system asks for a 20px icon in a 34x34 button and the sheet's rule leaves a
+      // content box of roughly 22px, so every glyph on this strip was being rasterised at 36px
+      // and then resampled down by Qt to about 22 -- a 61% reduction. These are
+      // FontNoggitIconEngine icons and the engine rasterises the glyph at exactly rect.height(),
+      // so this number IS the glyph's real pixel size and not a hint: asking for 20 draws at 20,
+      // one device pixel per pixel, instead of drawing at 36 and softening it on the way down.
+      // That resample is a large part of why the chrome read as muddy.
+      //
+      // It does not touch the BUTTON box. That is min-width/min-height in the sheet, which
+      // overrides setFixedSize from C++ and is deliberately left to the sheet.
+      setIconSize(QSize(TOOL_STRIP_ICON_EXTENT, TOOL_STRIP_ICON_EXTENT));
 
       for (auto&& tool : tools)
       {
