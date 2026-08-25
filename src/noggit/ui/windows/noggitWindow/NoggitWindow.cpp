@@ -378,6 +378,13 @@ namespace Noggit::Ui::Windows
     {
         QWidget* _first_tab = new QWidget(this);
         QVBoxLayout* _first_tab_layout = new QVBoxLayout();
+
+        // Even gutters on all four sides and one consistent gap between the search box, the map
+        // list and the add button. The default 9px margin with a 6px gap plus a hand-placed 5px
+        // spacer gave three different distances down the same column.
+        _first_tab_layout->setContentsMargins(8, 8, 8, 8);
+        _first_tab_layout->setSpacing(8);
+
         _first_tab->setLayout(_first_tab_layout);
 
         QGroupBox* _group_search = new QGroupBox(tr("Search"), this);
@@ -442,7 +449,6 @@ namespace Noggit::Ui::Windows
         _group_search->setLayout(_group_layout);
 
         _first_tab_layout->addWidget(_group_search);
-        _first_tab_layout->addSpacing(5);
         _first_tab_layout->addWidget(_continents_table);
         _first_tab_layout->addWidget(add_btn);
 

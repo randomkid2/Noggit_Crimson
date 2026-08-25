@@ -2,6 +2,7 @@
 #include <noggit/ui/windows/noggitWindow/widgets/MapListItem.hpp>
 
 #include <QColor>
+#include <QEvent>
 #include <QFont>
 #include <QGraphicsColorizeEffect>
 #include <QHBoxLayout>
@@ -30,12 +31,45 @@ namespace Noggit::Ui::Widget
     constexpr int ROW_MARGIN_BOTTOM = 8;
 
     constexpr int COLUMN_SPACING = 10;
-    constexpr int LINE_SPACING = 2;
+
+    // 3px, matching ProjectListItem, so the two windows separate a title from its metadata by
+    // the same amount.
+    constexpr int LINE_SPACING = 3;
 
     // BuildMapListComponent feeds minimumSizeHint() straight to QListWidgetItem::setSizeHint, so
     // this is the list row height. The icon plus the vertical margins comes to 48; stating it as
     // a floor keeps the row square even if a future font makes the text column shorter.
     constexpr int ROW_MIN_HEIGHT = ICON_EXTENT + ROW_MARGIN_TOP + ROW_MARGIN_BOTTOM;
+
+    // WHY THE MAP NAMES LOST THEIR DESCENDERS.
+    //
+    // setItemWidget() installs this row as a PERSISTENT EDITOR on the item. Its geometry is
+    // therefore not the item rect: it comes from QStyledItemDelegate::updateEditorGeometry(),
+    // which asks the style for SE_ItemViewItemText -- and QStyleSheetStyle subtracts the view's
+    // ::item margin, border and padding from that rect. _continents_table is a plain QListWidget
+    // with no accessibleName, so under CrimsonSlate it matches
+    //   QAbstractItemView::item { padding: 5px 6px; }
+    // and loses 5px top + 5px bottom.
+    //
+    // BuildMapListComponent hands setSizeHint() exactly this row's minimum, so the row was then
+    // handed TEN PIXELS LESS than its minimum and the QVBoxLayout squeezed the text column.
+    // Measured with a standalone Qt probe against the shipped theme: the title label needed 19px
+    // and was given 11, an 8px shortfall against a font whose descent is 4px. That is the whole
+    // defect -- nothing here was mis-measuring the font.
+    //
+    // Two independent guards, because the loss belongs to whichever theme is loaded and cannot
+    // simply be read back: querying the view's style for SE_ItemViewItemText directly reports a
+    // loss of zero (also measured), so there is nothing honest to subtract.
+    //
+    //   * setMinimumHeight(contentMinimum()) in the constructor is the GUARANTEE.
+    //     QWidget::setGeometry clamps to the widget minimum, so the delegate cannot squeeze the
+    //     row below what its content needs no matter how much chrome a theme asks for. Verified
+    //     against an exaggerated theme with 24px of item chrome: still zero clipping.
+    //
+    //   * ITEM_CHROME_HEADROOM is the TIDINESS. Added to the hint the item is given so that,
+    //     under a normal theme, the row FITS inside the slot instead of clamping and overhanging
+    //     it. 12 covers the measured 10 with 2px to spare.
+    constexpr int ITEM_CHROME_HEADROOM = 12;
 
     // Only decides whether the view thinks it needs a horizontal scroll bar; the list always
     // resizes the row to the viewport width. A map name can be long, so it must not be derived
@@ -182,15 +216,43 @@ namespace Noggit::Ui::Widget
       if (label)
         label->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     }
+
+    // The theme is set on the application before any window is built, so polishing here is what
+    // makes contentMinimum() see the style sheet's font sizes rather than the QFont defaults set
+    // above. Without it the floor would be computed from the wrong metrics.
+    ensurePolished();
+    setMinimumHeight (contentMinimum());
+  }
+
+  int MapListItem::contentMinimum() const
+  {
+    // There IS a layout, so the height can be asked for rather than reconstructed from the
+    // offsets the constructor used.
+    int const from_layout (QWidget::minimumSizeHint().height());
+
+    return std::max (ROW_MIN_HEIGHT, from_layout);
+  }
+
+  void MapListItem::changeEvent (QEvent* event)
+  {
+    QWidget::changeEvent (event);
+
+    if (event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange)
+    {
+      int const floor (contentMinimum());
+
+      // Guarded: setMinimumHeight schedules a relayout, and re-setting the value it already
+      // holds on every unrelated style change is pure churn.
+      if (minimumHeight() != floor)
+        setMinimumHeight (floor);
+    }
   }
 
   QSize MapListItem::minimumSizeHint() const
   {
-    // There IS a layout now, so the height can be asked for rather than reconstructed from the
-    // offsets the constructor used.
-    int const from_layout (QWidget::minimumSizeHint().height());
-
-    return QSize (ROW_HINT_WIDTH, std::max (ROW_MIN_HEIGHT, from_layout));
+    // This is only ever consumed as the LIST ITEM's size hint, so it states what the item has to
+    // reserve -- the row's own content plus the chrome the delegate will take back off it.
+    return QSize (ROW_HINT_WIDTH, contentMinimum() + ITEM_CHROME_HEADROOM);
   }
 
   const QString MapListItem::name() const

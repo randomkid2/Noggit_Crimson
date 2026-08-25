@@ -5,6 +5,7 @@
 #include <QString>
 #include <QWidget>
 
+class QEvent;
 class QLabel;
 
 namespace Noggit::Ui::Widget
@@ -43,8 +44,17 @@ namespace Noggit::Ui::Widget
         int expansion() const;;
         bool wmo_map() const;;
 
+    protected:
+        // Re-arms the height floor when the theme or the font changes underneath the row, so a
+        // theme switch cannot leave the floor stale at the old font's metrics.
+        void changeEvent(QEvent* event) override;
+
     private:
         QString toCamelCase(const QString& s);
+
+        // The height the row's own content needs, before any allowance for the view's item
+        // chrome. Used both for the height floor and as the base of the size hint.
+        int contentMinimum() const;
     };
 }
 

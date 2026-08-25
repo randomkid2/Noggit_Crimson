@@ -4,6 +4,7 @@
 #include <noggit/ui/windows/projectSelection/widgets/ProjectListItem.hpp>
 
 #include <QColor>
+#include <QEvent>
 #include <QFont>
 #include <QGraphicsColorizeEffect>
 #include <QHBoxLayout>
@@ -40,6 +41,28 @@ namespace Noggit::Ui::Widget
     // stating it as a floor keeps the row comfortable even if a future font makes the text
     // column shorter than the icon.
     constexpr int ROW_MIN_HEIGHT = ICON_EXTENT + ROW_MARGIN_TOP + ROW_MARGIN_BOTTOM;
+
+    // This row was clipping its project name too -- 4px, exactly its font descent, which is why
+    // it was easy to miss next to the map list's 8px.
+    //
+    // setItemWidget() installs the row as a PERSISTENT EDITOR, so its geometry comes from
+    // QStyledItemDelegate::updateEditorGeometry() via SE_ItemViewItemText, and QStyleSheetStyle
+    // subtracts the view's ::item margin, border and padding from that rect. listView carries
+    // accessibleName "project_list", so under CrimsonSlate it matches
+    //   QListWidget[accessibleName="project_list"]::item { margin: 2px 2px; padding: 0px; }
+    // and loses 2px top + 2px bottom. RecentProjectsComponent hands setSizeHint() exactly this
+    // row's minimum, so the row was handed four pixels less than it needed and the QVBoxLayout
+    // took them out of the title label. Measured with a standalone Qt probe: 19px needed, 15
+    // given.
+    //
+    // The fix is in two halves, as in MapListItem.cpp -- see the long comment there for why the
+    // loss cannot be read back from the style:
+    //   * setMinimumHeight(contentMinimum()) is the guarantee; QWidget::setGeometry clamps.
+    //   * ITEM_CHROME_HEADROOM keeps the row inside its slot under a normal theme. 6 covers the
+    //     measured 4. It is smaller than the map lists' 12 on purpose: this list has its own,
+    //     lighter ::item rule, and the window it lives in is a fixed 792x416, so every pixel of
+    //     row pitch costs visible projects.
+    constexpr int ITEM_CHROME_HEADROOM = 6;
 
     // Deliberately narrow, and unchanged from the previous revision. The list widget always
     // resizes the row to the viewport width, so this number only decides whether the view
@@ -180,16 +203,42 @@ namespace Noggit::Ui::Widget
       if (label)
         label->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     }
+
+    // The theme is set on the application before any window is built, so polishing here is what
+    // makes contentMinimum() see the style sheet's font sizes rather than the QFont defaults set
+    // above.
+    ensurePolished();
+    setMinimumHeight (contentMinimum());
   }
 
-  QSize ProjectListItem::minimumSizeHint() const
+  int ProjectListItem::contentMinimum() const
   {
     // There IS a layout now, so the height can simply be asked for rather than reconstructed
     // from the offsets the constructor used -- which is what the previous revision had to do,
     // and why it drifted out of step with the placement it was describing.
     int const from_layout (QWidget::minimumSizeHint().height());
 
-    return QSize (ROW_HINT_WIDTH, std::max (ROW_MIN_HEIGHT, from_layout));
+    return std::max (ROW_MIN_HEIGHT, from_layout);
+  }
+
+  void ProjectListItem::changeEvent (QEvent* event)
+  {
+    QWidget::changeEvent (event);
+
+    if (event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange)
+    {
+      int const floor (contentMinimum());
+
+      if (minimumHeight() != floor)
+        setMinimumHeight (floor);
+    }
+  }
+
+  QSize ProjectListItem::minimumSizeHint() const
+  {
+    // Consumed only as the LIST ITEM's size hint, so it states what the item has to reserve:
+    // the row's own content plus the chrome the delegate will take back off it.
+    return QSize (ROW_HINT_WIDTH, contentMinimum() + ITEM_CHROME_HEADROOM);
   }
 
   QString ProjectListItem::toCamelCase(const QString& s)

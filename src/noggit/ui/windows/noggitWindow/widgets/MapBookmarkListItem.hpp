@@ -7,6 +7,7 @@
 #include <QString>
 #include <QWidget>
 
+class QEvent;
 class QLabel;
 
 namespace Noggit::Ui::Widget
@@ -28,8 +29,15 @@ namespace Noggit::Ui::Widget
     public:
         MapListBookmarkItem(const MapListBookmarkData& data, QWidget* parent);
         QSize minimumSizeHint() const override;
+    protected:
+        // Re-arms the height floor when the theme or the font changes underneath the row.
+        void changeEvent(QEvent* event) override;
     private:
         QString toCamelCase(const QString& s);
+
+        // The height the row's own content needs, before any allowance for the view's item
+        // chrome. Used both for the height floor and as the base of the size hint.
+        int contentMinimum() const;
     };
 }
 

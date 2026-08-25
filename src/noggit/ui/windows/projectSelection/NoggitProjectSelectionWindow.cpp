@@ -110,6 +110,13 @@ NoggitProjectSelectionWindow::NoggitProjectSelectionWindow(Noggit::Application::
 
   _ui->listView->setAccessibleName("project_list");
 
+  // One gap value down both columns, so "Recent Projects" sits the same distance above its list
+  // as "Getting Started" does above its buttons. The two columns were on uic's default 6px in
+  // one place and on hand-set margins in the other, which is why the headings did not line up
+  // with each other.
+  _ui->verticalLayout_2->setSpacing(8);
+  _ui->verticalLayout_4->setSpacing(8);
+
   _settings = new Noggit::Ui::settings(this);
   //_changelog = new Noggit::Ui::CChangelog(this);
 

@@ -30,11 +30,44 @@
     children of the vertical layout, which makes the hidden bar genuinely free.
 
     Third, the slider took whatever height the style's slider thickness happened to be - around
-    22px under Fusion, and none of it used. The theme draws a 4px groove with a 16px handle
-    (margin -6px on a 4px groove is exactly 16px of handle), so 16px is the full height the
-    control can ever paint into. Pinning it there is the "thin track" and it is the single
-    biggest saving on the panel: ~6px x 18 instances, before the row gap below drops from 3 to 2.
-    It is a MINIMUM as well as a maximum so the handle cannot be clipped if a theme thickens it.
+    22px under Fusion, and none of it used. The theme draws a 6px groove with a 16px handle
+    (margin -5px top and bottom on a 6px groove is exactly 16px of handle), so 16px is the band.
+    It is pinned as a MINIMUM as well as a maximum, so the row height is this file's decision
+    rather than the style's and the handle cannot be clipped if a theme thickens it. That is the
+    single biggest saving on the panel: ~6px x 18 instances, before the row gap below drops from
+    3 to 2.
+
+    THE BAND WAS BRIEFLY 20px AND THAT WAS A REGRESSION, NOW REVERTED. The argument for widening
+    it was that the band, not the sheet, sets the hit target - that Qt derives the
+    SC_SliderHandle rect from the WIDGET's height - so that at 16px the top and bottom rows of
+    the grip a user can SEE would page-step instead of drag. That is true of an UNSTYLED slider
+    and false of this one. Re-measured with a standalone Qt 5.15.2 probe that loads the shipped
+    sheet, puts a 212px slider at 50 percent, and sweeps the pointer pixel by pixel over the
+    whole control counting the positions QStyle::hitTestComplexControl(CC_Slider, ...) reports
+    as SC_SliderHandle - which is the exact call QSlider::mousePressEvent uses to choose between
+    starting a drag and page-stepping:
+
+      sheet                    band   handle rect       pixels that GRAB the handle
+      6px tick, 4px groove      16     6x16 @(103,0)     96 =  6 x 16
+      16px grip, 6px groove     14    16x16 @(98,-1)    224 = 16 x 14  (grip clipped by band)
+      16px grip, 6px groove     16    16x16 @(98,0)     256 = 16 x 16  (this file)
+      16px grip, 6px groove     18    16x16 @(98,1)     256 = 16 x 16
+      16px grip, 6px groove     20    16x16 @(98,2)     256 = 16 x 16
+      16px grip, 6px groove     22    16x16 @(98,3)     256 = 16 x 16
+      none, QWindowsVistaStyle  16    16x16 @(98,0)     256 = 16 x 16
+      none, QWindowsVistaStyle  20    16x20 @(98,0)     320 = 16 x 20
+
+    With a sheet loaded QStyleSheetStyle sizes the handle from the QSS box - 6px groove plus the
+    -5px margins - and CENTRES it in the band, so the handle rect is 16x16 at every band from 16
+    upwards and the widening bought exactly zero grabbable pixels. Only the last two rows, with
+    no sheet at all, behave the way the widening assumed; this application always has one. So 16
+    is the smallest band that does not clip the grip, and at 16 every pixel of the grip that is
+    drawn also grabs it. 20 instead added four rows where a click JUMPS the value, inside the
+    grip's own row, on the control that sets brush radius and speed - and charged 4px x 18
+    instances for it.
+
+    What did move the hit target is the theme's grip rewrite, from 6x16 = 96 to 16x16 = 256
+    (2.7x), measured in the first two lines above. It did that without this file changing at all.
 
     Fourth, the value was left-aligned, so in a column of three sliders the digits started at
     three different x positions and the eye had nothing to scan down. The spinbox is now

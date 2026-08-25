@@ -2,8 +2,11 @@
 
 #pragma once
 
+#include <QFont>
 #include <QWidget>
 #include <glm/vec3.hpp>
+
+class QEvent;
 
 namespace math
 {
@@ -45,6 +48,7 @@ namespace Noggit
 
     protected:
       virtual void paintEvent (QPaintEvent* paint_event) override;
+      virtual void changeEvent (QEvent* event) override;
       virtual void mouseDoubleClickEvent (QMouseEvent*) override;
       virtual void mouseMoveEvent(QMouseEvent*) override;
       virtual void mousePressEvent(QMouseEvent* event) override;
@@ -52,6 +56,10 @@ namespace Noggit
       virtual void wheelEvent(QWheelEvent* event) override;
 
       QPoint locateTile(QMouseEvent* event);
+
+      //! Rebuilds the cached "Select a map" font from the widget's current font. Called from
+      //! the constructor and from changeEvent, never from the paint path.
+      void updatePlaceholderFont();
 
     signals:
       void map_clicked(const glm::vec3&);
@@ -70,6 +78,8 @@ namespace Noggit
 
       bool _use_selection = false;
       bool _is_selecting = false;
+
+      QFont _placeholder_font;
     };
   }
 }

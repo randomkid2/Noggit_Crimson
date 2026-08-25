@@ -190,7 +190,7 @@ namespace Noggit
       // panel on nothing. Zero it and let the sheet own the gutter; that keeps every tool's
       // group boxes consistent with each other instead of only this one being roomier.
       settings_layout->setContentsMargins(0, 0, 0, 0);
-      // Each ExtendedSlider is now a tight two-line block (value row, then a 16px track), so the
+      // Each ExtendedSlider is now a tight two-line block (value row, then a 20px track), so the
       // gap BETWEEN blocks is what tells the eye where one setting ends and the next begins.
       // The style default of 6px was less than the 2px+track inside a row plus the row's own
       // ascender, which is why three stacked sliders read as one undifferentiated column of

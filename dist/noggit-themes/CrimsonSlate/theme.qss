@@ -45,6 +45,21 @@
  * TEXT (contrast measured against bg.base #1B1E24, see check_qss.py output)
  *   text.hi       #EDF0F4   headings, active values, the focused control
  *   text          #C6CCD6   body -- default label and control text
+ *   text.mid      #A0A8B4   the secondary rank WHERE THE SURFACE IS LIGHTER
+ *                           THAN bg.base. text.dim is a 5.38:1 colour on the
+ *                           panel and that is where its number was taken, but
+ *                           it is only 4.33:1 on bg.overlay and 4.35:1 on the
+ *                           selected project row -- both below the 4.5 floor,
+ *                           on the two surfaces this sheet lifts TOWARDS the
+ *                           reader. text.mid is text.dim raised until the
+ *                           worst of those clears the floor with margin: the
+ *                           minimum anywhere it is used is 4.92:1 (secondary
+ *                           project text on a hovered selected row) and the
+ *                           maximum 7.40:1 (an unchecked icon on bg.sunken).
+ *                           It carries exactly two roles, both listed at their
+ *                           rules: the UNCHECKED icon pen, and secondary text
+ *                           on the project row. text.dim keeps every caption
+ *                           that sits on bg.base or bg.sunken.
  *   text.dim      #8A93A0   section titles, dock titles, captions, units
  *   text.off      #59606B   disabled; deliberately sub-threshold, that IS the
  *                           disabled signal. Sub-threshold for TEXT on a panel
@@ -96,6 +111,14 @@
  *                           rounding error -- 1.56:1 against #2A2F38, where the
  *                           surface immediately above it is 1.18:1 and the one
  *                           below 1.13:1, both invisible at icon-button size.
+ *   accent.hi     #EE6852   hover on a FILLED accent surface. accent.dim is
+ *                           the press, and a filled control needs a lift as
+ *                           well as a drop or hovering it is indistinguishable
+ *                           from resting on it. Ink stays legible on it --
+ *                           4.88:1 on accent, 5.70:1 here -- which is the
+ *                           constraint that fixed the value: any lighter and
+ *                           it stops reading as the same colour, any darker
+ *                           and the hover is not a lift.
  *   bg.alt        #1E222A   alternating item-view row; halfway base -> raised
  *   ink           #16181D   text drawn ON an accent fill. 4.85:1 against
  *                           #E8543F; #EDF0F4 would be 3.19:1 and fail.
@@ -629,6 +652,57 @@ QPushButton[state="danger"]:pressed {
 	color: #16181D;
 }
 
+/* The confirming action in a two-button row. Set from C++ the same way danger
+   is:  btn->setProperty("state", "primary");  and unpolish/polish if the
+   button already existed.
+
+   It exists because "Save" and "Discard" in the settings window were the same
+   grey button in the same size beside each other, and the only thing telling
+   them apart was the word -- which is precisely the case where a filled
+   accent earns its keep. This is NOT the accent-everywhere failure the tool
+   strip has: there is at most one of these per window, and it marks the one
+   action the window exists to perform.
+
+   Ink on the fill, not white: #16181D on #E8543F is 4.88:1 where #EDF0F4 is
+   3.18:1 and fails. That is the same choice QPalette::HighlightedText makes
+   in ApplicationEntry.cpp, so a primary button and a selected row agree.
+   Hover lifts to accent.hi #EE6852 (ink 5.70:1). Pressed drops to accent.dim
+   and flips to text.hi, 5.01:1 -- ink on accent.dim would be 3.10:1, below
+   the floor, which is why the press is the one state that inverts.
+
+   :disabled is spelled out because a bare QPushButton:disabled ties with this
+   rule on Qt specificity (one attribute against one pseudo-state, 257 each)
+   and would then be decided by document order alone. Two conditions here, so
+   it wins outright and a disabled primary is grey like everything else. */
+QPushButton[state="primary"] {
+	background-color: #E8543F;
+	color: #16181D;
+	border: 1px solid #E8543F;
+	font-weight: 600;
+}
+
+QPushButton[state="primary"]:hover {
+	background-color: #EE6852;
+	color: #16181D;
+	border: 1px solid #EE6852;
+}
+
+QPushButton[state="primary"]:pressed {
+	background-color: #B33F2E;
+	color: #EDF0F4;
+	border: 1px solid #B33F2E;
+}
+
+QPushButton[state="primary"]:focus {
+	border: 1px solid #EDF0F4;
+}
+
+QPushButton[state="primary"]:disabled {
+	background-color: #1B1E24;
+	color: #59606B;
+	border: 1px solid #262B33;
+}
+
 
 /* ----------------------------------------------------------- tool buttons -- */
 
@@ -1082,11 +1156,25 @@ QRadioButton::indicator:checked:disabled {
 
    Mechanically: margin-top opens 20px above the frame for the title to occupy,
    border-top paints the rule at the top of the frame -- i.e. directly under
-   the title -- and padding-bottom is the gap to the next section. */
+   the title -- and padding-bottom is the gap to the next section.
+
+   TOO QUIET, and both halves of the mark were at fault. The caption was
+   11/600 in text.dim, 5.38:1 against the panel, and the rule under it was
+   stroke.soft #262B33, 1.17:1 -- which is a hairline you can only find if you
+   already know it is there. Rendered under a probe and looked at rather than
+   reasoned about, "Settings" and "Type" simply did not register as headings
+   and the dock read as one undifferentiated column of controls.
+
+   The caption is now 11/700 in text (#C6CCD6, 10.34:1) and the rule is stroke
+   #343A45 (1.46:1, the same weight this sheet already gives an input border,
+   which is the quietest line in the app you can actually see). It is still a
+   caption and not a headline: 11px, still smaller than body, still ranked
+   below the 13/600 text.hi dock title above it, and the SIZE did not move, so
+   nothing in any tool panel reflows. Only weight and colour changed. */
 QGroupBox {
 	background: transparent;
 	border: none;
-	border-top: 1px solid #262B33;
+	border-top: 1px solid #343A45;
 	border-radius: 0px;
 	margin-top: 20px;
 	margin-bottom: 4px;
@@ -1101,17 +1189,20 @@ QGroupBox::title {
 	subcontrol-origin: margin;
 	subcontrol-position: top left;
 	background: transparent;
-	color: #8A93A0;
+	color: #C6CCD6;
 	left: 0px;
 	padding: 0px 8px 6px 0px;
+	font-weight: 700;
 }
 
 QGroupBox::title:disabled {
 	color: #59606B;
 }
 
+/* Follows the enabled rule one step down the stroke ramp, so a disabled
+   section is quieter than a live one by the same margin it always was. */
 QGroupBox:disabled {
-	border-top: 1px solid #22262E;
+	border-top: 1px solid #262B33;
 }
 
 /* A group box nested inside another one gets no rule of its own, or the panel
@@ -1504,7 +1595,48 @@ QAbstractScrollArea::corner {
 
 /* Every Radius / Inner Radius / Speed row in the tool panels ends in one of
    these, so it is the most repeated control in the editor after the label.
-   The filled portion is accent: the groove is a readout, not a rail. */
+   The filled portion is accent: the groove is a readout, not a rail.
+
+   THE HANDLE IS A GRIP, NOT A TICK. It used to be 6px wide -- and that is
+   measured, not read off this sheet: a standalone Qt probe built against
+   5.15.2, loading this file and nothing else, reported
+
+     subControlRect(CC_Slider, SC_SliderHandle) = 6 x 16 at x=34/135/236
+     subControlRect(CC_Slider, SC_SliderGroove) = 276 x 4
+
+   for a 276x16 slider at 12 / 50 / 88 percent. Six pixels is narrower than the
+   accent fill it sits at the end of, so the control read as a progress bar
+   with a scratch on it and there was nothing obvious to grab. Confirmed by
+   grabbing the probe's render: the eye goes to the red fill and never finds
+   the handle.
+
+   The handle is now a 16px round grip: 12px of fill plus a 2px ink ring on
+   each side, at border-radius 8px, which is half of 16 and therefore a full
+   circle. The ring is what separates it from BOTH the accent sub-page (ink on
+   accent 4.88:1) and the sunken add-page (ink on #16181D is the same colour,
+   so the ring reads there as the fill's own edge, which is what a
+   groove-coloured moat is for).
+
+   The groove goes 4px -> 6px in the same pass. A 4px rail under a 16px grip
+   is the "hairline track" complaint; 6px still leaves the handle overhanging
+   by 5px on each side, which is what makes it read as ON the track rather
+   than as a segment OF it. -5px handle margin is that overhang, and 6 + 5 + 5
+   closes on the 16px box exactly.
+
+   WHAT THIS BLOCK DOES AND DOES NOT CHANGE. It changes what is PAINTED: the
+   grip goes from 6x16 to 16x16, 2.7x the drawn area, and a control that read
+   as a progress bar now has something on it that looks grabbable. It does not
+   change the hit target and cannot. Qt derives SC_SliderHandle from the
+   WIDGET's height, never from the QSS handle box, so how many pixels actually
+   start a drag is decided by the height ExtendedSliderUi pins on the widget
+   -- a different file, owned elsewhere, and its value is deliberately not
+   restated here because a number copied across a file boundary is a number
+   that goes stale silently. An earlier revision of this comment asserted "a
+   2.7x larger hit target"; that was the painted area being reported as the
+   grabbable one, and it was wrong. Whatever that pin is, this box is 16px and
+   centres in it, so a taller band leaves empty rail above and below the grip
+   and nothing here clips. Nothing about the range, the step, the page step or
+   the emitted value moves either way. */
 QSlider {
 	background: transparent;
 	border: none;
@@ -1513,61 +1645,64 @@ QSlider {
 QSlider::groove:horizontal {
 	background-color: #16181D;
 	border: none;
-	border-radius: 2px;
-	height: 4px;
+	border-radius: 3px;
+	height: 6px;
 	margin: 0px 2px;
 }
 
 QSlider::sub-page:horizontal {
 	background-color: #E8543F;
 	border: none;
-	border-radius: 2px;
+	border-radius: 3px;
 }
 
 QSlider::add-page:horizontal {
 	background-color: #16181D;
 	border: none;
-	border-radius: 2px;
+	border-radius: 3px;
 }
 
 QSlider::handle:horizontal {
 	background-color: #C6CCD6;
-	border: none;
-	border-radius: 2px;
-	width: 6px;
-	height: 16px;
-	margin: -6px 0px;
+	border: 2px solid #16181D;
+	border-radius: 8px;
+	width: 12px;
+	height: 12px;
+	margin: -5px 0px;
 }
 
 QSlider::groove:vertical {
 	background-color: #16181D;
 	border: none;
-	border-radius: 2px;
-	width: 4px;
+	border-radius: 3px;
+	width: 6px;
 	margin: 2px 0px;
 }
 
 QSlider::sub-page:vertical {
 	background-color: #16181D;
 	border: none;
-	border-radius: 2px;
+	border-radius: 3px;
 }
 
 QSlider::add-page:vertical {
 	background-color: #E8543F;
 	border: none;
-	border-radius: 2px;
+	border-radius: 3px;
 }
 
 QSlider::handle:vertical {
 	background-color: #C6CCD6;
-	border: none;
-	border-radius: 2px;
-	height: 6px;
-	width: 16px;
-	margin: 0px -6px;
+	border: 2px solid #16181D;
+	border-radius: 8px;
+	height: 12px;
+	width: 12px;
+	margin: 0px -5px;
 }
 
+/* Only the FILL moves between states. Every state below leaves border and
+   border-radius to the two rules above, which is what stops a hover from
+   resizing the grip and dragging the whole row with it. */
 QSlider::handle:hover {
 	background-color: #EDF0F4;
 }
@@ -1576,8 +1711,11 @@ QSlider::handle:pressed {
 	background-color: #E8543F;
 }
 
+/* The ring goes with it, or a disabled handle keeps a hard black outline and
+   still reads as the liveliest thing in a greyed-out group. */
 QSlider::handle:disabled {
 	background-color: #343A45;
+	border: 2px solid #1B1E24;
 }
 
 QSlider::sub-page:horizontal:disabled,
@@ -1682,6 +1820,33 @@ QWidget#scrollAreaWidgetContents {
 
 /* --- the frameless window title bar ------------------------------------- */
 
+/* Only ever on screen when systemWindowFrame is off, which is not the default
+   -- read the measured assessment at the top of FramelessWindow.hpp before
+   turning it on. Styled all the same, because a half-dressed alternative is
+   worse than no alternative.
+
+   setupUi names the holder "TitleBar", and FramelessWindow.hpp sets
+   WA_StyledBackground on it so this rule paints at all. bg.sunken, not
+   bg.base: a title bar is the outermost chrome there is, and this sheet's
+   surfaces recede as they go back. The hairline is the seam between the bar
+   and the first real surface below it. */
+QWidget#TitleBar {
+	background-color: #16181D;
+	border: none;
+	border-bottom: 1px solid #262B33;
+}
+
+/* 13/600 text.hi, the window-title rank in the type scale at the top of this
+   file. It was inheriting the plain 12/400 body rule, so the name of the
+   window carried the same weight as a check box caption. */
+QLabel[accessibleName="titlebar_title"] {
+	background: transparent;
+	color: #EDF0F4;
+	font-size: 13px;
+	font-weight: 600;
+	padding-left: 2px;
+}
+
 QLabel[accessibleName="titlebar_icon"],
 QPushButton[accessibleName="titlebar_icon"] {
 	background: transparent;
@@ -1692,6 +1857,7 @@ QPushButton[accessibleName="titlebar_icon"] {
 
 QPushButton[accessibleName="titlebar_minimize"],
 QPushButton[accessibleName="titlebar_maximize"],
+QPushButton[accessibleName="titlebar_restore"],
 QPushButton[accessibleName="titlebar_close"] {
 	background: transparent;
 	border: none;
@@ -1701,12 +1867,14 @@ QPushButton[accessibleName="titlebar_close"] {
 }
 
 QPushButton[accessibleName="titlebar_minimize"]:hover,
-QPushButton[accessibleName="titlebar_maximize"]:hover {
+QPushButton[accessibleName="titlebar_maximize"]:hover,
+QPushButton[accessibleName="titlebar_restore"]:hover {
 	background-color: #2A2F38;
 }
 
 QPushButton[accessibleName="titlebar_minimize"]:pressed,
-QPushButton[accessibleName="titlebar_maximize"]:pressed {
+QPushButton[accessibleName="titlebar_maximize"]:pressed,
+QPushButton[accessibleName="titlebar_restore"]:pressed {
 	background-color: #343A45;
 }
 
@@ -1721,8 +1889,16 @@ QPushButton[accessibleName="titlebar_close"]:pressed {
 }
 
 /* Real PNG icons rather than Font Awesome glyphs, so the window controls are
-   identifiable with no icon font installed. The maximize button never swaps
-   its icon in code (it only changes its tool tip), so a static icon is safe. */
+   identifiable with no icon font installed.
+
+   The maximise control now has TWO names, and that is how the icon swaps.
+   FramelessWindow.hpp renames it to titlebar_restore whenever the window
+   reports itself maximised -- through QWindow::windowStateChanged, so Aero
+   Snap and a double click on the caption reach it as well as the button does
+   -- and repolishes. Renaming rather than calling setIcon is deliberate: the
+   icon belongs to the theme, and a setIcon from C++ would be silently undone
+   by the next polish. A theme that defines only titlebar_maximize still gets
+   a working button, just a static icon. */
 QPushButton[accessibleName="titlebar_minimize"] {
 	qproperty-icon: url(themes/CrimsonSlate/images/icon_window_minimize.png);
 	qproperty-iconSize: 12px 12px;
@@ -1730,6 +1906,11 @@ QPushButton[accessibleName="titlebar_minimize"] {
 
 QPushButton[accessibleName="titlebar_maximize"] {
 	qproperty-icon: url(themes/CrimsonSlate/images/icon_window_maximize.png);
+	qproperty-iconSize: 11px 11px;
+}
+
+QPushButton[accessibleName="titlebar_restore"] {
+	qproperty-icon: url(themes/CrimsonSlate/images/icon_restore.png);
 	qproperty-iconSize: 11px 11px;
 }
 
@@ -1742,7 +1923,81 @@ QPushButton[accessibleName="titlebar_close"] {
 
 /* These two accessible names exist to tint the icon fonts. Font Awesome is not
    shipped, so this often colours a short text fallback instead of a glyph;
-   either way it must be neutral -- an icon is not a link and not a selection. */
+   either way it must be neutral -- an icon is not a link and not a selection.
+
+   THESE TWO RULES ARE NOT ORDINARY WIDGET STYLING. They are the only input to
+   the pen colour of every icon in the application. Both icon engines resolve
+   it by polishing one parentless probe widget carrying one of these names and
+   reading its palette back -- see `iconPenColor` in `FontAwesome.hpp` -- and
+   because QSS `color` writes WindowText, Text and ButtonText together, a
+   sheet gets exactly TWO slots here and there is no third. The engine spends
+   them as:
+
+     this rule          QIcon::On       = CHECKED
+     the :disabled rule QIcon::Off      = UNCHECKED, and also
+                        QIcon::Disabled = genuinely disabled, which the engine
+                                          separates by painting at 0.45 alpha
+                                          on top of the same pen (it has no
+                                          colour left to separate them with)
+
+   Nothing else in the application has either accessible name -- the probes are
+   the only widgets that carry them -- so these two declarations reach the icon
+   pen and nothing besides it. `color` on a QToolButton rule elsewhere in this
+   file colours that button's TEXT; it cannot reach the glyph.
+
+   THE :disabled SLOT IS THEREFORE THE UNCHECKED COLOUR, AND IT MUST BE
+   LEGIBLE. It used to hold text.off #59606B, read as "disabled" from the
+   selector name. That measured 2.12:1 on a floating bar and 2.39:1 on a
+   button -- and unchecked is the resting state of most of the chrome, so the
+   left tool strip and the view-toggle bar had 15 of 16 and 12 of 20 of their
+   glyphs sitting under any legibility floor at once. The visible remainder was
+   the checked one, on its accent plate or over its accent underline, which is
+   the whole of why the chrome read as accent-coloured: the accent was not
+   spreading, the neutrals had gone.
+
+   MEASURED, NOT DERIVED. A standalone Qt 5.15.2 probe loads this sheet and
+   nothing else, polishes a widget carrying each of these two accessible names,
+   reads its QPalette back and runs `iconPenColor` / `iconPenColorForMode`
+   verbatim over it, then lays a real QToolBar out inside a real
+   `leftToolbarHolder`, grabs it and samples pixels. It reports, before and
+   after this change:
+
+     QPalette Normal   WindowText  #C6CCD6      #C6CCD6   (checked, unchanged)
+     QPalette Disabled WindowText  #59606B  ->  #A0A8B4   (unchecked)
+     resolved (Active, Off) hover  #6F7886  ->  #C8D2E1
+
+   and the sampled strip afterwards gives the checked glyph #C6CCD6 on the
+   checked face #6E3C3A at 5.49:1 and the unchecked glyph #A0A8B4 on the bar
+   #2A2F38 at 5.60:1, matching the table below to a rounding step. Note the
+   hover row: the OLD unchecked hover pen measured 1.94:1 on the hover plate,
+   i.e. pointing at an unreadable icon made it very slightly less readable.
+
+   text.mid #A0A8B4, measured over each surface an icon actually rests on,
+   with the checked pen beside it:
+
+                          unchecked      checked
+     bg.overlay #2A2F38    5.60           8.33      view-toggle bar, tool strip
+     bg.raised  #22262E    6.32           9.39      ordinary icon buttons
+     bg.base    #1B1E24    6.96          10.34      dialogs
+     bg.sunken  #16181D    7.40          11.00      menu bar, status bar
+
+   plus the two states the engine derives rather than reads. HOVER is
+   `QColor::lighter(125)` on whichever pen the state resolved to, so unchecked
+   hover is #C8D2E1 and measures 5.66:1 on the stroke.hi hover plate #454C59
+   both bars use, and 3.75:1 during the momentary accent.dim press. Checked
+   hover resolves to #F8FBFF, 8.32:1 on that plate. DISABLED is the same pen
+   at 0.45 alpha: it composites to #5F6570 on bg.overlay, 2.29:1, against
+   #3F454F and 1.39:1 before. That is deliberately still sub-threshold --
+   disabled is the one state that is allowed to be dim, and it is the state
+   the sheet's own text.off note calls "deliberately sub-threshold, that IS
+   the disabled signal". What changed is that it is no longer IDENTICAL to
+   unchecked; the engine's 0.45 alpha now has a real difference to express.
+
+   Unchecked to checked is a 1.49:1 step between the two pens. That is a
+   supporting cue and is not asked to carry the state on its own: the tool
+   strip marks checked with an accent plate and a 2px leading edge, and the
+   view bar with a 2px underline at 3.69:1, both of which are the primary
+   mark and both of which are untouched here. */
 QWidget[accessibleName="FontNoggitButtonStyle"],
 QWidget[accessibleName="FontAwesomeButtonStyle"] {
 	color: #C6CCD6;
@@ -1750,7 +2005,7 @@ QWidget[accessibleName="FontAwesomeButtonStyle"] {
 
 QWidget[accessibleName="FontNoggitButtonStyle"]:disabled,
 QWidget[accessibleName="FontAwesomeButtonStyle"]:disabled {
-	color: #59606B;
+	color: #A0A8B4;
 }
 
 /* --- the viewport overlay ------------------------------------------------ */
@@ -2302,8 +2557,49 @@ QListWidget[accessibleName="project_list"]::item {
 	margin: 2px 2px;
 }
 
+/* THE WASH IS A TINT, THE EDGE IS THE MARK. A project row is three lines tall
+   and full panel width, so it is by some distance the largest surface in this
+   application that ever takes an accent wash -- and at 0.26 over bg.base that
+   composites to #502C2B, a saturated red-brown slab that shouted louder than
+   the 3D view it is a doorway to. Every other 0.26 wash in this sheet lands
+   on a control the size of an icon button, where the same alpha is a hint.
+   Area was the missing variable.
+
+   0.18 composites to #402829, 1.235:1 against the panel -- just above this
+   sheet's own bg.base -> bg.raised elevation step (1.101) and bg.raised ->
+   bg.overlay (1.128), i.e. about as visible as one surface sitting on
+   another, which is what a selected row is. The 2px accent edge is untouched
+   and is unambiguously the primary mark. The title, text.hi 14px/600, reads
+   11.83:1 on the tint (was 10.58). Border width does not change in any state,
+   so no row reflows. The alpha is kept at 0.18 for those reasons.
+
+   THE SECOND LINE WAS THE PROBLEM, NOT THE WASH. The earlier revision of this
+   comment claimed the text.dim project information was fine at 4.35:1 "above
+   the 3:1 floor this sheet uses for a caption on a tinted plate". Two things
+   are wrong with that. There is no such 3:1 floor -- 3:1 is the WCAG minimum
+   for a GRAPHICAL object or for large text, and this is 11px prose, so its
+   floor is 4.5:1 and 4.35 was under it. And 4.35 was measured on the ONE
+   state that happens to read best; the row has four, and the reading it never
+   took was the worst:
+
+                                        composite   text.dim   text.mid
+     row at rest, panel under it         #1B1E24      5.38       6.96
+     row hovered, +6% text wash          #25282F      4.75       6.15
+     row selected, window active         #402829      4.35       5.64
+     row selected AND hovered            #483233      3.80       4.92
+     row selected, window inactive       #2A2F38      4.33       5.60
+
+   Three of the five are below 4.5 and the worst is 3.80. Lifting the wash
+   cannot fix that column -- at 0.12, low enough that the tint stops reading
+   as an elevation step at all, selected-and-hovered still only reaches 4.13.
+   The text is what was wrong, so the text is what moves: #project-information
+   below takes text.mid, and the whole column clears the floor with the
+   minimum at 4.92:1. Nothing in the row's geometry, size or weight changes,
+   so the caption still reads as secondary to the 14px/600 title above it --
+   size and weight were always what carried that, not the 0.4 of a contrast
+   point being recovered here. */
 QListWidget[accessibleName="project_list"]::item:selected:active {
-	background-color: rgba(232, 84, 63, 0.26);
+	background-color: rgba(232, 84, 63, 0.18);
 	border-left: 2px solid #E8543F;
 }
 
@@ -2337,8 +2633,12 @@ QLabel#project-title-label {
 	padding: 0px;
 }
 
+/* text.mid, not text.dim: this label is the one caption in the sheet that
+   spends most of its life on a surface LIGHTER than bg.base. See the wash
+   block above for the five-state measurement -- minimum 4.92:1 here against
+   3.80:1 before. */
 QLabel#project-information {
-	color: #8A93A0;
+	color: #A0A8B4;
 	background: transparent;
 	font-size: 11px;
 	padding: 0px;
@@ -2360,6 +2660,44 @@ QPushButton#wmvLogPathField_browse {
 	margin-left: 6px;
 }
 
+/* --- settings window ----------------------------------------------------- */
+
+/* The settings window is where a user goes to CHANGE the theme, so it is the
+   one window that has no excuse for looking unfinished. Almost all of it is
+   already covered by the class rules above -- it is five tabs of plain
+   QCheckBox / QLineEdit / QSpinBox / QGroupBox and carries no inline style
+   sheet at all -- so only the footer needed anything.
+
+   The footer used to be a sentence in default 12/400 body text sitting level
+   with two identical grey buttons. Three things at the same weight, one of
+   which is the action the window exists to perform.
+
+   The fix for that was the Save button, and only the Save button. It takes the
+   primary treatment (set in SettingsPanel.cpp, see QPushButton[state="primary"]
+   above): an accent fill among two flat grey ones, which is a difference in
+   KIND and settles the hierarchy on its own. Demoting the sentence as well was
+   a second answer to a question already answered, and it was paid for out of
+   the wrong budget -- 12/400 text on bg.base is 10.34:1, 11/400 text.dim is
+   5.38:1, so the sentence lost nearly half its contrast and a sixth of its
+   size at once.
+
+   That sentence is "Changes may not take effect until next launch". It is the
+   only thing in the window that explains why a setting the user just changed
+   and saved appears to do nothing, and it has to compete with a saturated
+   accent button two inches to its right. A caption rank is for prose ABOUT a
+   control -- a unit, a range hint, something the user reads once and never
+   again. This is a consequence the user needs, so it goes back to body: 12px
+   text #C6CCD6, 10.34:1 on the bg.base footer.
+
+   It keeps the 12px right margin, which was the part of that pass that was
+   simply right -- the sentence used to butt against the buttons. */
+QLabel#_restart_hint {
+	color: #C6CCD6;
+	background: transparent;
+	font-size: 12px;
+	margin-right: 12px;
+}
+
 QPushButton#searchButton {
 	padding: 4px 10px;
 	margin-right: 4px;
@@ -2376,17 +2714,25 @@ QPushButton#searchButton {
    the top hairline that is the only separation between two collapsed sections
    plus the 2px left reservation that stops the accent bar shifting the caption
    when it appears. Both are gone from the widget, so everything below except
-   text-align is now live. */
+   text-align is now live.
+
+   It takes the QGroupBox heading treatment verbatim -- 11/700 text on a stroke
+   rule -- because it IS the same rank. "Custom Brush" heads a section exactly
+   the way "Settings" does, and the only reason the two ever looked different
+   is that one is a QGroupBox and the other is a QPushButton pretending to be
+   one. The weight lands back at the 700 the widget used to force inline; the
+   difference is that it is now this sheet's decision and a theme can change
+   it. */
 QPushButton#__qt__passive_button {
 	background: transparent;
-	color: #8A93A0;
+	color: #C6CCD6;
 	border: none;
-	border-top: 1px solid #262B33;
+	border-top: 1px solid #343A45;
 	border-left: 2px solid transparent;
 	border-radius: 0px;
 	padding: 8px 8px;
 	font-size: 11px;
-	font-weight: 600;
+	font-weight: 700;
 	text-align: left;
 }
 

@@ -194,6 +194,18 @@ namespace Noggit
 
       ui->_wireframe_color->setColor(Qt::white);
 
+      // Save and Discard were the same grey button in the same size side by side, so the only
+      // thing separating "commit everything on five tabs" from "throw it away" was the word on
+      // the face. The theme carries a QPushButton[state="primary"] rule for the confirming
+      // action in a two-button row; this is what turns it on. It is a style property and
+      // nothing else -- no signal, slot, default-ness, tab order or geometry changes, and a
+      // theme that says nothing about the property leaves the button exactly as it was.
+      //
+      // No unpolish/polish pair is needed here, unlike the [state="danger"] callers: the
+      // property is set before this widget is ever shown, so it is in place by the time the
+      // style first polishes it.
+      ui->saveButton->setProperty("state", "primary");
+
       connect(ui->saveButton, &QPushButton::clicked, [this]
               {
                 hide();

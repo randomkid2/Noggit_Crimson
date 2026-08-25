@@ -2,6 +2,7 @@
 #include <noggit/ui/windows/noggitWindow/widgets/MapBookmarkListItem.hpp>
 
 #include <QColor>
+#include <QEvent>
 #include <QFont>
 #include <QGraphicsColorizeEffect>
 #include <QHBoxLayout>
@@ -28,11 +29,20 @@ namespace Noggit::Ui::Widget
         constexpr int ROW_MARGIN_BOTTOM = 8;
 
         constexpr int COLUMN_SPACING = 10;
-        constexpr int LINE_SPACING = 2;
+
+        // 3px, matching MapListItem and ProjectListItem.
+        constexpr int LINE_SPACING = 3;
 
         // NoggitWindow feeds minimumSizeHint() straight to QListWidgetItem::setSizeHint.
         constexpr int ROW_MIN_HEIGHT = ICON_EXTENT + ROW_MARGIN_TOP + ROW_MARGIN_BOTTOM;
         constexpr int ROW_HINT_WIDTH = 125;
+
+        // Same defect, same numbers, as MapListItem -- bookmarks_table is a plain QListWidget
+        // too, so it also matches QAbstractItemView::item { padding: 5px 6px; } and the item
+        // delegate takes 10px off the row's geometry before the row ever sees it. Measured: the
+        // title label needed 19px and was given 11. See the long comment in MapListItem.cpp for
+        // the mechanism and for why the loss cannot be queried back from the style.
+        constexpr int ITEM_CHROME_HEADROOM = 12;
 
         // Defaults through QFont, not through an inline style sheet -- see MapListItem.
         constexpr int TITLE_PIXEL_SIZE = 13;
@@ -110,13 +120,38 @@ namespace Noggit::Ui::Widget
         {
             label->setAttribute(Qt::WA_TransparentForMouseEvents, true);
         }
+
+        // Polish first, or the floor is computed from the QFont defaults set above rather than
+        // from the style sheet's font sizes.
+        ensurePolished();
+        setMinimumHeight (contentMinimum());
+    }
+
+    int MapListBookmarkItem::contentMinimum() const
+    {
+        int const from_layout (QWidget::minimumSizeHint().height());
+
+        return std::max (ROW_MIN_HEIGHT, from_layout);
+    }
+
+    void MapListBookmarkItem::changeEvent (QEvent* event)
+    {
+        QWidget::changeEvent (event);
+
+        if (event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange)
+        {
+            int const floor (contentMinimum());
+
+            if (minimumHeight() != floor)
+                setMinimumHeight (floor);
+        }
     }
 
     QSize MapListBookmarkItem::minimumSizeHint() const
     {
-        int const from_layout (QWidget::minimumSizeHint().height());
-
-        return QSize (ROW_HINT_WIDTH, std::max (ROW_MIN_HEIGHT, from_layout));
+        // Consumed only as the LIST ITEM's size hint: the row's content plus the chrome the
+        // delegate will take back off it.
+        return QSize (ROW_HINT_WIDTH, contentMinimum() + ITEM_CHROME_HEADROOM);
     }
 
     QString MapListBookmarkItem::toCamelCase(const QString& s)

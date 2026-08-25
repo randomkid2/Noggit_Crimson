@@ -9,11 +9,14 @@
 
 #include <QCheckBox>
 #include <QDialog>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QSlider>
 #include <QtCore/QSettings>
+
+#include <algorithm>
 
 using namespace Noggit::Ui;
 using namespace Noggit::Ui::Tools::ViewToolbar::Ui;
@@ -33,7 +36,48 @@ public:
     _layout->setSpacing(3);
     _layout->setMargin(0);
     QLabel* _label = new QLabel(title);
-    QLabel* _display = new QLabel(QString::number(func(static_cast<T>(value)), 'f', 2) + tr(" %1").arg(prec));
+
+    // The read-out text was built twice, here and again in the valueChanged handler, and the
+    // two spellings had to stay identical by hand. One formatter now, so the initial value and
+    // every later one cannot drift. Nothing about what it produces changed: same func, same
+    // 'f'/2 formatting, same leading space before the unit, same tr() call on the same literal.
+    auto const format
+      ( [prec, func] (int slider_value) -> QString
+        {
+          return QString::number (func (static_cast<T> (slider_value)), 'f', 2)
+               + tr (" %1").arg (prec);
+        }
+      );
+
+    QLabel* _display = new QLabel (format (value));
+
+    // Right-aligned and pinned to the widest reading the formatter can produce.
+    //
+    // The row is label / slider / read-out inside a QHBoxLayout, and the SLIDER is the only
+    // expanding item in it -- so every digit the number gained or lost was paid for by the
+    // slider, which resized under the pointer in the middle of a drag. On the climb bar that
+    // is a one-character swing (0.00 -> 89.00 degrees) and therefore a visible twitch every
+    // time the value crosses 10 or 100. Reserving the space up front removes the reflow
+    // without touching the range, the step or the emitted value.
+    //
+    // The widest reading is MEASURED across the range rather than assumed to sit at an
+    // endpoint: func is caller-supplied and need not be monotonic in string length -- the
+    // climb one converts radians to degrees and rounds to int, so where its text is widest is
+    // not something this constructor can know. Eleven samples, once, at construction.
+    _display->setAlignment (Qt::AlignRight | Qt::AlignVCenter);
+
+    {
+      QFontMetrics const metrics (_display->fontMetrics());
+      int widest (0);
+
+      for (int i (0); i <= 10; ++i)
+      {
+        widest = std::max
+          (widest, metrics.horizontalAdvance (format (min + (max - min) * i / 10)));
+      }
+
+      _display->setMinimumWidth (widest);
+    }
 
     _slider = new QSlider(NULL);
     _slider->setOrientation(Qt::Horizontal);
@@ -41,9 +85,16 @@ public:
     _slider->setMaximum(max);
     _slider->setValue(value);
 
-    connect(_slider, &QSlider::valueChanged, [_display, prec, func](int value)
+    // A floor, not a fixed width -- the slider still expands to fill whatever the popup gives
+    // it. Without one it fell back to the style's size hint, which is around 84px, and the
+    // climb slider spans 1571 steps: 19 units of travel per pixel, on a control whose whole
+    // job is to be aimed. 160px halves that. Range, step and page step are untouched; only how
+    // much screen the same travel is spread over changes.
+    _slider->setMinimumWidth (160);
+
+    connect(_slider, &QSlider::valueChanged, [_display, format](int value)
       {
-        _display->setText(QString::number(func(static_cast<T>(value)), 'f', 2) + tr(" %1").arg(prec));
+        _display->setText (format (value));
       });
 
     _layout->addWidget(_label);

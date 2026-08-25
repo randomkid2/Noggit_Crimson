@@ -2329,7 +2329,15 @@
          <number>0</number>
         </property>
         <item>
-         <widget class="QLabel" name="label_48">
+         <!-- Was a second widget also called label_48; the Port label in the
+              MySQL tab above already had that name. Duplicate object names in
+              one form are not a compile error because uic silently renames the
+              later one - it was emitting label_481 with objectName "label_481"
+              - but that name is generated, not authored, and it moves the
+              moment anything else in the form changes, so it cannot be used as
+              a style selector. Named for what it is instead. Nothing in
+              SettingsPanel.cpp referenced either label. -->
+         <widget class="QLabel" name="_restart_hint">
           <property name="text">
            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Changes may not take effect until next launch&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
           </property>

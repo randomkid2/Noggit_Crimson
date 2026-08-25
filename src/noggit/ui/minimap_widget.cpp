@@ -6,9 +6,20 @@
 #include <noggit/World.h>
 
 #include <QApplication>
+#include <QEvent>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QToolTip>
+
+namespace
+{
+  // Caption rank, one step over the 12px interface size so it still reads when the pane is at
+  // its 128px minimum, and far enough under a heading that it does not compete with one. The
+  // family is NOT set here: updatePlaceholderFont takes the widget's own font, so the
+  // placeholder follows the application font instead of naming a family this file cannot
+  // guarantee is installed.
+  int const PLACEHOLDER_FONT_PIXEL_SIZE = 13;
+}
 
 namespace Noggit
 {
@@ -26,6 +37,8 @@ namespace Noggit
       setMouseTracking(true);
       setMaximumSize(QSize(1024, 1024));
       setMinimumSize(QSize(128, 128));
+
+      updatePlaceholderFont();
 
 
 
@@ -75,6 +88,26 @@ namespace Noggit
           std::memset(_selected_tiles->data(), false, _selected_tiles->size());
         }
       );
+    }
+
+    void minimap_widget::updatePlaceholderFont()
+    {
+      _placeholder_font = font();
+      _placeholder_font.setPixelSize (PLACEHOLDER_FONT_PIXEL_SIZE);
+    }
+
+    // The only event that can invalidate the cached font. It arrives when the application font
+    // is set (ApplicationEntry does that at startup, after this widget may already exist) and
+    // whenever a style sheet gives this widget or an ancestor a different one, so the cache
+    // cannot go stale behind a theme change.
+    void minimap_widget::changeEvent (QEvent* event)
+    {
+      if (event->type() == QEvent::FontChange)
+      {
+        updatePlaceholderFont();
+      }
+
+      QWidget::changeEvent (event);
     }
 
 
@@ -343,8 +376,29 @@ namespace Noggit
       else
       {
         //! \todo Draw something so user realizes this will become the minimap.
-        painter.setPen (palette().color(QPalette::WindowText));
-        painter.setFont (QFont ("Arial", 30));
+
+        // A placeholder, not a headline. This used to be QFont("Arial", 30) in WindowText: a
+        // hardcoded family at 30 POINTS, in the loudest text role the palette has, filling an
+        // otherwise empty pane and reading as the most important thing on the window. It was
+        // also too big to say what it says. Measured with QFontMetrics under a probe: "Select
+        // a map" at Arial 30pt is 348x67 px, while this widget has a 128px minimum and the
+        // square it draws into is (min(w,h)/64)*64. AlignCenter with no wrap flag clips rather
+        // than shrinks, so at 128px AND at 256px the pane read "elect a ma" -- a placeholder
+        // that was itself unreadable at every size below 348px.
+        //
+        // It is now the interface font at the caption size (75x17 px, fits from the 128px
+        // minimum up) in PlaceholderText, which darkPalette() sets to the text.dim token
+        // #8A93A0 -- 5.72:1 on the #16181D the minimap holder is painted, 5.38:1 on the
+        // #1B1E24 base the other hosts sit on, both comfortably over the 4.5:1 floor and
+        // deliberately under the body-text rank, because the whole point is that it recedes
+        // once a map is chosen.
+        //
+        // The font is a member rather than a temporary: paintEvent runs on every mouse move
+        // over this widget (see the performance \todo above), and QFont construction resolves
+        // a family through the font database. It is rebuilt in changeEvent instead, which is
+        // the one place the widget's font can actually change.
+        painter.setPen (palette().color (QPalette::PlaceholderText));
+        painter.setFont (_placeholder_font);
         painter.drawText ( drawing_rect
                          , Qt::AlignCenter
                          , tr ("Select a map")
