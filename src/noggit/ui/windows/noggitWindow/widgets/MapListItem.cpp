@@ -1,18 +1,84 @@
 #include <noggit/ui/FontAwesome.hpp>
 #include <noggit/ui/windows/noggitWindow/widgets/MapListItem.hpp>
 
-#include <QGraphicsOpacityEffect>
-#include <QGridLayout>
+#include <QColor>
+#include <QFont>
+#include <QGraphicsColorizeEffect>
+#include <QHBoxLayout>
 #include <QLabel>
-#include <QListWidget>
+#include <QSizePolicy>
+#include <QVBoxLayout>
+
+#include <algorithm>
+#include <initializer_list>
 
 namespace Noggit::Ui::Widget
 {
+  namespace
+  {
+    // Same shape, and the same reasoning, as ProjectListItem: an icon column beside a text
+    // column, built from real layouts. The previous revision here stack-allocated a QGridLayout,
+    // handed it to setLayout and let it destruct on return -- QLayout's destructor clears the
+    // widget's layout pointer, so the row ended up with NO layout and every label was placed by
+    // absolute setGeometry against the list view it was parented to rather than against the row.
+    // Nothing reflowed and nothing scaled with the font.
+    constexpr int ICON_EXTENT = 32;
+
+    constexpr int ROW_MARGIN_LEFT = 10;
+    constexpr int ROW_MARGIN_TOP = 8;
+    constexpr int ROW_MARGIN_RIGHT = 12;
+    constexpr int ROW_MARGIN_BOTTOM = 8;
+
+    constexpr int COLUMN_SPACING = 10;
+    constexpr int LINE_SPACING = 2;
+
+    // BuildMapListComponent feeds minimumSizeHint() straight to QListWidgetItem::setSizeHint, so
+    // this is the list row height. The icon plus the vertical margins comes to 48; stating it as
+    // a floor keeps the row square even if a future font makes the text column shorter.
+    constexpr int ROW_MIN_HEIGHT = ICON_EXTENT + ROW_MARGIN_TOP + ROW_MARGIN_BOTTOM;
+
+    // Only decides whether the view thinks it needs a horizontal scroll bar; the list always
+    // resizes the row to the viewport width. A map name can be long, so it must not be derived
+    // from the text.
+    constexpr int ROW_HINT_WIDTH = 125;
+
+    // DEFAULTS, set through QFont rather than an inline style sheet -- a style sheet on the
+    // widget itself outranks the application sheet, which is how the previous revision pinned
+    // every row to 12px/10px no matter which theme was loaded. A theme's font-size still wins
+    // over a font set this way, so CrimsonSlate dresses the row and a bare theme still gets a
+    // readable hierarchy.
+    constexpr int TITLE_PIXEL_SIZE = 13;
+    constexpr int INFORMATION_PIXEL_SIZE = 11;
+
+    void applyFont (QLabel* label, int pixel_size, bool bold)
+    {
+      QFont font (label->font());
+      font.setPixelSize (pixel_size);
+      font.setBold (bold);
+      label->setFont (font);
+    }
+
+    // A long map name must not be allowed to set the row's minimum width, or it drags the whole
+    // list wider than its viewport. Ignored means "take what is left over"; the text elides at
+    // the right exactly as the fixed 300px geometry used to clip it.
+    void makeElastic (QLabel* label)
+    {
+      label->setSizePolicy (QSizePolicy::Ignored, QSizePolicy::Fixed);
+      label->setMinimumWidth (0);
+    }
+  }
+
   MapListItem::MapListItem(const MapListData& data, QWidget* parent = nullptr)
     : QWidget(parent)
     , _map_data(data)
   {
-    auto layout = QGridLayout();
+    // The hover plate and the transparent background that lets the view's own selection wash
+    // show through are both in the theme. A plain QWidget only paints a style sheet background
+    // when it is told to.
+    setObjectName ("project-list-item");
+    setAttribute (Qt::WA_StyledBackground, true);
+
+    setContextMenuPolicy(Qt::CustomContextMenu);
 
     QIcon icon;
     switch (_map_data.expansion_id)
@@ -29,28 +95,21 @@ namespace Noggit::Ui::Widget
       default: break;
     }
 
-    _map_icon = new QLabel("", parent);
-    _map_icon->setPixmap(icon.pixmap(QSize(32, 32)));
-    _map_icon->setGeometry(0, 0, 32, 32);
+    _map_icon = new QLabel("", this);
     _map_icon->setObjectName("project-icon-label");
-    _map_icon->setStyleSheet("QLabel#project-icon-label { font-size: 12px; padding: 0px;}");
+    _map_icon->setPixmap(icon.pixmap(QSize(ICON_EXTENT, ICON_EXTENT)));
+    _map_icon->setFixedSize(ICON_EXTENT, ICON_EXTENT);
 
     auto project_name = toCamelCase(QString(_map_data.map_name));
-    _map_name = new QLabel(project_name, parent);
-    _map_name->setGeometry(32, 0, 300, 20);
+    _map_name = new QLabel(project_name, this);
     _map_name->setObjectName("project-title-label");
-    _map_name->setStyleSheet("QLabel#project-title-label { font-size: 12px; }");
+    applyFont (_map_name, TITLE_PIXEL_SIZE, true);
+    makeElastic (_map_name);
 
-    _map_id = new QLabel(QString::number(_map_data.map_id), parent);
-    _map_id->setGeometry(32, 15, 300, 20);
+    _map_id = new QLabel(QString::number(_map_data.map_id), this);
     _map_id->setObjectName("project-information");
-    _map_id->setStyleSheet("QLabel#project-information { font-size: 10px; }");
-
-    auto directory_effect = new QGraphicsOpacityEffect(this);
-    directory_effect->setOpacity(0.5);
-
-    _map_id->setGraphicsEffect(directory_effect);
-    _map_id->setAutoFillBackground(true);
+    applyFont (_map_id, INFORMATION_PIXEL_SIZE, false);
+    makeElastic (_map_id);
 
     auto instance_type = QString("Unknown");
     switch (_map_data.map_type_id)
@@ -65,48 +124,73 @@ namespace Noggit::Ui::Widget
     }
 
     _map_instance_type = new QLabel(instance_type, this);
-    _map_instance_type->setGeometry(150, 15, 125, 20);
-    _map_instance_type->setAlignment(Qt::AlignRight | Qt::AlignTrailing | Qt::AlignVCenter);
     _map_instance_type->setObjectName("project-information");
-    _map_instance_type->setStyleSheet("QLabel#project-information { font-size: 10px; }");
+    applyFont (_map_instance_type, INFORMATION_PIXEL_SIZE, false);
+    _map_instance_type->setAlignment(Qt::AlignRight | Qt::AlignTrailing | Qt::AlignVCenter);
 
-    auto last_edited_effect = new QGraphicsOpacityEffect(this);
-    last_edited_effect->setOpacity(0.5);
+    // The whole row is one hover surface and one context-menu target, so it also carries the
+    // tooltip. Map id and instance type are the two facts the row cannot always show in full.
+    setToolTip(tr("%1\nMap %2 -- %3").arg(project_name).arg(_map_data.map_id).arg(instance_type));
 
-    _map_instance_type->setGraphicsEffect(last_edited_effect);
-    _map_instance_type->setAutoFillBackground(true);
+    auto const title_row = new QHBoxLayout();
+    title_row->setContentsMargins(0, 0, 0, 0);
+    title_row->setSpacing(6);
+    title_row->addWidget(_map_name, 1);
 
     if (_map_data.pinned)
     {
       _map_pinned_label = new QLabel("", this);
-      _map_pinned_label->setPixmap(FontAwesomeIcon(FontAwesome::star).pixmap(QSize(16, 16)));
-      _map_pinned_label->setGeometry(150, 0, 125, 20);
-      _map_pinned_label->setAlignment(Qt::AlignRight | Qt::AlignTrailing | Qt::AlignVCenter);
       _map_pinned_label->setObjectName("project-pinned");
-      _map_pinned_label->setStyleSheet("QLabel#project-pinned { font-size: 10px; }");
+      _map_pinned_label->setPixmap(FontAwesomeIcon(FontAwesome::star).pixmap(QSize(14, 14)));
+      _map_pinned_label->setFixedSize(14, 14);
+      _map_pinned_label->setToolTip(tr("Pinned map"));
 
-      auto colour = new QGraphicsColorizeEffect(this);
-      colour->setColor(QColor(255, 204, 0));
+      // Font Awesome renders the glyph as a monochrome pixmap and the icon engine takes no
+      // colour, so the gold has to be applied to the rendered pixels. Same effect as before.
+      auto const colour = new QGraphicsColorizeEffect(_map_pinned_label);
+      colour->setColor(QColor(224, 163, 62));
       colour->setStrength(1.0f);
-
       _map_pinned_label->setGraphicsEffect(colour);
-      _map_pinned_label->setAutoFillBackground(true);
 
-      layout.addWidget(_map_pinned_label);
+      title_row->addWidget(_map_pinned_label, 0, Qt::AlignRight | Qt::AlignVCenter);
     }
 
-    setContextMenuPolicy(Qt::CustomContextMenu);
+    auto const meta_row = new QHBoxLayout();
+    meta_row->setContentsMargins(0, 0, 0, 0);
+    meta_row->setSpacing(6);
+    meta_row->addWidget(_map_id, 1);
+    meta_row->addWidget(_map_instance_type, 0, Qt::AlignRight | Qt::AlignVCenter);
 
-    layout.addWidget(_map_icon);
-    layout.addWidget(_map_name);
-    layout.addWidget(_map_id);
-    layout.addWidget(_map_instance_type);
-    setLayout(layout.layout());
+    auto const text_column = new QVBoxLayout();
+    text_column->setContentsMargins(0, 0, 0, 0);
+    text_column->setSpacing(LINE_SPACING);
+    text_column->addStretch(1);
+    text_column->addLayout(title_row);
+    text_column->addLayout(meta_row);
+    text_column->addStretch(1);
+
+    auto const root = new QHBoxLayout(this);
+    root->setContentsMargins(ROW_MARGIN_LEFT, ROW_MARGIN_TOP, ROW_MARGIN_RIGHT, ROW_MARGIN_BOTTOM);
+    root->setSpacing(COLUMN_SPACING);
+    root->addWidget(_map_icon, 0, Qt::AlignVCenter);
+    root->addLayout(text_column, 1);
+
+    // The labels are children of the row now, not of the list view, so without this they would
+    // be the widget under the cursor and the row's custom context menu would never fire.
+    for (QLabel* label : {_map_icon, _map_name, _map_id, _map_instance_type, _map_pinned_label})
+    {
+      if (label)
+        label->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    }
   }
 
   QSize MapListItem::minimumSizeHint() const
   {
-    return QSize(300, 32);
+    // There IS a layout now, so the height can be asked for rather than reconstructed from the
+    // offsets the constructor used.
+    int const from_layout (QWidget::minimumSizeHint().height());
+
+    return QSize (ROW_HINT_WIDTH, std::max (ROW_MIN_HEIGHT, from_layout));
   }
 
   const QString MapListItem::name() const

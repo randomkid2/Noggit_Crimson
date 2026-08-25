@@ -69,9 +69,13 @@ namespace Noggit
       int sphere_light_alpha_index = -1;
 
       void setupWidget(QVector<QWidgetAction*> _to_setup, bool ignoreSeparator = false);
+      // description and shortcut feed the tooltip only. Neither reaches QAction::setShortcut --
+      // the bindings they name live in MapView's view menu and stay the single owner of the key.
       void add_tool_icon(MapView* mapView,
                          Noggit::BoolToggleProperty* view_state,
                          const QString& name,
+                         const QString& description,
+                         const QString& shortcut,
                          const Noggit::Ui::FontNoggit::Icons& icon,
                          ViewToolbar* sec_tool_bar,
                          QVector<QWidgetAction*> sec_action_bar = QVector<QWidgetAction*>());

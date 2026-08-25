@@ -2,12 +2,39 @@
 
 #include <noggit/ui/Help.h>
 
+#include <QtGui/QFont>
 #include <QtWidgets/QFormLayout>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QTabWidget>
 
 #include <initializer_list>
+
+namespace
+{
+  // The seventeen section headings in the key-bindings window -- "Basic controls:", "Toggles:",
+  // "Raise / Lower tool:" and the rest -- used to share one inline style sheet string that was
+  // applied to each of them in turn, and that string contained "margin-left: 150px".
+  //
+  // 150 was a hand-measured attempt to line the heading up with the DESCRIPTION column of the
+  // QFormLayout below it, and it could only ever be right for one font at one DPI: the icon
+  // column that the number is trying to clear is built from FontNoggit glyphs whose width is
+  // whatever the font metrics say it is. At any other size the headings float somewhere in the
+  // middle of the rows they label. A heading belongs at the left edge of its own section, which
+  // costs no measurement and cannot drift.
+  //
+  // Weight is set through QFont rather than through a sheet so that it survives a theme which
+  // says nothing about this window, while still letting a theme that does have an opinion win.
+  // Everything else -- colour and vertical rhythm -- is the theme's, reached by object name.
+  void styleSectionHeader (QLabel* label)
+  {
+    label->setObjectName ("help-section-header");
+
+    QFont font (label->font());
+    font.setBold (true);
+    label->setFont (font);
+  }
+}
 
 namespace Noggit
 {
@@ -20,14 +47,6 @@ namespace Noggit
       setWindowTitle ("Help");
       setWindowIcon (QIcon (":/icon"));
       setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint);
-
-      QString header_style =
-        "QLabel { \n "
-        "  font-weight: bold; \n "
-        "  margin-top: 8px; \n "
-        "  margin-bottom: 4px; \n "
-        "  margin-left: 150px; \n "
-        "} \n ";
 
 
       auto layout (new QFormLayout (this));
@@ -45,7 +64,7 @@ namespace Noggit
       base_widget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
       
       auto label = new QLabel("Basic controls:");
-      label->setStyleSheet(header_style);
+      styleSectionHeader (label);
       basic_controls_layout->addRow(label);
 
       generate_hotkey_row({FontNoggit::rmb_drag}, "\aRotate camera", basic_controls_layout);
@@ -68,7 +87,7 @@ namespace Noggit
       base_layout->addLayout(toggles_layout, 0, 1);
 
       auto label_toggle = new QLabel("Toggles:");
-      label_toggle->setStyleSheet(header_style);
+      styleSectionHeader (label_toggle);
       toggles_layout->addRow(label_toggle);
 
       generate_hotkey_row({FontNoggit::f1}, "\aToggle M2s", toggles_layout);
@@ -88,7 +107,7 @@ namespace Noggit
       base_layout->addLayout(files_layout, 1, 0);
 
       auto label_files = new QLabel("Files:");
-      label_files->setStyleSheet(header_style);
+      styleSectionHeader (label_files);
       files_layout->addRow(label_files);
 
       generate_hotkey_row({FontNoggit::f5}, "\aSave bookmark", files_layout);
@@ -101,7 +120,7 @@ namespace Noggit
       base_layout->addLayout(adjust_layout, 1, 1);
 
       auto label_adjust = new QLabel("Adjust:");
-      label_adjust->setStyleSheet(header_style);
+      styleSectionHeader (label_adjust);
       adjust_layout->addRow(label_adjust);
 
       generate_hotkey_row({FontNoggit::o, FontNoggit::p}, "\aor\aSlower /  Faster movement", adjust_layout);
@@ -114,7 +133,7 @@ namespace Noggit
       auto flag_layout (new QFormLayout (flag_widget));
 
       auto holes_label = new QLabel("Holes:");
-      holes_label->setStyleSheet(header_style);
+      styleSectionHeader (holes_label);
       flag_layout->addRow(holes_label);
 
       generate_hotkey_row({FontNoggit::shift, FontNoggit::lmb}, "\a+\aClear hole", flag_layout);
@@ -123,14 +142,14 @@ namespace Noggit
       generate_hotkey_row({FontNoggit::alt, FontNoggit::t}, "\a+\aRemove all ground on ADT", flag_layout);
 
       auto impass_flags_label = new QLabel("Impassible Flags:");
-      impass_flags_label->setStyleSheet(header_style);
+      styleSectionHeader (impass_flags_label);
       flag_layout->addRow(impass_flags_label);
 
       generate_hotkey_row({FontNoggit::shift, FontNoggit::lmb }, "\a+\aPaint flag", flag_layout);
       generate_hotkey_row({FontNoggit::ctrl, FontNoggit::lmb }, "\a+\aClear flag", flag_layout);
 
       auto areaid_label = new QLabel("AreaID Flags:");
-      areaid_label->setStyleSheet(header_style);
+      styleSectionHeader (areaid_label);
       flag_layout->addRow(areaid_label);
 
       generate_hotkey_row({FontNoggit::ctrl, FontNoggit::lmb }, "\a+\aPick existing AreaID", flag_layout);
@@ -145,7 +164,7 @@ namespace Noggit
       ground_layout->addLayout(ground_column1_layout, 0, 0);
 
       auto ground_label = new QLabel("Edit ground:");
-      ground_label->setStyleSheet(header_style);
+      styleSectionHeader (ground_label);
       ground_column1_layout->addRow(ground_label);
 
       generate_hotkey_row({FontNoggit::shift, FontNoggit::f1 }, "\a+\aToggle ground edit mode", ground_column1_layout);
@@ -153,7 +172,7 @@ namespace Noggit
       generate_hotkey_row({FontNoggit::space, FontNoggit::lmb_drag }, "\a+\aChange speed", ground_column1_layout);
 
       auto raise_label = new QLabel("Raise / Lower tool:");
-      raise_label->setStyleSheet(header_style);
+      styleSectionHeader (raise_label);
       ground_column1_layout->addRow(raise_label);
 
       generate_hotkey_row({FontNoggit::shift, FontNoggit::lmb }, "\a+\aRaise terrain", ground_column1_layout);
@@ -162,7 +181,7 @@ namespace Noggit
       generate_hotkey_row({FontNoggit::alt, FontNoggit::rmb_drag }, "\a+\aChange inner radius", ground_column1_layout);
 
       auto raise_label_vm = new QLabel("Raise / Lower tool (vertex mode):");
-      raise_label_vm->setStyleSheet(header_style);
+      styleSectionHeader (raise_label_vm);
       ground_column1_layout->addRow(raise_label_vm);
 
       generate_hotkey_row({FontNoggit::shift, FontNoggit::lmb }, "\a+\aSelect vertices", ground_column1_layout);
@@ -178,7 +197,7 @@ namespace Noggit
       ground_layout->addLayout(ground_column2_layout, 0, 1);
 
       auto flatten_label = new QLabel("Flatten / Blur tool:");
-      flatten_label->setStyleSheet(header_style);
+      styleSectionHeader (flatten_label);
       ground_column2_layout->addRow(flatten_label);
 
       generate_hotkey_row({FontNoggit::shift, FontNoggit::lmb }, "\a+\aFlatten terrain", ground_column2_layout);
@@ -197,13 +216,13 @@ namespace Noggit
       auto texture_layout (new QFormLayout (texture_widget));
 
       auto common_controls_label = new QLabel("Common controls:");
-      common_controls_label->setStyleSheet(header_style);
+      styleSectionHeader (common_controls_label);
       texture_layout->addRow(common_controls_label);
 
       generate_hotkey_row({FontNoggit::ctrl, FontNoggit::lmb }, "\a+\aOpen texture picker for the chunk", texture_layout);
 
       auto paint_label = new QLabel("Paint:");
-      paint_label->setStyleSheet(header_style);
+      styleSectionHeader (paint_label);
       texture_layout->addRow(paint_label);
 
       generate_hotkey_row({FontNoggit::ctrl, FontNoggit::shift, FontNoggit::alt, FontNoggit::lmb }, "\a+\a+\a+\aErase textures", texture_layout);
@@ -218,7 +237,7 @@ namespace Noggit
       generate_hotkey_row({FontNoggit::shift, FontNoggit::mmb }, "\a+\aChange spray pressure", texture_layout);
 
       auto swapper_label = new QLabel("Swap:");
-      swapper_label->setStyleSheet(header_style);
+      styleSectionHeader (swapper_label);
       texture_layout->addRow(swapper_label);
 
       generate_hotkey_row({FontNoggit::shift, FontNoggit::lmb }, "\a+\aSwap texture", texture_layout);
@@ -226,7 +245,7 @@ namespace Noggit
       generate_hotkey_row({FontNoggit::t }, "\aToggle brush swapper", texture_layout);
 
       auto anim_label = new QLabel("Anim:");
-      anim_label->setStyleSheet(header_style);
+      styleSectionHeader (anim_label);
       texture_layout->addRow(anim_label);
 
       generate_hotkey_row({FontNoggit::shift, FontNoggit::lmb }, "\a+\aUpdate animation", texture_layout);
@@ -237,7 +256,7 @@ namespace Noggit
       auto water_layout (new QFormLayout (water_widget));
 
       auto water_label = new QLabel("Water:");
-      water_label->setStyleSheet(header_style);
+      styleSectionHeader (water_label);
       water_layout->addRow(water_label);
 
       generate_hotkey_row({FontNoggit::shift, FontNoggit::lmb }, "\a+\aAdd liquid", water_layout);
@@ -255,7 +274,7 @@ namespace Noggit
       auto object_layout (new QFormLayout (object_widget));
 
       auto object_label = new QLabel("Edit objects if a model is selected with left click (in object editor):");
-      object_label->setStyleSheet(header_style);
+      styleSectionHeader (object_label);
       object_layout->addRow(object_label);
 
       generate_hotkey_row({FontNoggit::mmb }, "\aMove object", object_layout);

@@ -1,6 +1,7 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
 #include "WorldRender.hpp"
+#include "WMOGroupRender.hpp"
 #include <external/PNG2BLP/Png2Blp.h>
 #include <external/tracy/Tracy.hpp>
 #include <math/frustum.hpp>
@@ -170,7 +171,15 @@ void WorldRender::draw (glm::mat4x4 const& model_view
   }
 
   auto buf_end = _world->_loaded_tiles_buffer.begin() + tile_counter;
-  _world->_loaded_tiles_buffer[tile_counter] = std::make_pair<std::pair<int, int>, MapTile*>(std::make_pair<int, int>(0, 0), nullptr);
+
+  // The buffer holds exactly 64*64 entries, so a full map with every tile loaded and passing the
+  // frustum test leaves tile_counter == size() and this null terminator one past the end. The
+  // consumers below all iterate the whole array and break on the null pointer, so when the buffer
+  // is completely full there is nothing left to terminate -- iteration ends on its own.
+  if (tile_counter < _world->_loaded_tiles_buffer.size())
+  {
+    _world->_loaded_tiles_buffer[tile_counter] = std::make_pair<std::pair<int, int>, MapTile*>(std::make_pair<int, int>(0, 0), nullptr);
+  }
 
 
   // It is always import to sort tiles __front to back__.
@@ -388,7 +397,10 @@ void WorldRender::draw (glm::mat4x4 const& model_view
     _sphere_render.draw(mvp, _world->vertexCenter(), cursor_color, 2.f);
   }
 
-  std::unordered_map<Model*, std::size_t> model_with_particles;
+  // A model_with_particles map was *declared* here. Nothing ever inserted into it: its only
+  // consumers, the particle and ribbon passes further down, are commented out, and so was every
+  // line that would have filled it. Removing the declaration cost one empty container's
+  // construction per frame, not a gather. Reinstate it together with those passes, not before.
 
   tsl::robin_map<Model*, std::vector<glm::mat4x4>> models_to_draw;
   std::vector<WMOInstance*> wmos_to_draw;
@@ -580,7 +592,13 @@ void WorldRender::draw (glm::mat4x4 const& model_view
               render = true; // skip visibility checks
             }
           }
-          if (!render && tile->renderer()->objectsFrustumCullTest() > 1 || frustum.intersects(wmo_instance->getExtents()[1], wmo_instance->getExtents()[0]))
+          // The parentheses are load-bearing for cost, not for outcome. Without them this parses
+          // as ((!render && contained) || intersects), which still evaluates the frustum test
+          // even when the coherence shortcut above has already decided to render. Same result,
+          // one frustum test per already-decided WMO instance per frame wasted. Matches the M2
+          // path above, which is written this way already.
+          if (!render && (tile->renderer()->objectsFrustumCullTest() > 1
+                          || frustum.intersects(wmo_instance->getExtents()[1], wmo_instance->getExtents()[0])))
           {
             render = true;
           }
@@ -2257,6 +2275,18 @@ bool WorldRender::saveMinimap(TileIndex const& tile_idx, MinimapRenderSettings* 
     ));
 
     glFinish();
+
+    // This is a single-shot render whose output is written to a file, so WMOGroupRender::upload()
+    // must not use its interactive bail-and-retry path here: there is no next frame to retry in,
+    // and a WMO whose batch textures were still queued would be left out of the written image
+    // with no warning. The spin above is not enough on its own -- AsyncLoader::is_loading() only
+    // reports objects a worker has already picked up (AsyncLoader.cpp:23-27, against the separate
+    // _to_load queues), so it reads false while a backlog is still waiting, and the
+    // waitForChildrenLoaded() above it is skipped entirely for a tile that was already resident.
+    //
+    // Blocking is confined to this scope, which is what the guard is for: the interactive
+    // renderer keeps bailing and retrying, which is the behaviour worth having.
+    WMOGroupRender::ScopedBlockingUpload const blocking_upload_guard;
 
     drawMinimap(mTile
         , look_at

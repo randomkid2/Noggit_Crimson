@@ -155,8 +155,12 @@ namespace Noggit
                 _weight_list->setMinimumWidth(450);
                 _weight_list->setFixedHeight(120);
                 _weight_list->setVisible(true);
-                QString styleSheet = "QListWidget::item { padding-right: 6px; border: 1px solid darkGray;}";
-                _weight_list->setStyleSheet(styleSheet);
+                // Was an inline "border: 1px solid darkGray" -- a Qt colour NAME, so #A9A9A9,
+                // which is unrelated to any theme's stroke and lit up as four bright cells in a
+                // dark panel. The accessible name is the hook the sheet reaches it by; it is
+                // free of side effects on a list that already takes NoSelection, and it leaves
+                // the colour where a theme can answer for it.
+                _weight_list->setAccessibleName("ge_weight_list");
                 settings_layout->addRow(_weight_list);
 
                 _preview_renderer = new Tools::PreviewRenderer(_object_list->iconSize().width(),

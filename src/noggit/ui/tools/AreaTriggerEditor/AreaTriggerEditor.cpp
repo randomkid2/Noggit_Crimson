@@ -656,7 +656,11 @@ namespace Noggit::Ui::Tools
           "THIS MAY BREAK THE GAME!\n\n"
           "Don't do this if you don't know what you're\n"
           "doing!", dialog };
-        label2->setStyleSheet("QLabel { color: RED }");
+        // "RED" was the Qt colour name, i.e. pure #FF0000, which is not in this palette and not
+        // in any other theme's either. The state property reaches the theme's own bad colour
+        // and lets a theme that is not CrimsonSlate answer for itself. Set before the widget is
+        // first polished, so no unpolish/polish pair is needed.
+        label2->setProperty("state", "error");
         layout->addWidget(label2);
       }
     }

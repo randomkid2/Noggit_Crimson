@@ -1776,12 +1776,20 @@ QWidget#leftSecondaryToolbarHolder {
    The left strip consequently falls through to the plain QToolBar rule further
    up and is drawn as a docked bar rather than a floating one.
 
-   Not fixed here on purpose. The fix is one line in a header that this change
-   does not own, and making the selector live by other means -- scoping it to
-   #leftToolbarHolder -- would silently change the look of the most prominent
-   chrome in the editor with no way to check the result by eye from a style
-   sheet. Recorded so the next person does not re-derive it. */
+   The type selector is still dead and is still kept. What has changed is that
+   the strip is now reached by POSITION instead, immediately below: the holder
+   it lives in does have an object name, and MapView::setupToolbars puts
+   exactly one widget in it (src/noggit/MapView.cpp -- a QVBoxLayout on
+   _viewport_overlay_ui->leftToolbarHolder with _toolbar as its only member),
+   so the child selector cannot reach anything else. The one-line Q_OBJECT fix
+   in Toolbar.h remains the tidier answer and is deliberately NOT taken here,
+   because it depends on whether AUTOMOC has that header in its scan set --
+   a CMake question this change is not allowed to answer. Reaching the strip
+   through its holder needs no build system at all, and outranks both the
+   plain QToolBar rule (specificity 1) and QToolBar:vertical (11) at 102, so
+   it wins by cascade rather than by document order. */
 Noggit--Ui--toolbar,
+QWidget#leftToolbarHolder > QToolBar,
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar,
 QWidget#gizmoBar {
 	background-color: #2A2F38;
@@ -1789,6 +1797,118 @@ QWidget#gizmoBar {
 	border-radius: 4px;
 	padding: 4px;
 	spacing: 2px;
+}
+
+/* --- the left tool strip ------------------------------------------------- */
+
+/* Sixteen editing tools down the left edge of the viewport, in one
+   QActionGroup, so exactly one is checked at a time.
+
+   THE CARD is the holder selector in the shared floating-bar rule above, NOT
+   anything in this block. Without it the strip took QToolBar #22262E plus
+   QToolBar:vertical's 1px #262B33 right edge, so the most prominent chrome in
+   the editor rendered as an opaque square-cornered slab forty pixels from a
+   rounded, bordered, lighter floating card carrying the view toggles. Same
+   surface, same distance from the camera, two design languages.
+
+   No rule here cancels the plain QToolBar edges, and none is needed: the
+   shared rule's `border: 1px solid #343A45` is a four-edge shorthand at
+   specificity 65538 against 257 for QToolBar:vertical and 1 for QToolBar, so
+   it replaces both. A "border-bottom: none" tidy-up placed after it would
+   have been read as removing the card's own bottom edge, which is worse than
+   the problem it was written for.
+
+   HOVER had to be restated. The base QToolButton:hover fills with bg.overlay
+   #2A2F38, which is exactly what the strip's surface has just become, so
+   pointing at a tool would have measured 1.000:1 -- the identical defect the
+   view-toggle bar block further down documents at length. It takes the same
+   answer: the stroke.hi plate at 1.556:1 with a 1px text.off edge at 2.119:1.
+
+   CHECKED. The base rule's accent wash is rgba(232, 84, 63, 0.26), authored
+   against bg.overlay; over the slab the strip used to be it composited to
+   #553232 and measured 1.37:1, which this sheet's own standard calls
+   invisible at icon-button size. Raised to 0.36 it composites over the card
+   and measures 1.52:1, in the same band as the hover plate the sheet already
+   accepts. The 2px accent leading edge at 3.694:1 stays the primary mark and
+   is untouched -- and the base rule's objection that a 2px line between two
+   icons reads as a SEPARATOR is an argument about a HORIZONTAL row, where the
+   line falls in the gap between neighbours. This strip is vertical: the line
+   sits on one button's leading edge and touches none of the others.
+
+   GEOMETRY. Nothing here changes a button's box. Every state restates border
+   1px and border-left 2px at the widths the base rule already reserves in all
+   six of its states, so switching tools cannot reflow the strip. Only colours
+   move.
+
+   MEASURED, not derived. A QToolBar built inside a QWidget named
+   leftToolbarHolder, laid out off-screen under this sheet, grabbed and
+   sampled:
+
+     surface between the buttons        #2A2F38   (was #22262E)
+     resting button face                #2A2F38
+     checked button face                #6E3C3A   1.52:1 against the surface
+     checked button leading edge        #E8543F   3.69:1
+     button box, checked and unchecked  42 x 37   identical, so no reflow
+     bar box                            52 x 86 against 50 x 84 before
+
+   The bar grows by exactly the 1px card border on each of the four edges and
+   the buttons inside it do not move. One correction to the numbers elsewhere
+   in this file: the toolbar icon size measured 24 x 24, not 22 -- these bars
+   set none, so it is Fusion's PM_ToolBarIconSize and the same on both. */
+QWidget#leftToolbarHolder > QToolBar QToolButton:hover {
+	background-color: #454C59;
+	color: #EDF0F4;
+	border: 1px solid #59606B;
+	border-left: 2px solid #59606B;
+}
+
+QWidget#leftToolbarHolder > QToolBar QToolButton:checked {
+	background-color: rgba(232, 84, 63, 0.36);
+	color: #EDF0F4;
+	border: 1px solid transparent;
+	border-left: 2px solid #E8543F;
+}
+
+/* Both marks at once, 1.71:1 for the plate. Two pseudo-states, so it outranks
+   the two single-state rules above whichever order Qt walks them in. */
+QWidget#leftToolbarHolder > QToolBar QToolButton:checked:hover {
+	background-color: rgba(232, 84, 63, 0.46);
+	color: #EDF0F4;
+	border: 1px solid #59606B;
+	border-left: 2px solid #E8543F;
+}
+
+/* :pressed ties with :hover on specificity and wins on document order, so it
+   is spelled out rather than left to chance. The press fills with accent.dim
+   because it is momentary; the checked press keeps the full-accent leading
+   edge so a click cannot erase the state it is about to change. */
+QWidget#leftToolbarHolder > QToolBar QToolButton:pressed {
+	background-color: #B33F2E;
+	color: #EDF0F4;
+	border: 1px solid #B33F2E;
+	border-left: 2px solid #B33F2E;
+}
+
+QWidget#leftToolbarHolder > QToolBar QToolButton:checked:pressed {
+	background-color: #B33F2E;
+	color: #EDF0F4;
+	border: 1px solid #B33F2E;
+	border-left: 2px solid #E8543F;
+}
+
+/* Last of the single-pseudo rules, so a disabled tool shows no state mark. */
+QWidget#leftToolbarHolder > QToolBar QToolButton:disabled {
+	background: transparent;
+	color: #59606B;
+	border: 1px solid transparent;
+	border-left: 2px solid transparent;
+}
+
+/* The strip's group separators sit on bg.overlay now, where the base rule's
+   stroke colour is very nearly the surface itself. */
+QWidget#leftToolbarHolder > QToolBar::separator {
+	background-color: #454C59;
+	margin: 4px 5px;
 }
 
 /* --- the view-toggle bar ------------------------------------------------- */
@@ -2246,9 +2366,17 @@ QPushButton#searchButton {
 }
 
 /* The collapsible section headers ExpanderWidget builds -- "Custom Brush" and
-   friends. It also sets an inline sheet for text-align and border, which wins
-   over this rule for those two properties only; colour, background and the
-   accent bar still come from here. */
+   friends. It still sets one inline declaration, text-align: left, and that
+   wins over this rule for that property alone. It has to: QPushButton has no
+   setAlignment and no reachable style option, so a theme that says nothing
+   about this button would centre a section caption.
+
+   It used to set "font-weight: bold; border: none;" as well, and both of those
+   beat this rule -- bold is 700 against the 600 below, and border: none erased
+   the top hairline that is the only separation between two collapsed sections
+   plus the 2px left reservation that stops the accent bar shifting the caption
+   when it appears. Both are gone from the widget, so everything below except
+   text-align is now live. */
 QPushButton#__qt__passive_button {
 	background: transparent;
 	color: #8A93A0;
@@ -2270,6 +2398,35 @@ QPushButton#__qt__passive_button:hover {
 QPushButton#__qt__passive_button:checked {
 	color: #EDF0F4;
 	border-left: 2px solid #E8543F;
+}
+
+/* --- ground effects tool -------------------------------------------------- */
+
+/* The four weight cells under a ground-effect set. The tool used to draw them
+   with an inline "1px solid darkGray", the Qt colour name -- #A9A9A9, which is
+   brighter than any text colour in this palette and read as four lit boxes in
+   a dark panel. The list takes NoSelection, so the cell is a container and not
+   a control: stroke, not stroke.hi. */
+QListWidget[accessibleName="ge_weight_list"]::item {
+	border: 1px solid #343A45;
+	border-radius: 4px;
+	padding-right: 6px;
+}
+
+/* --- key bindings window ------------------------------------------------- */
+
+/* The seventeen section headings in Help > Key Bindings. The window sets bold
+   through QFont and leaves everything else here; it used to carry an inline
+   sheet whose margin-left: 150px pushed each heading into the middle of the
+   rows it labels. margin-top is the rhythm between one section and the next --
+   QSS margins on a QLabel are honoured by the form layout as extra row height,
+   which is why the spacing does not need a spacer item. */
+QLabel#help-section-header {
+	color: #EDF0F4;
+	background: transparent;
+	margin-top: 10px;
+	margin-bottom: 2px;
+	margin-left: 0px;
 }
 
 /* --- map creation wizard ------------------------------------------------- */

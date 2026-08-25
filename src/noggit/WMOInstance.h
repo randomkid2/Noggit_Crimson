@@ -71,7 +71,8 @@ public:
   void intersect (math::ray const&, selection_result*, bool do_exterior = true);
 
   std::array<glm::vec3, 2> const& getExtents() override; // axis aligned
-  std::array<glm::vec3, 2> const& getLocalExtents() const;
+  // By value: the body returns a braced-init temporary, so a reference return dangled.
+  std::array<glm::vec3, 2> getLocalExtents() const;
   std::array<glm::vec3, 8> getBoundingBox() override; // not axis aligned
   bool extentsDirty() const;;
   void recalcExtents() override;

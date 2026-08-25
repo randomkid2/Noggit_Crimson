@@ -148,14 +148,22 @@ namespace OpenGL
     }
     use_program::~use_program()
     {
-      for (auto const& array : _enabled_vertex_attrib_arrays)
+      if (!_enabled_vertex_attrib_arrays.empty())
       {
+        // glDisableVertexAttribArray cannot change the vertex array binding, so this query is
+        // loop-invariant. It used to sit inside the loop, costing one driver round trip per
+        // enabled attribute array on every program scope exit. The comparison below is left
+        // exactly as it was: changing which arrays get disabled would change GL state.
         GLint cur_vao = 0;
         gl.getIntegerv(GL_VERTEX_ARRAY_BINDING, &cur_vao);
-        if(cur_vao != array || !cur_vao)
-          continue;
 
-        gl.disableVertexAttribArray (array);
+        for (auto const& array : _enabled_vertex_attrib_arrays)
+        {
+          if(cur_vao != array || !cur_vao)
+            continue;
+
+          gl.disableVertexAttribArray (array);
+        }
       }
       gl.useProgram (_old);
     }

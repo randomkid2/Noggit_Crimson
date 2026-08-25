@@ -143,34 +143,56 @@ ViewToolbar::ViewToolbar(MapView *mapView, ViewToolbar *tb)
     setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
     setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
 
-    add_tool_icon(mapView, &mapView->_draw_models, tr("Doodads"), FontNoggit::VISIBILITY_DOODADS, tb);
-    add_tool_icon(mapView, &mapView->_draw_wmo, tr("WMOs"), FontNoggit::VISIBILITY_WMO, tb);
-    add_tool_icon(mapView, &mapView->_draw_wmo_doodads, tr("WMO doodads"), FontNoggit::VISIBILITY_WMO_DOODADS, tb);
-    add_tool_icon(mapView, &mapView->_draw_wmo_exterior, tr("WMO exterior"), FontNoggit::UI_TOGGLE, tb);
-    add_tool_icon(mapView, &mapView->_draw_terrain, tr("Terrain"), FontNoggit::VISIBILITY_TERRAIN, tb);
-    add_tool_icon(mapView, &mapView->_draw_water, tr("Water"), FontNoggit::VISIBILITY_WATER, tb);
+    add_tool_icon(mapView, &mapView->_draw_models, tr("Doodads"),
+                  tr("Draw M2 models placed on the terrain."), tr("F1"), FontNoggit::VISIBILITY_DOODADS, tb);
+    add_tool_icon(mapView, &mapView->_draw_wmo, tr("WMOs"),
+                  tr("Draw world model objects -- buildings, caves, bridges."), tr("F6"), FontNoggit::VISIBILITY_WMO, tb);
+    add_tool_icon(mapView, &mapView->_draw_wmo_doodads, tr("WMO doodads"),
+                  tr("Draw the M2 models a WMO carries inside it."), tr("F2"), FontNoggit::VISIBILITY_WMO_DOODADS, tb);
+    add_tool_icon(mapView, &mapView->_draw_wmo_exterior, tr("WMO exterior"),
+                  tr("Draw the outside faces of world model objects."), QString(), FontNoggit::UI_TOGGLE, tb);
+    add_tool_icon(mapView, &mapView->_draw_terrain, tr("Terrain"),
+                  tr("Draw the ADT terrain mesh."), tr("F3"), FontNoggit::VISIBILITY_TERRAIN, tb);
+    add_tool_icon(mapView, &mapView->_draw_water, tr("Water"),
+                  tr("Draw water, lava and slime surfaces."), tr("F4"), FontNoggit::VISIBILITY_WATER, tb);
 
     addSeparator();
 
-    add_tool_icon(mapView, &mapView->_draw_lines, tr("Lines"), FontNoggit::VISIBILITY_LINES, tb);
-    add_tool_icon(mapView, &mapView->_draw_hole_lines, tr("Hole lines"), FontNoggit::VISIBILITY_HOLE_LINES, tb);
-    add_tool_icon(mapView, &mapView->_draw_wireframe, tr("Wireframe"), FontNoggit::VISIBILITY_WIREFRAME, tb);
-    add_tool_icon(mapView, &mapView->_draw_contour, tr("Contours"), FontNoggit::VISIBILITY_CONTOURS, tb);
-    add_tool_icon(mapView, &mapView->_draw_climb, tr("Climb"), FontNoggit::VISIBILITY_CLIMB, tb, tb->_climb_secondary_tool);
-    add_tool_icon(mapView, &mapView->_draw_vertex_color, tr("Vertex Color"), FontNoggit::VISIBILITY_VERTEX_PAINTER, tb);
-    add_tool_icon(mapView, &mapView->_draw_baked_shadows, tr("Baked Shadows"), FontNoggit::VISIBILITY_BAKED_SHADOWS, tb); // TODO : better icon
+    add_tool_icon(mapView, &mapView->_draw_lines, tr("Lines"),
+                  tr("Draw the ADT tile and chunk grid over the terrain."), tr("F7"), FontNoggit::VISIBILITY_LINES, tb);
+    add_tool_icon(mapView, &mapView->_draw_hole_lines, tr("Hole lines"),
+                  tr("Outline the holes cut in the terrain."), tr("Shift+F1"), FontNoggit::VISIBILITY_HOLE_LINES, tb);
+    add_tool_icon(mapView, &mapView->_draw_wireframe, tr("Wireframe"),
+                  tr("Draw the terrain mesh edges over the surface."), tr("F10"), FontNoggit::VISIBILITY_WIREFRAME, tb);
+    add_tool_icon(mapView, &mapView->_draw_contour, tr("Contours"),
+                  tr("Shade the terrain by height with contour bands."), tr("F9"), FontNoggit::VISIBILITY_CONTOURS, tb);
+    add_tool_icon(mapView, &mapView->_draw_climb, tr("Climb"),
+                  tr("Colour the terrain by slope, showing what is walkable."), tr("Shift+F2"), FontNoggit::VISIBILITY_CLIMB, tb, tb->_climb_secondary_tool);
+    add_tool_icon(mapView, &mapView->_draw_vertex_color, tr("Vertex Color"),
+                  tr("Apply the per-vertex colour layer (MCCV) to the terrain."), tr("Shift+F3"), FontNoggit::VISIBILITY_VERTEX_PAINTER, tb);
+    add_tool_icon(mapView, &mapView->_draw_baked_shadows, tr("Baked Shadows"),
+                  tr("Apply the shadow map baked into each chunk."), tr("Shift+F4"), FontNoggit::VISIBILITY_BAKED_SHADOWS, tb); // TODO : better icon
 
     addSeparator();
 
-    add_tool_icon(mapView, &mapView->_draw_model_animations, tr("Animations"), FontNoggit::VISIBILITY_ANIMATION, tb);
-    add_tool_icon(mapView, &mapView->_draw_fog, tr("Fog"), FontNoggit::VISIBILITY_FOG, tb);
-    add_tool_icon(mapView, &mapView->_draw_mfbo, tr("Flight bounds\nCurrently doesn't work !"), FontNoggit::VISIBILITY_FLIGHT_BOUNDS, tb);
+    add_tool_icon(mapView, &mapView->_draw_model_animations, tr("Animations"),
+                  tr("Play model animations in the viewport."), tr("F11"), FontNoggit::VISIBILITY_ANIMATION, tb);
+    add_tool_icon(mapView, &mapView->_draw_fog, tr("Fog"),
+                  tr("Apply distance fog as the client would."), tr("F12"), FontNoggit::VISIBILITY_FOG, tb);
+    // The "currently doesn't work" note used to sit in the ACTION TEXT, so it went into the
+    // button's accessible name and its fallback tooltip, and the newline inside it made the
+    // primary bar advertise a broken feature over two lines. It is a caveat about the feature,
+    // so it belongs in the description.
+    add_tool_icon(mapView, &mapView->_draw_mfbo, tr("Flight bounds"),
+                  tr("Draw the MFBO flight ceiling and floor. Not currently working."), QString(), FontNoggit::VISIBILITY_FLIGHT_BOUNDS, tb);
     // add_tool_icon(mapView, &mapView->_draw_lights_zones, tr("Light zones"), FontNoggit::VISIBILITY_LIGHT, tb);
     addSeparator();
 
     // Hole lines always on
-    add_tool_icon(mapView, &mapView->_draw_models_with_box, tr("Models with box"), FontNoggit::VISIBILITY_WITH_BOX, tb);
-    add_tool_icon(mapView, &mapView->_draw_hidden_models, tr("Hidden models"), FontNoggit::VISIBILITY_HIDDEN_MODELS, tb);
+    add_tool_icon(mapView, &mapView->_draw_models_with_box, tr("Models with box"),
+                  tr("Draw each model's bounding box alongside it."), QString(), FontNoggit::VISIBILITY_WITH_BOX, tb);
+    add_tool_icon(mapView, &mapView->_draw_hidden_models, tr("Hidden models"),
+                  tr("Draw models that have been hidden from the viewport."), QString(), FontNoggit::VISIBILITY_HIDDEN_MODELS, tb);
     addSeparator();
     /*
     auto tablet_sensitivity = new QSlider(this);
@@ -187,8 +209,10 @@ ViewToolbar::ViewToolbar(MapView *mapView, ViewToolbar *tb)
     // add_tool_icon(mapView, &mapView->_game_mode_camera, tr("Tile view"), FontNoggit::VIEW_MODE_2D, tb);
     // addSeparator();
 
-    add_tool_icon(mapView, &mapView->_show_minimap_window, tr("Show Minimap"),FontNoggit::TOOL_MINIMAP_EDITOR, tb);
-    add_tool_icon(mapView, &mapView->_show_detail_info_window, tr("Details info"), FontNoggit::INFO, tb);
+    add_tool_icon(mapView, &mapView->_show_minimap_window, tr("Show Minimap"),
+                  tr("Show the minimap dock and its tile overview."), tr("M"), FontNoggit::TOOL_MINIMAP_EDITOR, tb);
+    add_tool_icon(mapView, &mapView->_show_detail_info_window, tr("Details info"),
+                  tr("Show the detail panel for whatever is selected."), tr("F8"), FontNoggit::INFO, tb);
 
     // TODO : will open a panel with time controls, or use 2n toolbar
     //add_tool_icon(mapView, &mapView->_game_mode_camera, tr("Time speed"), FontNoggit::TIME_NORMAL, tb, _time_secondary_tool);
@@ -200,11 +224,15 @@ ViewToolbar::ViewToolbar(MapView *mapView, ViewToolbar *tb)
     addWidget(tile_view_btn);
     */
 
-    auto undo_stack_btn = new QPushButton(this);
-    undo_stack_btn->setIcon(FontAwesomeIcon(FontAwesome::undo));
-    undo_stack_btn->setToolTip("History");
-    addWidget(undo_stack_btn);
-
+    // Was a QPushButton handed to QToolBar::addWidget, which meant the twenty-first control on
+    // this bar was the one widget on it that no QToolButton rule could reach: different
+    // padding, different minimum height, different hover plate, visibly out of line with its
+    // twenty neighbours. As an action it is a QToolButton like the rest and takes the bar's own
+    // rules with no style sheet needed.
+    auto undo_stack_action = addAction(FontAwesomeIcon(FontAwesome::undo), tr("History"));
+    undo_stack_action->setToolTip(QString("<b>%1</b><br/>%2")
+                                    .arg(tr("History").toHtmlEscaped(),
+                                         tr("Show the undo stack for this session.").toHtmlEscaped()));
 
     auto undo_stack_popup = new QDialog(this);
     undo_stack_popup->setMinimumWidth(160);
@@ -220,25 +248,35 @@ ViewToolbar::ViewToolbar(MapView *mapView, ViewToolbar *tb)
     // layout->addWidget(undo_stack_popup);
     layout->addWidget(action_navigator);
 
+    // Set ONCE, here, rather than on every click. Changing a widget's window flags destroys and
+    // recreates its native window; doing that from the click handler threw away the platform
+    // window and rebuilt it every single time the popup was opened. The flag never changes, so
+    // it belongs at construction -- and the forced repaint() that used to follow adjustSize()
+    // on a widget that is not yet visible painted nothing and is gone with it.
+    undo_stack_popup->setWindowFlags(Qt::Popup);
     undo_stack_popup->updateGeometry();
     undo_stack_popup->adjustSize();
-    undo_stack_popup->update();
-    undo_stack_popup->repaint();
     undo_stack_popup->setVisible(false);
 
-    connect(undo_stack_btn, &QPushButton::clicked,
+    connect(undo_stack_action, &QAction::triggered,
             [=]()
             {
-                QPoint new_pos = mapToGlobal(
-                    QPoint(undo_stack_btn->pos().x(),
-                           undo_stack_btn->pos().y() + 30));
+                // Resolved at click time rather than captured: QToolBar owns the button it
+                // builds for an action and may rebuild it, so asking each time is the only way
+                // to be sure the anchor is the widget actually on screen.
+                QWidget* const button (widgetForAction(undo_stack_action));
+
+                if (!button)
+                    return;
+
+                QPoint const new_pos (mapToGlobal(QPoint(button->pos().x(),
+                                                         button->pos().y() + button->height())));
 
                 undo_stack_popup->setGeometry(new_pos.x(),
                                               new_pos.y(),
                                               undo_stack_popup->width(),
                                               undo_stack_popup->height());
 
-                undo_stack_popup->setWindowFlags(Qt::Popup);
                 undo_stack_popup->show();
             });
 }
@@ -438,11 +476,34 @@ editing_mode ViewToolbar::getCurrentMode() const
 void ViewToolbar::add_tool_icon(MapView* mapView,
                                 Noggit::BoolToggleProperty* view_state,
                                 const QString& name,
+                                const QString& description,
+                                const QString& shortcut,
                                 const FontNoggit::Icons& icon,
                                 ViewToolbar* sec_tool_bar,
                                 QVector<QWidgetAction*> sec_action_bar)
 {
     auto action = addAction(FontNoggitIcon{icon}, name);
+
+    // Twenty icon-only toggles with no explicit tooltip: Qt falls back to QAction::text(), so
+    // hovering one used to show its bare name and nothing about what it does or which key
+    // flips it. Every key named below is a REAL binding, taken off the ADD_TOGGLE and
+    // ADD_TOGGLE_POST lines in MapView::setupMainMenu -- those QActions keep sole ownership of
+    // the shortcut and nothing here calls setShortcut, so the hint cannot become a second
+    // handler for the same key. The worst a stale entry can do is display a wrong hint.
+    //
+    // Rich text so the name reads as a heading and the rest as subordinate. No colour is
+    // hardcoded; Qt applies the tooltip palette and the theme stays in charge. Everything that
+    // passes through tr() is escaped, because a translator may legitimately return a character
+    // that means something in markup.
+    QString tooltip (QString("<b>%1</b>").arg(name.toHtmlEscaped()));
+
+    if (!description.isEmpty())
+      tooltip += QString("<br/>%1").arg(description.toHtmlEscaped());
+
+    if (!shortcut.isEmpty())
+      tooltip += QString("<br/><small>Shortcut: %1</small>").arg(shortcut.toHtmlEscaped());
+
+    action->setToolTip(tooltip);
     connect (action, &QAction::triggered, [action, view_state] () {
         action->setChecked(!view_state->get());
         view_state->set(!view_state->get());

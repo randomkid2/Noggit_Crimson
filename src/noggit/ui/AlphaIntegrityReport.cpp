@@ -1,6 +1,7 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
 #include <noggit/ui/AlphaIntegrityReport.hpp>
+#include <noggit/ui/WaitCursor.hpp>
 
 #include <noggit/Action.hpp>
 #include <noggit/ActionManager.hpp>
@@ -67,12 +68,6 @@ namespace
   // the focusOnSpawn formula and as close to straight down as the camera goes -- which is the view
   // that answers the question, because an alpha map defect is a defect in what the GROUND shows.
   constexpr float FOCUS_PITCH_DEGREES = 80.f;
-
-  struct WaitCursor
-  {
-    WaitCursor() { QGuiApplication::setOverrideCursor(Qt::WaitCursor); }
-    ~WaitCursor() { QGuiApplication::restoreOverrideCursor(); }
-  };
 
   QString addressLabel(Noggit::AlphaChunkAddress const& address)
   {
@@ -331,7 +326,7 @@ AlphaIntegrityReport::AlphaIntegrityReport(MapView* map_view, QWidget* parent)
 
 void AlphaIntegrityReport::onScan()
 {
-  WaitCursor const busy;
+  Noggit::Ui::WaitCursor const busy;
 
   _problems.clear();
   _totals = Noggit::AlphaScanResult();
@@ -1065,7 +1060,7 @@ void AlphaIntegrityReport::onRepairAll()
     return;
   }
 
-  WaitCursor const busy;
+  Noggit::Ui::WaitCursor const busy;
 
   _map_view->context()->makeCurrent(_map_view->context()->surface());
   OpenGL::context::scoped_setter const _ (::gl, _map_view->context());

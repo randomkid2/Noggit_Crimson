@@ -53,6 +53,27 @@ namespace Noggit::Rendering
   class WMOGroupRender : public BaseRender
   {
   public:
+    // upload() normally refuses to block on a batch texture that is still loading: it bails and
+    // draw() retries next frame. That contract needs there to *be* a next frame. The offline
+    // minimap render (WorldRender::saveMinimap) draws once and writes the result to a file, so a
+    // bail there silently omits the WMO from the generated image, permanently.
+    //
+    // While one of these is alive, upload() waits for its textures instead of bailing. Construct
+    // it only around a single-shot offline draw; the interactive path must keep bailing. GUI
+    // thread only, like everything else that touches the GL context.
+    class ScopedBlockingUpload
+    {
+    public:
+      ScopedBlockingUpload();
+      ~ScopedBlockingUpload();
+
+      ScopedBlockingUpload (ScopedBlockingUpload const&) = delete;
+      ScopedBlockingUpload& operator= (ScopedBlockingUpload const&) = delete;
+
+    private:
+      bool _previous;
+    };
+
     WMOGroupRender(WMOGroup* wmo_group);
 
     void upload() override;

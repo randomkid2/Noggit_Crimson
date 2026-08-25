@@ -16,6 +16,24 @@
 
 using namespace Noggit::Rendering;
 
+namespace
+{
+  // Only ever read and written from the GUI thread, between the construction and destruction of a
+  // WMOGroupRender::ScopedBlockingUpload, i.e. around one offline draw. See the header.
+  bool blocking_upload = false;
+}
+
+WMOGroupRender::ScopedBlockingUpload::ScopedBlockingUpload()
+: _previous (blocking_upload)
+{
+  blocking_upload = true;
+}
+
+WMOGroupRender::ScopedBlockingUpload::~ScopedBlockingUpload()
+{
+  blocking_upload = _previous;
+}
+
 WMOGroupRender::WMOGroupRender(WMOGroup* wmo_group)
 : _wmo_group(wmo_group)
 {
@@ -39,7 +57,26 @@ void WMOGroupRender::upload()
 
     auto& tex1 = _wmo_group->wmo->textures.at(mat.texture1);
 
-    tex1->wait_until_loaded();
+    // Do not block here. This runs from draw(), i.e. from inside paintGL, and waiting on the
+    // AsyncLoader worker stalls the entire frame until the BLP has come out of the archive --
+    // the first frame a WMO becomes visible costs one such stall per batch texture.
+    // Bailing out is safe and self-correcting: the early return below happens before any GPU
+    // resource or draw call list is built, _uploaded stays false, and draw() calls upload()
+    // again on the next frame. finishedLoading() also becomes true on load failure, so this
+    // cannot spin forever on a missing texture.
+    //
+    // The one caller with no next frame -- the offline minimap render -- holds a
+    // ScopedBlockingUpload and gets the original blocking behaviour instead.
+    if (blocking_upload)
+    {
+      tex1->wait_until_loaded();
+    }
+    else if (!tex1->finishedLoading())
+    {
+      texture_not_uploaded = true;
+      break;
+    }
+
     tex1->upload();
 
     std::uint32_t tex_array0 = tex1->texture_array();
@@ -53,7 +90,17 @@ void WMOGroupRender::upload()
     if (use_tex2)
     {
       auto& tex2 = _wmo_group->wmo->textures.at(mat.texture2);
-      tex2->wait_until_loaded();
+
+      if (blocking_upload)
+      {
+        tex2->wait_until_loaded();
+      }
+      else if (!tex2->finishedLoading())
+      {
+        texture_not_uploaded = true;
+        break;
+      }
+
       tex2->upload();
 
       tex_array1 = tex2->texture_array();

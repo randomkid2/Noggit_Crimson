@@ -56,6 +56,29 @@ Still genuinely outstanding: the waypoint visual editor, the terrain half of the
 Doctor dialog over `DoctorReport::render()`, the UID migration off the old `connect()`, and the
 `noggit_ro` read-only demonstration.
 
+#### Four modules are built and tested but have no caller yet — this is intended, not dead code
+
+A grep for callers finds these four reachable only from `noggit_schema_tests.exe`. Each is the
+Qt-free, database-free *logic* half of a milestone whose UI half is in the outstanding list above,
+which is the order this fork was deliberately built in: the arithmetic is pinned by tests first, so
+the dialog on top of it is written against a layer already known good. Recorded here because an
+audit that greps for callers will otherwise rediscover them as dead weight every time.
+
+| Module | Milestone | What still has to call it |
+|---|---|---|
+| `database/ChunkTransform.{hpp,cpp}` | M4 — Chunk mover | the terrain half of the chunk mover |
+| `database/ChangesetArchive.{hpp,cpp}` | M5 — Recovery | a restore-from-backup dialog |
+| `database/DoctorReport.{hpp,cpp}` + `DoctorConnectionChecks.cpp` | M5 — Doctor | a Doctor dialog over `render()` |
+| `database/GmCommands.{hpp,cpp}` | M5 — Coordinate round-trip | the paste-a-coordinate / copy-`.go` UI |
+
+`GmCommands` in particular has a destination, contrary to a 2026-08 audit that recorded it as
+having none: it is the `.go` / `.tele` production and coordinate parsing named in the M5 brief
+below. **Do not delete any of the four.** `ChunkTransform` is the costly one to lose — its value is
+the no-accumulation discipline documented at `ChunkTransform.hpp:27-35`, where every output is
+computed from the *input* because the columns are `FLOAT` and a re-planned nudge would otherwise
+walk content away from where the user put it. That reasoning is cheap to delete and expensive to
+re-derive.
+
 ### M1 rendering — next steps, in order
 
 A read-only survey of the render, model, DBC and spawn paths — every finding cited to file:line —
@@ -235,21 +258,31 @@ verifying it needs someone to open a populated tile and look. If creatures are s
 first thing to check is whether `TextureVariation` is populated for those display ids; if they are
 wrongly skinned, the type↔slot matching in the spawn pass is where to look.
 
-### Known follow-ups from the M4–M5 review
+### Known follow-ups from the M4–M5 review — all six now fixed
 
-Real, judged non-urgent, recorded so they are not rediscovered as surprises.
+Real, judged non-urgent at the time, recorded so they were not rediscovered as surprises.
+
+> [!note] **All six were subsequently fixed.** Re-verified against this tree on 2026-08-25; the
+> evidence is on each item. The list is kept rather than deleted because this file is a historical
+> record, but nothing below is outstanding. A defect list whose entries are all stale is worse than
+> no list, so if you are scanning for open work, skip this section.
 
 1. **`ChangesetArchive::collect` stores a narrow `std::string` filename.** A name the active code
    page cannot represent (a UTF-8 name copied from another machine) is converted with replacement
    characters, so `list()` reports a name that no longer opens, `load()` fails on it, and
    `prune()` throws on `remove()` — permanently blocking pruning while that file sits in the root.
    Fix is to keep the native `std::filesystem::path` in the stored entry.
+   **Fixed** — `ArchiveEntry::file_name` is a `std::filesystem::path` (`ChangesetArchive.hpp:44`),
+   with the narrow-string rendering kept separately as the display `label`.
 2. **`ChangesetArchive::load` sizes the file then reads that many bytes**, so the short-read guard
    only detects shrinkage. A file that *grew* between the stat and the read is returned silently
    truncated — the exact failure the guard's comment claims to make impossible.
+   **Fixed** — `readExactly` reads `wanted + 1` bytes and throws when `gcount()` exceeds `wanted`
+   (`ChangesetArchive.cpp:733-750`), so growth is a loud refusal rather than a silent truncation.
 3. **`ChangesetArchive::collect` fails the whole archive on one unsizable entry.** An unrelated
    backup vanishing mid-scan (a concurrent `prune`) makes `store()` refuse to archive a changeset
    that had nothing wrong with it. A not-found error should skip the entry, as `prune` already does.
+   **Fixed** — `collect()` skips a vanished entry via `isMissing(ec)` (`ChangesetArchive.cpp:815-825`).
 4. **`isDefaultRotation`, `TWO_PI`, `ORIENTATION_AGREEMENT_TOLERANCE` and `yawSeparation` are
    duplicated across three translation units** (`ChangesetBuilder`, `ChunkTransform`,
    `GmCommands`), with `TWO_PI` written as two different literals. Each copy is tested only
@@ -257,13 +290,21 @@ Real, judged non-urgent, recorded so they are not rediscovered as surprises.
    the transform planner and the `.go` command. They belong in `TileCoordinates`, which owns
    `Quaternion`. `addIssue`/`addError`/`addWarning` are likewise duplicated between `SpawnTypes`
    and `ChunkTransform`.
+   **Fixed** — the four now live in `TileCoordinates` (`TileCoordinates.hpp:128,137,165,175`) and
+   all three translation units call them there: `ChangesetBuilder.cpp:402-425`,
+   `ChunkTransform.cpp:231-251`, `GmCommands.cpp:557`. `TWO_PI` is one literal again.
 5. **Case folding in `DoctorReport` uses locale-sensitive `std::tolower`.** Under a Turkish
    `LC_CTYPE` (Qt calls `setlocale(LC_ALL, "")` at startup) the configured writable schema
    compares unequal to itself and the loud live-database alarm fires against the *correct* schema.
    Fold ASCII by hand, as `ChangesetArchive::sanitiseLabel` already does.
+   **Fixed** — `DoctorReport.cpp:110-112` folds ASCII by hand, with the Turkish-locale reasoning
+   kept in the comment so it is not "simplified" back to `std::tolower`.
 6. **Two assertions in `GmCommandsTests` are tautologies** over a hardcoded literal rather than
    over emitted output, so on a machine with no comma-decimal locale the test reports having
    verified locale independence while verifying nothing.
+   **Fixed** — `tests/GmCommandsTests.cpp:56-91` installs a real comma-decimal locale through a
+   scope guard and asserts against emitted output, degrading to a weaker but still real assertion
+   when the machine has no such locale installed.
 
 ### Known follow-ups from the M1–M4 review
 

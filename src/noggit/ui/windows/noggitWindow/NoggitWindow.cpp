@@ -13,6 +13,7 @@
 #include <noggit/ui/tools/MapCreationWizard/Ui/MapCreationWizard.hpp>
 #include <noggit/ui/tools/UiCommon/StackedWidget.hpp>
 #include <noggit/ui/UidFixWindow.hpp>
+#include <noggit/ui/WaitCursor.hpp>
 #include <noggit/ui/windows/about/About.h>
 #include <noggit/ui/windows/noggitWindow/components/BuildMapListComponent.hpp>
 #include <noggit/ui/windows/noggitWindow/NoggitWindow.hpp>
@@ -103,8 +104,17 @@ namespace Noggit::Ui::Windows
     {
       QWidget* widget = new QWidget(this);
       ::Ui::TitleBar* titleBarWidget = setupFramelessWindow(widget, this, minimumSize(), maximumSize(), true);
-      titleBarWidget->horizontalLayout->insertWidget(2, _menuBar);
-      setMenuWidget(widget);
+
+      // The helper returns nullptr when it decides the window keeps its system frame. Reaching
+      // here at all means this branch already read the key as false and the helper now reads it
+      // the same way, so it cannot be null -- but this line used to dereference the result
+      // unconditionally while the two readers disagreed about the default, and a null check is
+      // cheaper than trusting that they never drift apart again.
+      if (titleBarWidget)
+      {
+        titleBarWidget->horizontalLayout->insertWidget(2, _menuBar);
+        setMenuWidget(widget);
+      }
     }
 
     _menuBar->setNativeMenuBar(settings.value("nativeMenubar", true).toBool());
@@ -292,6 +302,20 @@ namespace Noggit::Ui::Windows
 
   void NoggitWindow::loadMap(int map_id)
   {
+    // This is not a cheap notification. mapSelected lands in MapCreationWizard::selectMap, which
+    // constructs a World: it reads the map's WDT and builds the horizon minimap, on the UI
+    // thread, before this function returns. It is wired to the map list's itemSelectionChanged,
+    // so it also runs once per arrow-key press through the list. Nothing told the user the
+    // application was busy -- the first screen of the editor simply stopped responding for as
+    // long as the read took.
+    //
+    // The cursor is the whole change. A debounce in front of this call was considered and
+    // rejected: getWorld() is read straight afterwards for the minimap, and again by the
+    // enter-map path, where line 161's assert compiles to nothing under NDEBUG and line 163
+    // dereferences the result. Deferring the construction while leaving those readers where
+    // they are turns a stall into a null dereference, which is a far worse trade.
+    Noggit::Ui::WaitCursor const busy;
+
     // _minimap->world(nullptr);
 
     // World is now created only here in

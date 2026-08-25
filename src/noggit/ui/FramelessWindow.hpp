@@ -16,7 +16,16 @@ namespace Noggit::Ui
   {
 
     QSettings settings;
-    if (settings.value("systemWindowFrame", false).toBool())
+
+    // THREE readers of one key, and this one used to disagree with the other two about what an
+    // unset key means. NoggitWindow and the settings panel both default systemWindowFrame to
+    // true; this defaulted it to false. On a fresh profile the result was one application
+    // wearing two different window chromes at once: the main window kept the OS frame, because
+    // its own reader said true and it skipped the frameless branch entirely, while the settings
+    // window called in here unconditionally, got false, and built the custom Crimson title bar
+    // -- underneath a radio button that said "system frame". Aligned to the other two, so an
+    // unset key means the OS frame everywhere and the checkbox describes what is on screen.
+    if (settings.value("systemWindowFrame", true).toBool())
     {
       return nullptr;
     }

@@ -9,12 +9,57 @@
 #include <QtOpenGLExtensions/QOpenGLExtensions>
 #include <QtGui/QOpenGLFunctions>
 #include <util/CurrentFunction.hpp>
+#include <QtCore/QByteArray>
 #include <memory>
 
 
 namespace
 {
   std::size_t inside_gl_begin_end = 0;
+
+  // OpenGL error handling here is two separable things sharing one switch.
+  //
+  //  * The context verification in verify_context_and_check_for_gl_errors' constructor is a
+  //    correctness guard. OpenGL::Scoped destructors throw when no context is current and a throw
+  //    from a destructor terminates the process, so a GL call made without a current context has
+  //    to fail loudly and early. That check is cheap and stays on unconditionally.
+  //
+  //  * The glGetError drain in the destructor is diagnostics. It costs a driver round trip after
+  //    every wrapped GL call, and this renderer issues tens of thousands of them per frame.
+  //
+  // NOGGIT_DO_NOT_CHECK_FOR_OPENGL_ERRORS (CMake option NOGGIT_OPENGL_ERROR_CHECK) cannot be used
+  // to switch only the second one off. It also selects the #else branches of the bufferData and
+  // bufferSubData templates further down this file, and those branches do not restore the
+  // previously bound buffer. Turning that option off therefore changes GL binding state
+  // program-wide; it is not the free win it looks like. Hence a separate switch that governs the
+  // error drain and nothing else.
+  //
+  // Compile time: define NOGGIT_DO_NOT_QUERY_OPENGL_ERRORS.
+  // Run time:     set the environment variable NOGGIT_GL_ERROR_QUERY to 0.
+  // The default, with neither set, is the historical behaviour: query after every call.
+  //
+  // Deliberately a function-local static rather than a namespace-scope one. This file is an .inl
+  // included by many translation units -- src/opengl/{context,shader,texture}.cpp,
+  // src/noggit/{Alphamap,Particle,map_horizon,wmo_liquid}.cpp,
+  // src/noggit/application/NoggitApplication.cpp,
+  // src/noggit/rendering/LiquidTextureManager.cpp, and every unit that includes
+  // opengl/scoped.hpp -- so each gets its own copy in this anonymous namespace, and the order in
+  // which their dynamic initialisers run relative to each other and to the global `gl` object is
+  // unspecified. A namespace-scope `bool const` initialised from getenv could therefore be read
+  // while still zero-initialised, silently disabling the drain. A function-local static is
+  // initialised on first use and is thread-safe from C++11 on, so no order exists to get wrong.
+#ifdef NOGGIT_DO_NOT_QUERY_OPENGL_ERRORS
+  constexpr bool query_gl_errors()
+  {
+    return false;
+  }
+#else
+  bool query_gl_errors()
+  {
+    static bool const enabled (qgetenv ("NOGGIT_GL_ERROR_QUERY") != QByteArrayLiteral ("0"));
+    return enabled;
+  }
+#endif
 
   template<typename Extension> struct extension_traits;
   template<> struct extension_traits<QOpenGLExtension_ARB_vertex_program>
@@ -24,11 +69,16 @@ namespace
 
   struct verify_context_and_check_for_gl_errors
   {
-    template<typename ExtraInfo> verify_context_and_check_for_gl_errors
-      (QOpenGLContext* current_context, char const* function, ExtraInfo&& extra_info)
+    verify_context_and_check_for_gl_errors
+      ( QOpenGLContext* current_context
+      , char const* function
+      , std::string (*extra_info)(OpenGL::context*)
+      , OpenGL::context* extra_info_context
+      )
       : _current_context (current_context)
       , _function (function)
       , _extra_info (extra_info)
+      , _extra_info_context (extra_info_context)
     {
       if (!_current_context)
       {
@@ -44,7 +94,7 @@ namespace
       }
     }
     verify_context_and_check_for_gl_errors (QOpenGLContext* current_context, char const* function)
-      : verify_context_and_check_for_gl_errors (current_context, function, &verify_context_and_check_for_gl_errors::no_extra_info)
+      : verify_context_and_check_for_gl_errors (current_context, function, &verify_context_and_check_for_gl_errors::no_extra_info, nullptr)
     {}
 
     template<typename Functions>
@@ -71,12 +121,18 @@ namespace
 
     QOpenGLContext* _current_context;
     char const* _function;
-    static std::string no_extra_info() { return {}; }
-    std::function<std::string()> _extra_info;
+    static std::string no_extra_info (OpenGL::context*) { return {}; }
+    // A plain function pointer plus an explicit context, rather than a std::function: one of
+    // these guards is constructed and destroyed on every wrapped GL call, so the type erasure was
+    // paid for on the hottest path in the program to serve a single call site. The only caller
+    // that supplies extra info needs the OpenGL::context it was called on, which is passed
+    // alongside instead of being captured.
+    std::string (*_extra_info)(OpenGL::context*);
+    OpenGL::context* _extra_info_context;
 
     ~verify_context_and_check_for_gl_errors()
     {
-      if (inside_gl_begin_end)
+      if (!query_gl_errors() || inside_gl_begin_end)
       {
         return;
       }
@@ -111,7 +167,7 @@ namespace
 
       if (!errors.empty())
       {
-        errors += _extra_info();
+        errors += _extra_info (_extra_info_context);
 #ifndef NOGGIT_DO_NOT_THROW_ON_OPENGL_ERRORS
         LogError << _function << ":" + errors << std::endl;
 #else
@@ -534,12 +590,13 @@ void OpenGL::context::programString (GLenum target, GLenum format, GLsizei len, 
   verify_context_and_check_for_gl_errors const _
     ( _current_context
       , NOGGIT_CURRENT_FUNCTION
-      , [this]
-      {
-        GLint error_position;
-        getIntegerv (GL_PROGRAM_ERROR_POSITION_ARB, &error_position);
-        return " at " + std::to_string (error_position) + ": " + reinterpret_cast<char const*> (getString (GL_PROGRAM_ERROR_STRING_ARB));
-      }
+      , [] (OpenGL::context* context) -> std::string
+        {
+          GLint error_position;
+          context->getIntegerv (GL_PROGRAM_ERROR_POSITION_ARB, &error_position);
+          return " at " + std::to_string (error_position) + ": " + reinterpret_cast<char const*> (context->getString (GL_PROGRAM_ERROR_STRING_ARB));
+        }
+      , this
     );
   return _.extension_functions<QOpenGLExtension_ARB_vertex_program>()->glProgramStringARB (target, format, len, pointer);
 }

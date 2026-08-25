@@ -1,66 +1,122 @@
 #include <noggit/ui/FontAwesome.hpp>
 #include <noggit/ui/windows/noggitWindow/widgets/MapBookmarkListItem.hpp>
 
+#include <QColor>
+#include <QFont>
 #include <QGraphicsColorizeEffect>
-#include <QGridLayout>
+#include <QHBoxLayout>
 #include <QLabel>
-#include <QListWidget>
+#include <QSizePolicy>
+#include <QVBoxLayout>
 
-#include <sstream>
+#include <algorithm>
+#include <initializer_list>
 
 namespace Noggit::Ui::Widget
 {
+    namespace
+    {
+        // Identical to MapListItem, and for the identical reason: the previous revision
+        // stack-allocated a QGridLayout, handed it to setLayout and let it destruct on return,
+        // leaving the row with no layout and three labels parented to the LIST VIEW at fixed
+        // setGeometry offsets.
+        constexpr int ICON_EXTENT = 30;
+
+        constexpr int ROW_MARGIN_LEFT = 10;
+        constexpr int ROW_MARGIN_TOP = 8;
+        constexpr int ROW_MARGIN_RIGHT = 12;
+        constexpr int ROW_MARGIN_BOTTOM = 8;
+
+        constexpr int COLUMN_SPACING = 10;
+        constexpr int LINE_SPACING = 2;
+
+        // NoggitWindow feeds minimumSizeHint() straight to QListWidgetItem::setSizeHint.
+        constexpr int ROW_MIN_HEIGHT = ICON_EXTENT + ROW_MARGIN_TOP + ROW_MARGIN_BOTTOM;
+        constexpr int ROW_HINT_WIDTH = 125;
+
+        // Defaults through QFont, not through an inline style sheet -- see MapListItem.
+        constexpr int TITLE_PIXEL_SIZE = 13;
+        constexpr int INFORMATION_PIXEL_SIZE = 11;
+
+        void applyFont (QLabel* label, int pixel_size, bool bold)
+        {
+            QFont font (label->font());
+            font.setPixelSize (pixel_size);
+            font.setBold (bold);
+            label->setFont (font);
+        }
+
+        void makeElastic (QLabel* label)
+        {
+            label->setSizePolicy (QSizePolicy::Ignored, QSizePolicy::Fixed);
+            label->setMinimumWidth (0);
+        }
+    }
+
     MapListBookmarkItem::MapListBookmarkItem(const MapListBookmarkData& data, QWidget* parent = nullptr) : QWidget(parent)
     {
-        auto layout = QGridLayout();
-
-        QIcon icon = FontAwesomeIcon(FontAwesome::bookmark);
-      
-        auto colour = new QGraphicsColorizeEffect(this);
-        colour->setColor(QColor(255, 204, 0));
-        colour->setStrength(1.0f);
-
-        map_icon = new QLabel("", parent);
-        map_icon->setPixmap(icon.pixmap(QSize(30, 30)));
-        map_icon->setGeometry(0, 0, 32, 32);
-        map_icon->setObjectName("project-icon-label");
-        map_icon->setStyleSheet("QLabel#project-icon-label { font-size: 12px; padding: 0px;}");
-        map_icon->setGraphicsEffect(colour);
-        map_icon->setAutoFillBackground(true);
-
-        auto projectName = toCamelCase(QString(data.MapName));
-        map_name = new QLabel(projectName, parent);
-        map_name->setGeometry(32, 0, 300, 20);
-        map_name->setObjectName("project-title-label");
-        map_name->setStyleSheet("QLabel#project-title-label { font-size: 12px; }");
-
-
-        auto sstream = std::stringstream();
-        sstream << std::to_string((int)data.Position.x) << " , " << std::to_string((int)data.Position.y) << " , " << std::to_string((int)data.Position.z);
-
-        map_position = new QLabel(QString::fromStdString(sstream.str()), parent);
-        map_position->setGeometry(32, 15, 300, 20);
-        map_position->setObjectName("project-information");
-        map_position->setStyleSheet("QLabel#project-information { font-size: 10px; }");
-
-        auto directoryEffect = new QGraphicsOpacityEffect(this);
-        directoryEffect->setOpacity(0.5);
-
-        map_position->setGraphicsEffect(directoryEffect);
-        map_position->setAutoFillBackground(true);
+        setObjectName ("project-list-item");
+        setAttribute (Qt::WA_StyledBackground, true);
 
         setContextMenuPolicy(Qt::CustomContextMenu);
 
-        layout.addWidget(map_icon);
-        layout.addWidget(map_name);
-        layout.addWidget(map_position);
+        map_icon = new QLabel("", this);
+        map_icon->setObjectName("project-icon-label");
+        map_icon->setPixmap(FontAwesomeIcon(FontAwesome::bookmark).pixmap(QSize(ICON_EXTENT, ICON_EXTENT)));
+        map_icon->setFixedSize(ICON_EXTENT, ICON_EXTENT);
 
-        setLayout(layout.layout());
+        // Font Awesome renders the glyph as a monochrome pixmap and the icon engine takes no
+        // colour, so the gold has to be applied to the rendered pixels. Same effect as before,
+        // re-parented to the label it tints rather than to the row.
+        auto const colour = new QGraphicsColorizeEffect(map_icon);
+        colour->setColor(QColor(224, 163, 62));
+        colour->setStrength(1.0f);
+        map_icon->setGraphicsEffect(colour);
+
+        auto const map_name_text = toCamelCase(QString(data.MapName));
+        map_name = new QLabel(map_name_text, this);
+        map_name->setObjectName("project-title-label");
+        applyFont (map_name, TITLE_PIXEL_SIZE, true);
+        makeElastic (map_name);
+
+        // QString::number, not a std::stringstream built to be thrown away one line later.
+        auto const position_text = QString("%1, %2, %3")
+                                     .arg(static_cast<int>(data.Position.x))
+                                     .arg(static_cast<int>(data.Position.y))
+                                     .arg(static_cast<int>(data.Position.z));
+
+        map_position = new QLabel(position_text, this);
+        map_position->setObjectName("project-information");
+        applyFont (map_position, INFORMATION_PIXEL_SIZE, false);
+        makeElastic (map_position);
+
+        setToolTip(tr("%1\nBookmarked at %2").arg(map_name_text).arg(position_text));
+
+        auto const text_column = new QVBoxLayout();
+        text_column->setContentsMargins(0, 0, 0, 0);
+        text_column->setSpacing(LINE_SPACING);
+        text_column->addStretch(1);
+        text_column->addWidget(map_name);
+        text_column->addWidget(map_position);
+        text_column->addStretch(1);
+
+        auto const root = new QHBoxLayout(this);
+        root->setContentsMargins(ROW_MARGIN_LEFT, ROW_MARGIN_TOP, ROW_MARGIN_RIGHT, ROW_MARGIN_BOTTOM);
+        root->setSpacing(COLUMN_SPACING);
+        root->addWidget(map_icon, 0, Qt::AlignVCenter);
+        root->addLayout(text_column, 1);
+
+        for (QLabel* label : {map_icon, map_name, map_position})
+        {
+            label->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        }
     }
 
     QSize MapListBookmarkItem::minimumSizeHint() const
     {
-        return QSize(300, 32);
+        int const from_layout (QWidget::minimumSizeHint().height());
+
+        return QSize (ROW_HINT_WIDTH, std::max (ROW_MIN_HEIGHT, from_layout));
     }
 
     QString MapListBookmarkItem::toCamelCase(const QString& s)

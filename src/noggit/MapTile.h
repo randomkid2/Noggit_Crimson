@@ -165,7 +165,8 @@ public:
   Noggit::Rendering::TileRender* renderer();;
   Noggit::Rendering::FlightBoundsRender* flightBoundsRenderer();;
 
-  const texture_heightmapping_data& GetTextureHeightMappingData(const std::string& name) const;
+  // By value: the underlying lookup returns a prvalue, so a reference return dangled. See MapTile.cpp.
+  texture_heightmapping_data GetTextureHeightMappingData(const std::string& name) const;
 
   void forceAlphaUpdate();
   bool childrenFinishedLoading();

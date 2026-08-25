@@ -22,7 +22,24 @@ ExpanderWidget::ExpanderWidget(QWidget *parent, bool in_designer)
 	//m_button->setCheckable(true);
 	//m_button->setChecked(true);
     m_button->setIcon(m_expandedIcon);
-    m_button->setStyleSheet("text-align: left; font-weight: bold; border: none;");
+    // This is the highest-traffic inline style sheet in the editor -- seven tool panels build
+    // their collapsible section headers through here, so at any moment several of these are on
+    // screen inside the right-hand dock. It used to read
+    //     "text-align: left; font-weight: bold; border: none;"
+    // and a style sheet set on the widget itself outranks the application sheet for every
+    // property it names. Two of those three fought the theme and lost it real work:
+    //
+    //   border: none      erased the 1px top hairline the theme draws between sections, which
+    //                     is the only thing separating one collapsed section from the next, and
+    //                     erased the 2px transparent left border the theme reserves so a future
+    //                     accent bar cannot shift the caption sideways when it appears.
+    //   font-weight: bold is 700 against the theme's 600, so the header could not be tuned.
+    //
+    // text-align has no widget-level equivalent on QPushButton -- there is no setAlignment and
+    // no style option a caller can reach -- and a theme that says nothing about this button
+    // would centre the caption, which is wrong for a section header in any theme. So that one
+    // property stays here as the floor, and everything else is handed back to the sheet.
+    m_button->setStyleSheet("text-align: left;");
     connect(m_button, SIGNAL(clicked()), this, SLOT(buttonPressed()));
 
     m_stackWidget = new QStackedWidget();

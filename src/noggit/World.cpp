@@ -3962,8 +3962,6 @@ void World::select_objects_in_area(
         int num_valid_points = 0;
         std::array<glm::vec2, 2> obj_screnbounds = misc::getBoundingBoxScreenBounds(local_extents, VPmatrix
           , viewport_width, viewport_height, num_valid_points, instance->transformMatrix(), bounds_check_scale);
-          
-        LogError << "point A reached (" << std::endl;
 
         if (num_valid_points < 3)
           continue;
@@ -3977,8 +3975,6 @@ void World::select_objects_in_area(
         //   continue;
         // }
 
-        LogError << "point B reached (" << std::endl;
-
         // 1 : get the intersection rectangle of screen space and bounding box
         glm::vec2 intersectionMin = glm::max(obj_screnbounds[0], selection_box[0]);
         glm::vec2 intersectionMax = glm::min(obj_screnbounds[1], selection_box[1]);
@@ -3987,8 +3983,6 @@ void World::select_objects_in_area(
         if (!(intersectionMin.x < intersectionMax.x) || !(intersectionMin.y < intersectionMax.y))
           continue;
 
-        LogError << "point C reached (" << std::endl;
-        
         // 2 : get center
         glm::vec2 intersectionCenter = (intersectionMin + intersectionMax) * 0.5f;
         // 3 : convert 2D screenspace point back to 3d

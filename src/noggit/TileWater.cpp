@@ -188,7 +188,10 @@ void TileWater::setWatermapImage(QImage const& baseimage, float min_height, floa
 {
     auto image = baseimage.convertToFormat(QImage::Format_RGBA64);
 
-    auto color_table = image.colorTable().toStdVector();
+    // The colorTable() copy that used to sit here was never read. It was also always empty --
+    // Qt only carries a colour table for the indexed formats, and the image has just been
+    // converted to Format_RGBA64 -- so it allocated a vector, copied nothing into it, and threw
+    // it away. Its toStdVector() is deprecated in Qt 5.15 as well (C4996).
 
     float height_range = max_height - min_height;
 

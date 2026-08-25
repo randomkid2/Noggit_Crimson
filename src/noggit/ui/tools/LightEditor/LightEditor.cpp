@@ -375,7 +375,10 @@ LightEditor::LightEditor(MapView* map_view, QWidget* parent)
 
 	// BELOW IS PARAM SPECIFIC SETTINGS
 	auto warning_label = new QLabel("Warning : Can't currently change param id,\n changes will affect all users of this param");
-	warning_label->setStyleSheet("QLabel { color : orange; }");
+	// "orange" is a Qt colour name, unrelated to any theme's warning colour. QLabel[state="warn"]
+	// is the mechanism the sheet already ships for exactly this. Set before the first polish, so
+	// no unpolish/polish pair is needed.
+	warning_label->setProperty("state", "warn");
 	light_editing_layout->addWidget(warning_label);
 
 	light_editing_layout->addWidget(new QLabel("Param Type :", this));

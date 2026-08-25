@@ -45,9 +45,19 @@ namespace Noggit
       // dev QOL, selecting another tab when editing the UI file makes it the default
       ui->tabWidget->setCurrentWidget(ui->tab_appearance);
 
+      // Only take the custom title bar when one was actually built. setupFramelessWindow returns
+      // nullptr when the user is on the system frame, and installing the empty holder as the
+      // menu widget in that case hands the window a second, blank strip above its content.
       auto titlebar = new QWidget(this);
-      setupFramelessWindow(titlebar, this, minimumSize(), maximumSize(), false);
-      setMenuWidget(titlebar);
+
+      if (setupFramelessWindow(titlebar, this, minimumSize(), maximumSize(), false))
+      {
+        setMenuWidget(titlebar);
+      }
+      else
+      {
+        titlebar->deleteLater();
+      }
 
       setWindowFlags(windowFlags() | Qt::Tool | Qt::WindowStaysOnTopHint);
 

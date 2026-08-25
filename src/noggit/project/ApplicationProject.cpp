@@ -241,7 +241,13 @@ namespace Noggit::Project
       if (projectVersion == "Shadowlands")
         return ProjectVersion::SL;
 
-      assert(false);
+      // Fell off the end before (MSVC C4715). assert() is compiled out by NDEBUG in RelWithDebInfo,
+      // so an unrecognised string returned an indeterminate enum that then drove version branching.
+      // Default to WOTLK, matching ApplicationProjectReader.cpp:88, which already falls back that
+      // way when it reads an unknown ClientVersion out of a project file.
+      LogError << "Unrecognised client version \"" << projectVersion
+               << "\", defaulting to Wrath Of The Lich King" << std::endl;
+      return ProjectVersion::WOTLK;
     }
 
     std::string ClientVersionFactory::MapToStringVersion(ProjectVersion const& projectVersion)
@@ -251,7 +257,11 @@ namespace Noggit::Project
       if (projectVersion == ProjectVersion::SL)
         return std::string("Shadowlands");
 
-      assert(false);
+      // Fell off the end before (MSVC C4715). With NDEBUG on, the caller destroyed an indeterminate
+      // std::string -- heap corruption, not merely a wrong label. Mirrors mapToEnumVersion's default.
+      LogError << "Unrecognised project version enum " << static_cast<int>(projectVersion)
+               << ", defaulting to Wrath Of The Lich King" << std::endl;
+      return std::string("Wrath Of The Lich King");
     }
 
     NoggitProject::NoggitProject()

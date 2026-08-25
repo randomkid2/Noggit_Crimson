@@ -113,8 +113,8 @@ WMOInstance& WMOInstance::operator= (WMOInstance&& other) noexcept
 }
 
 void WMOInstance::draw ( OpenGL::Scoped::use_program& wmo_shader
-                       , const glm::mat4x4 const& model_view
-                       , const glm::mat4x4 const& projection
+                       , glm::mat4x4 const& model_view
+                       , glm::mat4x4 const& projection
                        , math::frustum const& frustum
                        , const float& cull_distance
                        , const glm::vec3& camera
@@ -226,9 +226,11 @@ std::array<glm::vec3, 2> const& WMOInstance::getExtents()
   return extents;
 }
 
-std::array<glm::vec3, 2> const& WMOInstance::getLocalExtents() const
+// Returns by value on purpose. The braced-init-list materialises a temporary std::array, so a
+// reference return handed the caller a reference to storage destroyed at the end of this return
+// statement (MSVC C4172). Its one caller (World.cpp:3954) copies into a by-value local anyway.
+std::array<glm::vec3, 2> WMOInstance::getLocalExtents() const
 {
-
   return { wmo->extents[0], wmo->extents[1] };
 }
 

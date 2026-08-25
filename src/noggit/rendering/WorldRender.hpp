@@ -120,7 +120,15 @@ namespace Noggit::Rendering
     float _view_distance;
     float cullDistance() const;
 
-    unsigned int _frame_max_chunk_updates = 256;
+    // Per-frame budget for chunk alphamap uploads, spent at whole-tile granularity: the budget is
+    // tested before a tile draws, so a tile that starts within budget always finishes its burst.
+    // A tile is 256 chunks, so the old value of 256 let a second full tile through before the
+    // counter exceeded it -- up to 512 chunk uploads in one paintGL while terrain streams in.
+    // Any value below 256 caps that at one tile's worth. 32 leaves headroom for several
+    // lightly-updated tiles (an edited tile normally dirties a handful of chunks) while still
+    // capping the streaming burst. Deferral is lossless: TileRender::draw skips the whole update
+    // block without clearing the chunk or tile update flags, so the tile re-enters next frame.
+    unsigned int _frame_max_chunk_updates = 32;
 
     bool directional_lightning;
     bool local_lightning;

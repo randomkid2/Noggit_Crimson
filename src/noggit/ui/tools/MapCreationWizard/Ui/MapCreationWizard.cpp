@@ -32,6 +32,7 @@
 #include <QScrollArea>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStyle>
 #include <QWheelEvent>
 
 #include <filesystem>
@@ -414,7 +415,41 @@ void MapCreationWizard::createWmoEntryTab()
 
     _wmoEntryTab.wmoPath = new QLineEdit(_map_settings);
     _wmoEntryTab.wmoPath->setDisabled(true);
-    auto defaultStylesheet = _wmoEntryTab.wmoPath->styleSheet();
+
+    // Invalid-path feedback has to reach the user under EVERY theme, including "System", where
+    // no application stylesheet is loaded at all and an attribute selector such as
+    // QLineEdit[state="error"] therefore matches nothing and paints nothing. A theme rule alone
+    // cannot carry this, so the state is signalled three ways:
+    //
+    //   * the "state" dynamic property, which a theme may style as richly as it likes
+    //     (CrimsonSlate turns it into an outline). Being a dynamic property it needs the
+    //     unpolish/polish pair -- Qt only re-evaluates attribute selectors when it is told the
+    //     widget's properties moved;
+    //   * a widget-level stylesheet carrying the same outline. This is the theme-independent
+    //     fallback: a stylesheet set on the widget itself outranks the application stylesheet,
+    //     so it decides the border whether the active theme has a rule for the property or not,
+    //     and whether there is an application stylesheet at all;
+    //   * a tooltip, so the reason does not depend on the user distinguishing a colour.
+    //
+    // An outline rather than the solid red fill this used to be: the fill swallowed the path the
+    // user was trying to read at the exact moment they needed to read it. The colour matches
+    // CrimsonSlate's QLineEdit[state="error"] so the themed and unthemed cases agree.
+    static char const* const ERROR_OUTLINE_QSS ("QLineEdit { border: 1px solid #E0574B; }");
+
+    auto const set_path_state = [](QLineEdit* field, QVariant const& state)
+    {
+      bool const is_error (state.toString() == QStringLiteral("error"));
+
+      field->setProperty("state", state);
+      field->setStyleSheet (is_error ? QString::fromLatin1 (ERROR_OUTLINE_QSS) : QString());
+      field->setToolTip ( is_error
+                        ? QStringLiteral ("This WMO could not be loaded. Check the path.")
+                        : QString()
+                        );
+      field->style()->unpolish(field);
+      field->style()->polish(field);
+    };
+
     connect(_wmoEntryTab.wmoPath, &QLineEdit::textChanged, [=](QString text) {
         if (!_wmoEntryTab.disableTerrain->isChecked())
         {
@@ -426,12 +461,12 @@ void MapCreationWizard::createWmoEntryTab()
         wmo.wmo->wait_until_loaded();
         if (!wmo.finishedLoading() || wmo.wmo->loading_failed())
         {
-            _wmoEntryTab.wmoPath->setStyleSheet("QLineEdit { background-color : red; }");
+            set_path_state(_wmoEntryTab.wmoPath, QVariant("error"));
             return;
         }
 
         _wmoEntryTab.wmoEntry.extents = wmo.getExtents();
-        _wmoEntryTab.wmoPath->setStyleSheet(defaultStylesheet);
+        set_path_state(_wmoEntryTab.wmoPath, QVariant());
         populateDoodadSet(wmo);
         populateNameSet(wmo);
         });

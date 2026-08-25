@@ -361,7 +361,10 @@ std::array<glm::vec3, 2> const& ModelInstance::getExtents()
   return extents;
 }
 
-std::array<glm::vec3, 2> const& ModelInstance::getLocalExtents() const
+// Returns by value on purpose. The braced-init-list materialises a temporary std::array, so a
+// reference return handed the caller a reference to storage destroyed at the end of this return
+// statement (MSVC C4172). Its one caller (World.cpp:3959) copies into a by-value local anyway.
+std::array<glm::vec3, 2> ModelInstance::getLocalExtents() const
 {
   return { model->bounding_box_min , model->bounding_box_max };
 }

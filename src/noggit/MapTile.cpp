@@ -1849,7 +1849,10 @@ Noggit::Rendering::FlightBoundsRender* MapTile::flightBoundsRenderer()
   return &_fl_bounds_render;
 }
 
-const texture_heightmapping_data& MapTile::GetTextureHeightMappingData(const std::string& name) const
+// Returns by value on purpose. GetTextureHeightDataForADT() returns a prvalue, so binding it to a
+// reference here handed the caller a dangling reference to a temporary destroyed at the end of this
+// return statement (MSVC C4172). The struct is three scalars, so the copy is free.
+texture_heightmapping_data MapTile::GetTextureHeightMappingData(const std::string& name) const
 {
     return Noggit::Project::CurrentProject::get()->ExtraMapData.GetTextureHeightDataForADT(_world->mapIndex._map_id, index,name);
 }

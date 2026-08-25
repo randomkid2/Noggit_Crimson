@@ -1006,6 +1006,26 @@ namespace Noggit
       painter->drawText (rect, Qt::AlignCenter, label);
     }
 
+    // Every caller that asks a QIcon for a QPixmap rather than letting it paint itself arrives
+    // here: the IconActions on the two secondary view bars, the map and bookmark rows on the
+    // main menu, and the project-creation dialog.
+    //
+    // Build a bitmap of exactly `size` and leave its device pixel ratio alone. It is tempting
+    // to render at qApp->devicePixelRatio() and tag the result, so that scaled displays get a
+    // sharp icon instead of an upscaled one -- that was tried here and it is WRONG. Measured
+    // against Qt 5.15.2 with this application's exact attributes (AA_EnableHighDpiScaling set,
+    // qApp->devicePixelRatio() == 2), driving a QIconEngine through QIcon::pixmap(QSize):
+    //
+    //   * the engine is asked for the LOGICAL size. Requesting 22x22 from the QIcon calls this
+    //     function with 22x22 -- Qt does NOT pre-multiply by the ratio.
+    //   * whatever ratio the returned pixmap carries is DISCARDED. Returning a 22x22 bitmap
+    //     tagged devicePixelRatio 2 yields a pixmap reported back as 22x22 at ratio 1.
+    //
+    // So the returned bitmap is taken at face value, and rendering at 2x produced a 44x44
+    // ratio-1 pixmap -- every icon came out at exactly twice its intended size. QIcon::pixmap
+    // (QSize) has no path that can carry a high-DPI pixmap out of an engine; the ratio-aware
+    // overload is QIcon::pixmap(QWindow*, QSize), which only a call site has the window for.
+    // Sharpening these icons therefore belongs at the call sites, not in the engine.
     QPixmap FontAwesomeIconEngine::pixmap ( QSize const& size
                                              , QIcon::Mode mode
                                              , QIcon::State state

@@ -28,6 +28,7 @@
 #include <QtCore/QTimer>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QSpinBox>
+#include <QtWidgets/QStyle>
 #include <QtWidgets/QVBoxLayout>
 
 #include <cmath>
@@ -895,7 +896,14 @@ void DatabaseSpawnPanel::updateTileStatus()
   }
 
   _tile_status->setText(text);
-  _tile_status->setStyleSheet(over_limit ? QString("color: #d04040;") : QString());
+
+  // #d04040 was a red of its own, close enough to the palette's bad colour to look like a
+  // mistake and far enough off to be one. A dynamic property needs the unpolish/polish pair --
+  // Qt only re-evaluates attribute selectors when it is told the widget's properties moved --
+  // and this runs on a selection change rather than per frame, so the cost is irrelevant.
+  _tile_status->setProperty("state", over_limit ? QVariant("error") : QVariant());
+  _tile_status->style()->unpolish(_tile_status);
+  _tile_status->style()->polish(_tile_status);
 
   _load_selected->setEnabled(picked > 0 && !over_limit);
 }
