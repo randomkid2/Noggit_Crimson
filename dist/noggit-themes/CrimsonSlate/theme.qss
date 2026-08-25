@@ -1,7 +1,7 @@
 /* ===========================================================================
- * Crimson Slate -- a dark theme for Noggit Red
+ * Crimson Slate -- a dark theme for Noggit Crimson
  * ---------------------------------------------------------------------------
- * Part of Noggit Red, licensed under the GNU General Public License v3.
+ * Part of Noggit Crimson, licensed under the GNU General Public License v3.
  *
  * Drop-in theme: the settings panel lists any directory under themes/ that
  * contains a theme.qss. Every url() below is written as
@@ -474,21 +474,37 @@ QToolBar::handle:vertical {
    in-game time, FPS and the loaded/rendered counts. It is chrome reporting on
    content, so it takes the recessed surface and a hairline lid.
 
-   The numbers are NOT differentiated from their captions today, and this sheet
-   cannot do it alone: the QLabel[state="value"] rule further down is the
-   mechanism, and nothing in src/ calls setProperty("state", ...) on anything,
-   so it has never fired. Whoever wires it up sets the property once at
-   construction (before the first polish, so no unpolish/polish dance is
-   needed) on the readouts that are actually glanced -- FPS, position, the
-   loaded/rendered counts. Until then this bar is uniform text.dim by
-   construction, not by choice. */
+   It carries SEVEN separate readouts, every one of them a bare QLabel with no
+   object name and no dynamic property -- MapView builds _status_position,
+   _status_selection, _status_area, _status_time, _status_fps, _status_culling
+   and _status_database and hands each straight to addWidget. There is nothing
+   in the widget tree for a selector to grab hold of, so this sheet cannot make
+   one readout out-rank another. What it CAN do is stop them running together:
+
+     * a hairline before each field, which turns one long sentence into seven
+       addressable slots. QSS has no :first-child, so the leftmost field also
+       gets a leading rule; it lands against the window edge where it reads as
+       part of the frame.
+     * the readouts at text (11.0:1 on bg.sunken) rather than text.dim (5.72:1),
+       because they are the content of the bar, not its caption. The transient
+       showMessage() text QStatusBar paints itself stays at text.dim, so a
+       five-second "Map saved" no longer looks louder than the position.
+
+   The per-field emphasis still needs one line of C++ each: the
+   QLabel[state="value"] rule further down is the mechanism and nothing in src/
+   calls setProperty("state", ...), so it has never fired. That rule carries an
+   attribute selector and therefore outranks the plain descendant rule below --
+   wire it up on FPS, position and the loaded/rendered counts and they lift to
+   text.hi semibold without anything here changing. Set it once at
+   construction, before the first polish, and no unpolish/polish is needed. */
 QStatusBar {
 	background-color: #16181D;
 	color: #8A93A0;
 	border: none;
 	border-top: 1px solid #262B33;
 	font-size: 11px;
-	min-height: 22px;
+	min-height: 24px;
+	padding: 0px 2px;
 }
 
 QStatusBar::item {
@@ -496,9 +512,14 @@ QStatusBar::item {
 }
 
 QStatusBar QLabel {
-	color: #8A93A0;
+	color: #C6CCD6;
+	border-left: 1px solid #262B33;
 	font-size: 11px;
-	padding: 0px 9px;
+	padding: 1px 10px;
+}
+
+QStatusBar QLabel:disabled {
+	color: #59606B;
 }
 
 QSizeGrip {
@@ -2124,15 +2145,83 @@ QWidget[accessibleName="main_menu_minimap_holder"] {
 	border-radius: 4px;
 }
 
+/* The two headings on the project selection window -- "Recent Projects" and
+   "Getting Started". They used to carry an INLINE style sheet set from
+   NoggitProjectSelectionWindow.cpp, which outranks the application sheet, so
+   whichever theme was loaded they stayed 18px of default-coloured text. The
+   inline sheet is gone; this is the rule that dresses them now. */
+QLabel#project-section-title {
+	color: #EDF0F4;
+	background: transparent;
+	font-size: 16px;
+	font-weight: 600;
+	padding: 0px 0px 6px 0px;
+}
+
+/* The recent-projects list. Every row is a ProjectListItem widget laid over
+   the item, so the ROW draws the hover and the ITEM draws the selection: the
+   widget's background is transparent (see below), which is what lets the
+   view's own selection wash show through from underneath it.
+
+   Rows are given no item padding of their own -- the widget carries its
+   margins -- and a 2px left rule on selection, the same "this is the thing you
+   are acting on" mark the dock title and the tool strip use. */
+QListWidget[accessibleName="project_list"] {
+	background-color: #1B1E24;
+	border: 1px solid #262B33;
+	border-radius: 6px;
+	padding: 4px;
+}
+
+QListWidget[accessibleName="project_list"]::item {
+	background: transparent;
+	border: none;
+	border-left: 2px solid transparent;
+	border-radius: 4px;
+	padding: 0px;
+	margin: 2px 2px;
+}
+
+QListWidget[accessibleName="project_list"]::item:selected:active {
+	background-color: rgba(232, 84, 63, 0.26);
+	border-left: 2px solid #E8543F;
+}
+
+QListWidget[accessibleName="project_list"]::item:selected:!active {
+	background-color: #2A2F38;
+	border-left: 2px solid #59606B;
+}
+
+/* The row widget itself. It is a plain QWidget, so it only paints a style
+   sheet background because the constructor sets WA_StyledBackground; without
+   that attribute both of these rules would be silently inert.
+
+   Hover is a TRANSLUCENT lift rather than an opaque plate, deliberately: an
+   opaque fill here would cover the selection wash the view painted underneath,
+   and hovering the selected row would make it look deselected. */
+QWidget#project-list-item {
+	background: transparent;
+	border: none;
+	border-radius: 4px;
+}
+
+QWidget#project-list-item:hover {
+	background-color: rgba(198, 204, 214, 0.06);
+}
+
 QLabel#project-title-label {
 	color: #EDF0F4;
-	font-size: 13px;
+	background: transparent;
+	font-size: 14px;
 	font-weight: 600;
+	padding: 0px;
 }
 
 QLabel#project-information {
 	color: #8A93A0;
+	background: transparent;
 	font-size: 11px;
+	padding: 0px;
 }
 
 QLabel#project-icon-label {

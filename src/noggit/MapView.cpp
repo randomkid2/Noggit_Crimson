@@ -4236,7 +4236,7 @@ MapView::MapView( math::degrees camera_yaw0
   , _tablet_manager(Noggit::TabletManager::instance()),
     _project(Project)
 {
-  setWindowTitle ("Noggit Studio Red - " STRPRODUCTVER);
+  setWindowTitle ("Noggit Crimson - " STRPRODUCTVER);
   setFocusPolicy (Qt::StrongFocus);
   setMouseTracking (true);
 

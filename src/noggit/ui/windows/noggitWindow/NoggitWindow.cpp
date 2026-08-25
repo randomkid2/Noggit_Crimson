@@ -72,7 +72,7 @@ namespace Noggit::Ui::Windows
   {
 
     std::stringstream title;
-    title << "Noggit - " << STRPRODUCTVER;
+    title << "Noggit Crimson - " << STRPRODUCTVER;
     setWindowTitle(QString::fromStdString(title.str()));
     setWindowIcon(QIcon(":/icon"));
 

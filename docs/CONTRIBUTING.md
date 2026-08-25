@@ -1,7 +1,7 @@
 # Contributing
 
-Thanks for looking. This is a GPL-3.0 fork of
-[Marlamin/noggit-red](https://github.com/Marlamin/noggit-red); read
+Thanks for looking. This is **Noggit Crimson**, a GPL-3.0 fork of
+[Marlamin/noggit-red](https://github.com/Marlamin/noggit-red) — "Noggit Red"; read
 [`ATTRIBUTION.md`](../ATTRIBUTION.md) before your first patch, because several of the rules below
 are licence obligations rather than preferences.
 

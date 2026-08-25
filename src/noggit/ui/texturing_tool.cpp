@@ -73,14 +73,47 @@ namespace Noggit
       tool_widget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
       auto tool_layout (new QVBoxLayout (tool_widget));
       tool_layout->setAlignment(Qt::AlignTop);
+      // The same gutter figures the terrain tool now states explicitly, so the two tools that
+      // share the dock stop being inset by different amounts depending on which style default
+      // happened to apply. 8px between sections is the panel's one section gap.
+      tool_layout->setContentsMargins(9, 4, 9, 9);
+      tool_layout->setSpacing(8);
 
       auto slider_layout (new QGridLayout);
+      slider_layout->setContentsMargins(0, 0, 0, 0);
+      slider_layout->setHorizontalSpacing(12);
       tool_layout->addItem(slider_layout);
-      auto slider_layout_left (new QVBoxLayout(tool_widget));
+
+      // These two used to be constructed as new QVBoxLayout(tool_widget) -- i.e. handed a parent
+      // widget that already owns tool_layout -- and then immediately re-parented by addLayout.
+      // Qt accepts it but warns "Attempting to add QLayout to QWidget which already has a
+      // layout" twice into log.txt on every texturing tool built. They are parentless now and
+      // addLayout does the owning, which is what the code already meant.
+      //
+      // Spacing 2 is the caption-to-control gap. The gap BETWEEN settings is added explicitly
+      // with addSpacing below, because a QVBoxLayout has one spacing value and these columns
+      // need two: tight under a caption so the pair reads as one thing, loose between pairs so
+      // the three settings do not run together. That was the real defect in this column --
+      // caption and slider sat exactly as far apart as two unrelated settings did.
+      auto slider_layout_left (new QVBoxLayout);
+      slider_layout_left->setContentsMargins(0, 0, 0, 0);
+      slider_layout_left->setSpacing(2);
       slider_layout->addLayout(slider_layout_left, 0, 0);
-      auto slider_layout_right(new QVBoxLayout(tool_widget));
+      auto slider_layout_right(new QVBoxLayout);
+      slider_layout_right->setContentsMargins(0, 0, 0, 0);
+      slider_layout_right->setSpacing(2);
       slider_layout->addLayout(slider_layout_right, 0, 1);
 
+      // These three keep their caption above rather than moving the text into the slider's own
+      // prefix row the way the terrain tool does, and that is deliberate rather than an
+      // oversight. Measured with the real theme at the dock's content width: folding the
+      // captions in saves 74px of height but takes the tab's minimum width from 229px to 262px,
+      // because this column shares its row with the vertical opacity slider and the label then
+      // has to fit BESIDE the value instead of above it. The dock's minimum is 265px including
+      // its scroll bar, so 262px is over budget and every Paint tab would gain a horizontal
+      // scroll bar. Height is worth having; a sideways scroll bar on the most used tool is not.
+      //
+      // Each caption now sits 2px above its own slider and 10px below the previous setting.
       slider_layout_left->addWidget(new QLabel("Hardness:", tool_widget));
       _hardness_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider(tool_widget);
       _hardness_slider->setPrefix("");
@@ -90,6 +123,7 @@ namespace Noggit
       _hardness_slider->setValue(0.5f);
       slider_layout_left->addWidget(_hardness_slider);
 
+      slider_layout_left->addSpacing(10);
       slider_layout_left->addWidget(new QLabel("Radius:", tool_widget));
       _radius_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider(tool_widget);
       _radius_slider->setPrefix("");
@@ -98,6 +132,7 @@ namespace Noggit
       _radius_slider->setValue(_texture_brush.getRadius());
       slider_layout_left->addWidget (_radius_slider);
 
+      slider_layout_left->addSpacing(10);
       slider_layout_left->addWidget(new QLabel("Pressure:", tool_widget));
       _pressure_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider(tool_widget);
       _pressure_slider->setPrefix("");
@@ -141,6 +176,7 @@ namespace Noggit
       _brush_level_spin->setRange(0, 255);
       _brush_level_spin->setValue(_brush_level);
       _brush_level_spin->setSingleStep(5);
+      slider_layout_right->addSpacing(4);
       slider_layout_right->addWidget(_brush_level_spin);
 
       QSettings settings;

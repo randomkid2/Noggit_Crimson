@@ -15,12 +15,14 @@
 #include <QtWidgets/QDial>
 #include <QtWidgets/QGridLayout>
 #include <QtWidgets/QGroupBox>
-#include <QtWidgets/QRadioButton>
+#include <QtWidgets/QPushButton>
 #include <QtWidgets/QSlider>
 #include <QtWidgets/QVBoxLayout>
 
 #define _USE_MATH_DEFINES
 #include <math.h>
+
+#include <vector>
 
 namespace Noggit
 {
@@ -39,21 +41,67 @@ namespace Noggit
       // setMaximumWidth(250);
       auto layout (new QVBoxLayout (this));
       layout->setAlignment(Qt::AlignTop);
+      // One gutter for the whole tool, stated rather than inherited from whatever the style's
+      // default happens to be, and the same figures the texturing tool now uses. The top inset
+      // is smaller than the sides because the first thing in the panel is a QGroupBox, and the
+      // theme already reserves 20px above every group box frame for its title.
+      layout->setContentsMargins(9, 4, 9, 9);
+      layout->setSpacing(6);
 
+      // The brush type picker. It used to be nine QRadioButtons in a 2-column grid -- five rows
+      // of indicator-plus-word, ~134px of the panel, and the widest single block in the dock.
+      //
+      // It is now a 3x3 segmented control of CHECKABLE QPushButtons in the same exclusive
+      // QButtonGroup. Nothing about the group changed: the same nine ids (the eTerrainType
+      // values), the same idClicked signal, the same exclusivity, and nextType() still reaches
+      // them through _type_button_group->button(id)->toggle(), which is QAbstractButton API and
+      // indifferent to the concrete class. An exclusive QButtonGroup refuses to uncheck its
+      // checked member on a second click for push buttons exactly as it does for radios, so the
+      // click behaviour is identical too.
+      //
+      // Why push buttons and not restyled radios: the theme's own token notes say accent AS A
+      // FILL means "one checked thing out of a set", and QPushButton:checked is the rule that
+      // already implements that mark. Reusing it means this control needs no colour of its own
+      // and follows the palette wherever it goes; hiding a radio indicator would instead have
+      // meant hand-rolling a checked colour here and letting it drift from the sheet. It also
+      // gets centred text for free -- QSS text-align applies to QPushButton and not to
+      // QRadioButton, so restyled radios would have had their labels jammed against the left
+      // edge of each chip.
+      //
+      // Why words and not falloff icons: two of the nine are not falloff curves at all. Vertex
+      // is a selection mode and Script hands the brush to the scripting tool, and neither has a
+      // curve to draw. A row of nine glyphs would have had to invent two of them.
+      //
+      // The only user-visible difference is keyboard traversal: a radio group is one tab stop
+      // with arrow keys inside it, nine push buttons are nine tab stops. Every button is still
+      // reachable and still activates with Space, and the tool's own shortcut (nextType) is
+      // untouched.
       _type_button_group = new QButtonGroup (this);
-      QRadioButton* radio_flat = new QRadioButton ("Flat", this);
-      QRadioButton* radio_linear = new QRadioButton ("Linear", this);
-      QRadioButton* radio_smooth = new QRadioButton ("Smooth", this);
-      QRadioButton* radio_polynomial = new QRadioButton ("Polynomial", this);
-      QRadioButton* radio_trigo = new QRadioButton ("Trigonom", this);
-      QRadioButton* radio_quadra = new QRadioButton ("Quadratic", this);
-      QRadioButton* radio_gauss = new QRadioButton ("Gaussian", this);
 
-      QRadioButton* radio_vertex;
+      auto make_type_button
+        ( [this] (char const* text) -> QPushButton*
+          {
+            auto* button (new QPushButton (text, this));
+            button->setCheckable (true);
+            button->setAutoDefault (false);
+            button->setSizePolicy (QSizePolicy::Preferred, QSizePolicy::Fixed);
+            return button;
+          }
+        );
+
+      QPushButton* radio_flat = make_type_button ("Flat");
+      QPushButton* radio_linear = make_type_button ("Linear");
+      QPushButton* radio_smooth = make_type_button ("Smooth");
+      QPushButton* radio_polynomial = make_type_button ("Polynomial");
+      QPushButton* radio_trigo = make_type_button ("Trigonom");
+      QPushButton* radio_quadra = make_type_button ("Quadratic");
+      QPushButton* radio_gauss = make_type_button ("Gaussian");
+
+      QPushButton* radio_vertex = nullptr;
       if (!stamp)
-        radio_vertex = new QRadioButton ("Vertex", this);
+        radio_vertex = make_type_button ("Vertex");
 
-      QRadioButton* radio_script = new QRadioButton ("Script", this);
+      QPushButton* radio_script = make_type_button ("Script");
 
       _type_button_group->addButton (radio_flat, (int)eTerrainType_Flat);
       _type_button_group->addButton (radio_linear, (int)eTerrainType_Linear);
@@ -71,23 +119,52 @@ namespace Noggit
       radio_linear->toggle();
 
       QGroupBox* terrain_type_group (new QGroupBox ("Type", this));
-      QGridLayout* terrain_type_layout (new QGridLayout (terrain_type_group));
-      terrain_type_layout->addWidget (radio_flat, 0, 0);
-      terrain_type_layout->addWidget (radio_linear, 0, 1);
-      terrain_type_layout->addWidget (radio_smooth, 1, 0);
-      terrain_type_layout->addWidget (radio_polynomial, 1, 1);
-      terrain_type_layout->addWidget (radio_trigo, 2, 0);
-      terrain_type_layout->addWidget (radio_quadra, 2, 1);
-      terrain_type_layout->addWidget (radio_gauss, 3, 0);
+      terrain_type_group->setObjectName ("terrainTypeSegments");
+      // The sheet's QPushButton padding is 4px 10px, sized for a standalone button with room
+      // around it. Nine of them three-abreast in a 250px dock is a different problem: at 10px
+      // side padding "Polynomial" alone asks for ~82px and the row overflows to ~254px, which
+      // is wider than the panel and would put a horizontal scroll bar under every terrain tool.
+      // 5px brings the widest chip to ~70px and the row to ~218px, inside the ~232px the dock
+      // has after its own gutters. Padding and font size only -- every colour, border, radius
+      // and state in this control still comes from the application sheet, so a palette change
+      // upstream still reaches it.
+      terrain_type_group->setStyleSheet
+        ( "QGroupBox#terrainTypeSegments QPushButton {"
+          "  padding: 4px 5px;"
+          "  font-size: 11px;"
+          "  min-width: 0px;"
+          "}"
+        );
 
-      if (!stamp)
+      QGridLayout* terrain_type_layout (new QGridLayout (terrain_type_group));
+      terrain_type_layout->setContentsMargins (0, 0, 0, 0);
+      terrain_type_layout->setHorizontalSpacing (4);
+      terrain_type_layout->setVerticalSpacing (4);
+
+      // Filled left to right, three per row, so the grid stays rectangular whether or not the
+      // stamp build drops the Vertex entry (9 buttons -> 3/3/3, 8 -> 3/3/2).
       {
-        terrain_type_layout->addWidget (radio_vertex, 3, 1);
-        terrain_type_layout->addWidget (radio_script, 4, 0);
-      }
-      else
-      {
-        terrain_type_layout->addWidget (radio_script, 3, 1);
+        std::vector<QPushButton*> type_buttons
+          {radio_flat, radio_linear, radio_smooth, radio_polynomial, radio_trigo, radio_quadra,
+           radio_gauss};
+
+        if (!stamp)
+          type_buttons.push_back (radio_vertex);
+
+        type_buttons.push_back (radio_script);
+
+        int const columns (3);
+
+        for (std::size_t i (0); i < type_buttons.size(); ++i)
+        {
+          terrain_type_layout->addWidget
+            (type_buttons[i], static_cast<int> (i) / columns, static_cast<int> (i) % columns);
+        }
+
+        for (int c (0); c < columns; ++c)
+        {
+          terrain_type_layout->setColumnStretch (c, 1);
+        }
       }
 
       layout->addWidget(terrain_type_group);
@@ -113,6 +190,12 @@ namespace Noggit
       // panel on nothing. Zero it and let the sheet own the gutter; that keeps every tool's
       // group boxes consistent with each other instead of only this one being roomier.
       settings_layout->setContentsMargins(0, 0, 0, 0);
+      // Each ExtendedSlider is now a tight two-line block (value row, then a 16px track), so the
+      // gap BETWEEN blocks is what tells the eye where one setting ends and the next begins.
+      // The style default of 6px was less than the 2px+track inside a row plus the row's own
+      // ascender, which is why three stacked sliders read as one undifferentiated column of
+      // controls. 8px is larger than any gap inside a row and smaller than the group rule above.
+      settings_layout->setSpacing(8);
 
       _speed_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider(this);
       _speed_slider->setPrefix("Speed:");
@@ -148,10 +231,23 @@ namespace Noggit
       _vertex_type_group = new QGroupBox ("Vertex edit", this);
       _vertex_type_group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
       QVBoxLayout* vertex_layout (new QVBoxLayout (_vertex_type_group));
+      vertex_layout->setContentsMargins (0, 0, 0, 0);
+      vertex_layout->setSpacing (6);
 
+      // Same treatment as the type grid above, for the same reason: this is a two-way exclusive
+      // choice, and having it drawn as a pair of radio dots directly under a segmented control
+      // that means the same thing is the sort of inconsistency the panel was being criticised
+      // for. Ids, group, exclusivity and idClicked are unchanged.
       _vertex_button_group = new QButtonGroup (this);
-      QRadioButton* radio_mouse = new QRadioButton ("Cursor", _vertex_type_group);
-      QRadioButton* radio_center = new QRadioButton ("Selection center", _vertex_type_group);
+      QPushButton* radio_mouse = new QPushButton ("Cursor", _vertex_type_group);
+      QPushButton* radio_center = new QPushButton ("Selection center", _vertex_type_group);
+
+      for (auto* button : {radio_mouse, radio_center})
+      {
+        button->setCheckable (true);
+        button->setAutoDefault (false);
+        button->setSizePolicy (QSizePolicy::Preferred, QSizePolicy::Fixed);
+      }
 
       radio_mouse->setToolTip ("Orient vertices using the cursor pos as reference");
       radio_center->setToolTip ("Orient vertices using the selection center as reference");
@@ -162,6 +258,8 @@ namespace Noggit
       radio_center->toggle();
 
       QHBoxLayout* vertex_type_layout (new QHBoxLayout);
+      vertex_type_layout->setContentsMargins (0, 0, 0, 0);
+      vertex_type_layout->setSpacing (4);
       vertex_type_layout->addWidget (radio_mouse);
       vertex_type_layout->addWidget (radio_center);
       vertex_layout->addItem (vertex_type_layout);

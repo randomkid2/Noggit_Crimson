@@ -1,62 +1,110 @@
+// This file is part of Noggit3, licensed under GNU General Public License (version 3).
+
 #include <noggit/ui/FontAwesome.hpp>
 #include <noggit/ui/windows/projectSelection/widgets/ProjectListItem.hpp>
 
-#include <qgraphicseffect.h>
-#include <QGridLayout>
+#include <QColor>
+#include <QFont>
+#include <QGraphicsColorizeEffect>
+#include <QHBoxLayout>
 #include <QLabel>
-#include <QFontMetrics>
-#include <QLayout>
+#include <QSizePolicy>
+#include <QVBoxLayout>
 
 #include <algorithm>
+#include <initializer_list>
 
 
 namespace Noggit::Ui::Widget
 {
   namespace
   {
-    // The y offsets the constructor below passes to setGeometry. Named here so the size hint and
-    // the placement cannot drift apart -- they were two independent magic numbers before, which is
-    // how the row came to be exactly one pixel-row too short.
-    constexpr int LABEL_TOP_VERSION = 35;
-    constexpr int LABEL_ROW_HEIGHT = 20;
+    // The row is an icon column beside a three-line text column. Everything below is a real
+    // layout constant, not a setGeometry offset: the previous revision built a STACK-allocated
+    // QGridLayout, handed it to setLayout and let it destruct on return, so the widget ended up
+    // with no layout at all and every label was placed by absolute geometry -- and parented to
+    // the LIST VIEW rather than to the row.
+    constexpr int ICON_EXTENT = 48;
 
-    // Breathing room under the last line. A list row also carries the stylesheet's own padding on
-    // top of this, so the hint must not be flush with the content.
-    constexpr int ROW_BOTTOM_PADDING = 10;
+    constexpr int ROW_MARGIN_LEFT = 12;
+    constexpr int ROW_MARGIN_TOP = 10;
+    constexpr int ROW_MARGIN_RIGHT = 14;
+    constexpr int ROW_MARGIN_BOTTOM = 10;
+
+    // Between the icon column and the text column, and between the three text lines.
+    constexpr int COLUMN_SPACING = 12;
+    constexpr int LINE_SPACING = 3;
+
+    // RecentProjectsComponent feeds minimumSizeHint() straight to QListWidgetItem::setSizeHint,
+    // so this is the list row height. The icon plus the vertical margins already comes to 68;
+    // stating it as a floor keeps the row comfortable even if a future font makes the text
+    // column shorter than the icon.
+    constexpr int ROW_MIN_HEIGHT = ICON_EXTENT + ROW_MARGIN_TOP + ROW_MARGIN_BOTTOM;
+
+    // Deliberately narrow, and unchanged from the previous revision. The list widget always
+    // resizes the row to the viewport width, so this number only decides whether the view
+    // thinks it needs a horizontal scroll bar. A project path can be arbitrarily long, so the
+    // hint must not be derived from it.
+    constexpr int ROW_HINT_WIDTH = 125;
+
+    // The three text ranks. These are DEFAULTS, set through QFont rather than through an inline
+    // style sheet: a style sheet on the widget itself outranks the application sheet, which is
+    // how the previous revision pinned every row to one size no matter which theme was loaded.
+    // A theme's font-size still wins over a font set this way, so CrimsonSlate dresses the row
+    // and a theme that says nothing about it still gets a readable hierarchy.
+    constexpr int TITLE_PIXEL_SIZE = 14;
+    constexpr int INFORMATION_PIXEL_SIZE = 11;
+
+    void applyFont (QLabel* label, int pixel_size, bool bold)
+    {
+      QFont font (label->font());
+      font.setPixelSize (pixel_size);
+      font.setBold (bold);
+      label->setFont (font);
+    }
+
+    // A label whose text may be long must not be allowed to set the row's minimum width, or a
+    // deep project path drags the whole list wider than its viewport. Ignored means "the layout
+    // gives you what is left over"; the text clips at the right exactly as it did before.
+    void makeElastic (QLabel* label)
+    {
+      label->setSizePolicy (QSizePolicy::Ignored, QSizePolicy::Fixed);
+      label->setMinimumWidth (0);
+    }
   }
 
-  ProjectListItem::ProjectListItem(const ProjectListItemData& data, QWidget* parent = nullptr) : QWidget(parent)
+  ProjectListItem::ProjectListItem(const ProjectListItemData& data, QWidget* parent) : QWidget(parent)
   {
-    auto layout = QGridLayout();
+    // The hover plate, and the transparent background that lets the view's own selection wash
+    // show through, are both in the theme. A plain QWidget only paints a style sheet background
+    // when it is told to.
+    setObjectName ("project-list-item");
+    setAttribute (Qt::WA_StyledBackground, true);
+
+    setContextMenuPolicy(Qt::CustomContextMenu);
 
     QIcon icon;
     if (data.project_version == Project::ProjectVersion::WOTLK)
       icon = QIcon(":/icon-wrath");
     if (data.project_version == Project::ProjectVersion::SL)
       icon = QIcon(":/icon-shadow");
-    _project_version_icon = new QLabel("", parent);
-    _project_version_icon->setPixmap(icon.pixmap(QSize(48, 48)));
-    _project_version_icon->setGeometry(0, 5, 64, 48);
 
-    auto max_width = parent->sizeHint().width();
+    _project_version_icon = new QLabel("", this);
+    _project_version_icon->setObjectName("project-icon-label");
+    _project_version_icon->setPixmap(icon.pixmap(QSize(ICON_EXTENT, ICON_EXTENT)));
+    _project_version_icon->setFixedSize(ICON_EXTENT, ICON_EXTENT);
 
     auto project_name = toCamelCase(QString(data.project_name));
-    _project_name_label = new QLabel(project_name, parent);
-    _project_name_label->setGeometry(45, 5, max_width, 20);
+    _project_name_label = new QLabel(project_name, this);
     _project_name_label->setObjectName("project-title-label");
-    _project_name_label->setStyleSheet("QLabel#project-title-label { font-size: 15px; }");
+    applyFont (_project_name_label, TITLE_PIXEL_SIZE, true);
+    makeElastic (_project_name_label);
 
-    _project_directory_label = new QLabel(data.project_directory, parent);
-    _project_directory_label->setGeometry(48, 20, max_width, 20);
+    _project_directory_label = new QLabel(data.project_directory, this);
     _project_directory_label->setObjectName("project-information");
-    _project_directory_label->setStyleSheet("QLabel#project-information { font-size: 10px; }");
     _project_directory_label->setToolTip(data.project_directory);
-
-    auto directory_effect = new QGraphicsOpacityEffect(this);
-    directory_effect->setOpacity(0.5);
-
-    _project_directory_label->setGraphicsEffect(directory_effect);
-    _project_directory_label->setAutoFillBackground(true);
+    applyFont (_project_directory_label, INFORMATION_PIXEL_SIZE, false);
+    makeElastic (_project_directory_label);
 
     QString version;
     if (data.project_version == Project::ProjectVersion::WOTLK)
@@ -64,82 +112,84 @@ namespace Noggit::Ui::Widget
     if (data.project_version == Project::ProjectVersion::SL)
       version = "Shadowlands";
 
-    _project_version_label = new QLabel(version, parent);
-    _project_version_label->setGeometry(48, 35, max_width, 20);
+    _project_version_label = new QLabel(version, this);
     _project_version_label->setObjectName("project-information");
-    _project_version_label->setStyleSheet("QLabel#project-information { font-size: 10px; }");
+    applyFont (_project_version_label, INFORMATION_PIXEL_SIZE, false);
+    makeElastic (_project_version_label);
 
-    auto version_effect = new QGraphicsOpacityEffect(this);
-    version_effect->setOpacity(0.5);
-
-    _project_version_label->setGraphicsEffect(version_effect);
-    _project_version_label->setAutoFillBackground(true);
-
-
-    _project_last_edited_label = new QLabel(data.project_last_edited, parent);
-    _project_last_edited_label->setGeometry(max_width, 35, 125, 20);
-    _project_last_edited_label->setAlignment(Qt::AlignRight | Qt::AlignTrailing | Qt::AlignVCenter);
+    _project_last_edited_label = new QLabel(data.project_last_edited, this);
     _project_last_edited_label->setObjectName("project-information");
-    _project_last_edited_label->setStyleSheet("QLabel#project-information { font-size: 10px; }");
+    applyFont (_project_last_edited_label, INFORMATION_PIXEL_SIZE, false);
+    _project_last_edited_label->setAlignment(Qt::AlignRight | Qt::AlignTrailing | Qt::AlignVCenter);
 
-    auto last_edited_effect = new QGraphicsOpacityEffect(this);
-    last_edited_effect->setOpacity(0.5);
+    // The whole row shows the project path and reacts to the pointer as one surface. The labels
+    // stay out of the way of the mouse so that the row -- which is what carries the custom
+    // context menu policy the recent-projects list connects to -- is always the widget under the
+    // cursor. Mouse events it does not handle still propagate to the list viewport, so the
+    // double-click that opens a project is untouched.
+    setToolTip(data.project_directory);
 
-    _project_last_edited_label->setGraphicsEffect(last_edited_effect);
-    _project_last_edited_label->setAutoFillBackground(true);
+    auto const text_column = new QVBoxLayout();
+    text_column->setContentsMargins(0, 0, 0, 0);
+    text_column->setSpacing(LINE_SPACING);
+
+    auto const title_row = new QHBoxLayout();
+    title_row->setContentsMargins(0, 0, 0, 0);
+    title_row->setSpacing(6);
+    title_row->addWidget(_project_name_label, 1);
 
     if (data.is_favorite)
     {
-        _project_favorite_icon = new QLabel("", this);
-        _project_favorite_icon->setPixmap(FontAwesomeIcon(FontAwesome::star).pixmap(QSize(16, 16)));
-        _project_favorite_icon->setGeometry(max_width-10, 10, 125, 20);
-        _project_favorite_icon->setAlignment(Qt::AlignRight | Qt::AlignTrailing | Qt::AlignVCenter);
-        _project_favorite_icon->setObjectName("project-favorite");
-        _project_favorite_icon->setStyleSheet("QLabel#project-information { font-size: 10px; }");
+      _project_favorite_icon = new QLabel("", this);
+      _project_favorite_icon->setObjectName("project-favorite");
+      _project_favorite_icon->setPixmap(FontAwesomeIcon(FontAwesome::star).pixmap(QSize(16, 16)));
+      _project_favorite_icon->setFixedSize(16, 16);
+      _project_favorite_icon->setToolTip("Favourite project -- loaded automatically on start");
 
-        auto colour = new QGraphicsColorizeEffect(this);
-        colour->setColor(QColor(255, 204, 0));
-        colour->setStrength(1.0f);
+      // Font Awesome renders the glyph as a monochrome pixmap and the icon engine takes no
+      // colour, so the gold has to be applied to the rendered pixels. Same effect as before.
+      auto const colour = new QGraphicsColorizeEffect(_project_favorite_icon);
+      colour->setColor(QColor(224, 163, 62));
+      colour->setStrength(1.0f);
+      _project_favorite_icon->setGraphicsEffect(colour);
 
-        _project_favorite_icon->setGraphicsEffect(colour);
-        _project_favorite_icon->setAutoFillBackground(true);
-
-        layout.addWidget(_project_favorite_icon);
+      title_row->addWidget(_project_favorite_icon, 0, Qt::AlignRight | Qt::AlignVCenter);
     }
 
-    setContextMenuPolicy(Qt::CustomContextMenu);
+    auto const meta_row = new QHBoxLayout();
+    meta_row->setContentsMargins(0, 0, 0, 0);
+    meta_row->setSpacing(6);
+    meta_row->addWidget(_project_version_label, 1);
+    meta_row->addWidget(_project_last_edited_label, 0, Qt::AlignRight | Qt::AlignVCenter);
 
-    layout.addWidget(_project_version_icon);
-    layout.addWidget(_project_name_label);
-    layout.addWidget(_project_directory_label);
-    layout.addWidget(_project_version_label);
-    layout.addWidget(_project_last_edited_label);
-    setLayout(layout.layout());
+    text_column->addStretch(1);
+    text_column->addLayout(title_row);
+    text_column->addWidget(_project_directory_label);
+    text_column->addLayout(meta_row);
+    text_column->addStretch(1);
+
+    auto const root = new QHBoxLayout(this);
+    root->setContentsMargins(ROW_MARGIN_LEFT, ROW_MARGIN_TOP, ROW_MARGIN_RIGHT, ROW_MARGIN_BOTTOM);
+    root->setSpacing(COLUMN_SPACING);
+    root->addWidget(_project_version_icon, 0, Qt::AlignVCenter);
+    root->addLayout(text_column, 1);
+
+    for (QLabel* label : {_project_version_icon, _project_name_label, _project_directory_label,
+                          _project_version_label, _project_last_edited_label, _project_favorite_icon})
+    {
+      if (label)
+        label->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    }
   }
 
   QSize ProjectListItem::minimumSizeHint() const
   {
-    // RecentProjectsComponent feeds this straight to QListWidgetItem::setSizeHint, so it is the
-    // row height for an icon plus four stacked labels -- a 15px title over three 10px lines.
-    //
-    // Derived from where the labels are actually put, because in this widget they are placed by
-    // setGeometry rather than by a layout: the constructor builds a STACK-allocated QGridLayout
-    // and hands it to setLayout, so it destructs on return and the widget is left with none.
-    // layout() is therefore null here and cannot be asked.
-    //
-    // The lowest label is the version/last-edited row at y=35 with height 20, so the content ends
-    // at exactly 55 -- which is what the old hardcoded QSize(125, 55) returned. Flush to the pixel,
-    // with nothing left for descenders or for the padding the stylesheet adds to a list row, so the
-    // bottom line was clipped and the entries read as one run-together block.
-    //
-    // Measured from the font rather than padded by a guess, so this keeps working when the
-    // application font or DPI changes -- both of which move the real height and neither of which
-    // the old constant could see.
-    QFontMetrics const metrics (_project_version_label->font());
+    // There IS a layout now, so the height can simply be asked for rather than reconstructed
+    // from the offsets the constructor used -- which is what the previous revision had to do,
+    // and why it drifted out of step with the placement it was describing.
+    int const from_layout (QWidget::minimumSizeHint().height());
 
-    int const content_bottom (LABEL_TOP_VERSION + std::max (LABEL_ROW_HEIGHT, metrics.height()));
-
-    return QSize (125, std::max (55, content_bottom + ROW_BOTTOM_PADDING));
+    return QSize (ROW_HINT_WIDTH, std::max (ROW_MIN_HEIGHT, from_layout));
   }
 
   QString ProjectListItem::toCamelCase(const QString& s)

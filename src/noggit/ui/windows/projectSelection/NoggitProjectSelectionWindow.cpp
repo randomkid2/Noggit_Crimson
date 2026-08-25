@@ -102,11 +102,13 @@ NoggitProjectSelectionWindow::NoggitProjectSelectionWindow(Noggit::Application::
 
   _ui->setupUi(this);
 
-  _ui->label->setObjectName("title");
-  _ui->label->setStyleSheet("QLabel#title { font-size: 18px; padding: 0px; }");
+  // The two section headings and the recent-project list are named so the theme can style
+  // them. They used to carry an inline style sheet, which outranks the application sheet and
+  // so pinned them to one size no matter which theme was loaded.
+  _ui->label->setObjectName("project-section-title");
+  _ui->label_2->setObjectName("project-section-title");
 
-  _ui->label_2->setObjectName("title");
-  _ui->label_2->setStyleSheet("QLabel#title { font-size: 18px; padding: 0px; }");
+  _ui->listView->setAccessibleName("project_list");
 
   _settings = new Noggit::Ui::settings(this);
   //_changelog = new Noggit::Ui::CChangelog(this);

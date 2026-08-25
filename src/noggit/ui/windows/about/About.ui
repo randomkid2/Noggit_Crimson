@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>552</width>
-    <height>254</height>
+    <height>282</height>
    </rect>
   </property>
   <property name="font">
@@ -100,7 +100,7 @@
           </font>
          </property>
          <property name="text">
-          <string>Noggit Studio Red</string>
+          <string>Noggit Crimson</string>
          </property>
          <property name="alignment">
           <set>Qt::AlignCenter</set>
@@ -138,6 +138,22 @@
          </property>
          <property name="text">
           <string>WoW map editor for 3.3.5a</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignCenter</set>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_upstream">
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>18</height>
+          </size>
+         </property>
+         <property name="text">
+          <string>An unofficial GPL-3.0 fork of Noggit Red by Marlamin</string>
          </property>
          <property name="alignment">
           <set>Qt::AlignCenter</set>

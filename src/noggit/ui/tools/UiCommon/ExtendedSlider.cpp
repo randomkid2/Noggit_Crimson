@@ -31,6 +31,13 @@ ExtendedSlider::ExtendedSlider(QWidget* parent)
   layout->addWidget(tablet_enabled);
   _ui.tabletControlMenuButton->setIcon(FontAwesomeIcon(FontAwesome::Icons::pen));
 
+  // The only thing on the row that never said what it was. It is the tablet menu -- the popup
+  // built just above holds "Use Tablet" and the sensitivity slider -- and it is emphatically
+  // not a mask or curve picker, whatever its pencil glyph suggests. Naming it is the whole
+  // reason it can now be drawn flat instead of as a raised button competing with the value.
+  _ui.tabletControlMenuButton->setToolTip(tr("Tablet pressure settings"));
+  _ui.tabletControlMenuButton->setAccessibleName(tr("Tablet pressure settings"));
+
   connect(tablet_enabled, &QCheckBox::stateChanged,
           [=](int state)
           {

@@ -14,9 +14,9 @@
    <string>Form</string>
   </property>
   <!--
-    Fifteen of these stack up in the tool dock (three in Raise/Lower alone), so the layout
-    metrics here are what decide how much of the panel is chrome. Two things were costing
-    height for nothing.
+    Eighteen of these stack up in the tool dock (three in Raise/Lower alone), so the layout
+    metrics here are what decide how much of the panel is chrome. Four things were costing
+    height or legibility for nothing.
 
     First, every layout took the Fusion defaults (9px margins, 6px spacing). A control that is
     already inside a group box, itself inside a panel, does not need a third 9px inset; the
@@ -26,14 +26,38 @@
     Those wrappers were pure overhead, and the pressureBar one was actively harmful: the bar is
     hidden unless a tablet is driving the value (see ExtendedSlider.cpp), and while Qt skips a
     hidden WIDGET in a layout, a nested LAYOUT holding it is not empty, so it kept claiming its
-    margins and spacing on every one of the fifteen instances. Both widgets are now direct
+    margins and spacing on every one of the eighteen instances. Both widgets are now direct
     children of the vertical layout, which makes the hidden bar genuinely free.
 
-    No widget was renamed or removed; ExtendedSlider.cpp addresses the same five objects.
+    Third, the slider took whatever height the style's slider thickness happened to be - around
+    22px under Fusion, and none of it used. The theme draws a 4px groove with a 16px handle
+    (margin -6px on a 4px groove is exactly 16px of handle), so 16px is the full height the
+    control can ever paint into. Pinning it there is the "thin track" and it is the single
+    biggest saving on the panel: ~6px x 18 instances, before the row gap below drops from 3 to 2.
+    It is a MINIMUM as well as a maximum so the handle cannot be clipped if a theme thickens it.
+
+    Fourth, the value was left-aligned, so in a column of three sliders the digits started at
+    three different x positions and the eye had nothing to scan down. The spinbox is now
+    right-aligned. That is the whole fix and it costs no width: the row is label, expanding
+    spacer, spinbox, fixed-width button, so the RIGHT edge of every spinbox in a column is
+    already flush regardless of how wide each spinbox is, and right-aligned text puts the digits
+    on that shared edge. A minimum width was tried here first and does not work - the spinbox
+    size hints are 89px at max 1000, 95px at max 10000 and 71px at max 1, so any floor small
+    enough to fit the 250px dock is below the widest of them and aligns nothing. Alignment does
+    not touch the range, the step, the decimals or the emitted value.
+
+    The pencil button is the tablet-pressure menu, NOT a mask or curve picker - read
+    ExtendedSlider.cpp, the popup it opens holds "Use Tablet" and a sensitivity slider. It had
+    no tooltip at all, which is most of why it reads as mysterious. It is now flat (the theme's
+    QPushButton:flat is transparent until hovered) so it stops carrying the same visual weight
+    as the number beside it, and 20px rather than 22px so it fits the 16px-min-height row band.
+
+    No widget was renamed, removed or reordered; ExtendedSlider.cpp addresses the same five
+    objects and none of its ranges or connections changed.
   -->
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="spacing">
-    <number>3</number>
+    <number>2</number>
    </property>
    <property name="leftMargin">
     <number>0</number>
@@ -85,7 +109,11 @@
       </spacer>
      </item>
      <item>
-      <widget class="QDoubleSpinBox" name="doubleSpinBox"/>
+      <widget class="QDoubleSpinBox" name="doubleSpinBox">
+       <property name="alignment">
+        <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+       </property>
+      </widget>
      </item>
      <item>
       <widget class="QPushButton" name="tabletControlMenuButton">
@@ -97,18 +125,21 @@
        </property>
        <property name="minimumSize">
         <size>
-         <width>22</width>
-         <height>22</height>
+         <width>20</width>
+         <height>20</height>
         </size>
        </property>
        <property name="maximumSize">
         <size>
-         <width>22</width>
-         <height>22</height>
+         <width>20</width>
+         <height>20</height>
         </size>
        </property>
        <property name="text">
         <string/>
+       </property>
+       <property name="flat">
+        <bool>true</bool>
        </property>
       </widget>
      </item>
@@ -116,6 +147,18 @@
    </item>
    <item>
     <widget class="QSlider" name="slider">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>16</height>
+      </size>
+     </property>
+     <property name="maximumSize">
+      <size>
+       <width>16777215</width>
+       <height>16</height>
+      </size>
+     </property>
      <property name="orientation">
       <enum>Qt::Horizontal</enum>
      </property>
@@ -126,7 +169,7 @@
      <property name="maximumSize">
       <size>
        <width>16777215</width>
-       <height>5</height>
+       <height>4</height>
       </size>
      </property>
      <property name="value">

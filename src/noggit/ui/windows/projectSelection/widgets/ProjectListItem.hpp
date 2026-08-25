@@ -1,10 +1,13 @@
+// This file is part of Noggit3, licensed under GNU General Public License (version 3).
+
 #ifndef NOGGIT_WIGDET_PROJECT_LIST_ITEM_HPP
 #define NOGGIT_WIGDET_PROJECT_LIST_ITEM_HPP
 
-#include <QString>
-#include <QSize>
-#include <QWidget>
 #include <noggit/project/ApplicationProject.h>
+
+#include <QSize>
+#include <QString>
+#include <QWidget>
 
 class QLabel;
 
@@ -23,12 +26,12 @@ namespace Noggit::Ui::Widget
     {
         Q_OBJECT
     private:
-        QLabel* _project_version_icon;
-        QLabel* _project_name_label;
-        QLabel* _project_directory_label;
-        QLabel* _project_version_label;
-        QLabel* _project_last_edited_label;
-        QLabel* _project_favorite_icon;
+        QLabel* _project_version_icon = nullptr;
+        QLabel* _project_name_label = nullptr;
+        QLabel* _project_directory_label = nullptr;
+        QLabel* _project_version_label = nullptr;
+        QLabel* _project_last_edited_label = nullptr;
+        QLabel* _project_favorite_icon = nullptr;
     public:
         ProjectListItem(const ProjectListItemData& data, QWidget* parent);
         QSize minimumSizeHint() const override;

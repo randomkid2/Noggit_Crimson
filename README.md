@@ -1,18 +1,22 @@
-# Noggit Red — TrinityCore 3.3.5a edition
+# Noggit Crimson — TrinityCore 3.3.5a edition
 
 [![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue.svg)](COPYING)
 
-**An unofficial fork of [Marlamin/noggit-red](https://github.com/Marlamin/noggit-red) that adds
-TrinityCore 3.3.5a world-database editing to the Noggit map editor.**
+**Noggit Crimson is an unofficial fork of
+[Marlamin/noggit-red](https://github.com/Marlamin/noggit-red) — "Noggit Red" — that adds
+TrinityCore 3.3.5a world-database editing to the Noggit map editor. It is
+[GPL-3.0](COPYING), inherited from upstream and unchangeable.**
 
 Upstream Noggit Red edits the *client* side of a World of Warcraft map: terrain, textures, water,
-M2 and WMO placements inside ADT files. This fork keeps all of that untouched and adds the *server*
-side next to it — the `creature` and `gameobject` spawns your TrinityCore world database holds for
-the same tile — so you can see and move them in the same viewport as the terrain they stand on.
+M2 and WMO placements inside ADT files. Noggit Crimson keeps all of that untouched and adds the
+*server* side next to it — the `creature` and `gameobject` spawns your TrinityCore world database
+holds for the same tile — so you can see and move them in the same viewport as the terrain they
+stand on.
 
 | | |
 |---|---|
-| Upstream | [Marlamin/noggit-red](https://github.com/Marlamin/noggit-red) |
+| Product | **Noggit Crimson** — this fork, this repository |
+| Upstream | **Noggit Red** — [Marlamin/noggit-red](https://github.com/Marlamin/noggit-red) |
 | Forked at | `6f0776d4` (2025-01-17) |
 | Licence | **GPL-3.0**, inherited and unchangeable — see [COPYING](COPYING) |
 | Target | TrinityCore 3.3.5a only, client build `3.3.5a.12340` |
@@ -28,7 +32,7 @@ it is the same program, better tested, and without the extra build dependency.
 Being precise here matters more than being reassuring, because a database you did not mean to
 touch does not un-touch itself.
 
-### What Noggit sends
+### What Noggit Crimson sends
 
 - **No `CREATE DATABASE` statement exists anywhere in the source.** Noggit never creates a schema.
   If the one you configured does not exist, the connection fails and reports it.
