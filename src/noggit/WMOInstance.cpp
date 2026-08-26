@@ -4,6 +4,7 @@
 #include <noggit/application/NoggitApplication.hpp>
 #include <noggit/MapHeaders.h>
 #include <noggit/MapTile.h>
+#include <noggit/MissingPlacementLog.hpp>
 #include <noggit/ModelInstance.h>
 #include <noggit/rendering/Primitives.hpp>
 #include <noggit/scoped_blp_texture_reference.hpp>
@@ -201,8 +202,28 @@ void WMOInstance::draw ( OpenGL::Scoped::use_program& wmo_shader
 
 void WMOInstance::intersect (math::ray const& ray, selection_result* results, bool do_exterior)
 {
-  if (!finishedLoading() || wmo->loading_failed())
+  if (!finishedLoading())
     return;
+
+  // Same fix as ModelInstance::intersect. A WMO placement whose .wmo is missing returned here
+  // and was therefore unclickable, so a building that does not exist could not be deleted from
+  // the map through the editor at all.
+  //
+  // The box test alone IS the hit for a placeholder: there are no groups to descend into, and
+  // wmo->intersect would walk an empty group list even if it were reached. The distance comes
+  // straight out of intersect_bounds, which is the same quantity wmo->intersect would return
+  // for a hit on the outer hull.
+  if (wmo->loading_failed())
+  {
+    ensureExtents();
+
+    if (auto const distance = ray.intersect_bounds(extents[0], extents[1]))
+    {
+      results->emplace_back(*distance, this);
+    }
+
+    return;
+  }
 
   ensureExtents();
 
@@ -326,7 +347,23 @@ void WMOInstance::recalcExtents()
 
   if (wmo->loading_failed())
   {
-      extents[0] = extents[1] = pos;
+      // Was a zero-volume box at `pos`. See ModelInstance::recalcExtents for why that made the
+      // placement invisible to the frustum test and to every ray. wmo->extents cannot be used
+      // instead: WMO's constructor does not write them when loading throws.
+      //
+      // The WMO cube is four times the linear size of the M2 one, because a WMO placement is a
+      // building and a marker the size of a crate reads as "a small prop is missing here" --
+      // exactly the wrong diagnosis.
+      constexpr float half
+        (Noggit::MissingPlacementGeometry::halfExtentFor(Noggit::MissingPlacementKind::WorldModel));
+
+      extents[0] = pos - glm::vec3(half, half, half);
+      extents[1] = pos + glm::vec3(half, half, half);
+
+      // Circumscribed sphere of the cube, half * sqrt(3). World::select_objects_in_area
+      // subtracts this from a screen-space w for the near-plane test.
+      bounding_radius = half * 1.7320508f;
+
       _need_recalc_extents = false;
       return;
   }

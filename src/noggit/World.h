@@ -350,6 +350,54 @@ public:
                   , bool override_liquid_id
                   , float opacity_factor
                   );
+  // ---- liquid vertex height brushes --------------------------------------------------------
+  //
+  // The liquid height field is one float per vertex, 81 per chunk-layer, and has been since the
+  // MH2O reader was written; these brushes move those floats the way the terrain brushes move
+  // MapChunk::mVertices. Nothing here reaches liquid_layer::save.
+  //
+  // All three snapshot undo with NOGGIT_CUR_ACTION->registerChunkLiquidChange once per chunk,
+  // before the first write to that chunk. Action dedupes by chunk pointer, so a stroke that
+  // covers a chunk on 200 consecutive ticks stores one copy of its liquid_layer vector.
+
+  void changeLiquidHeight ( glm::vec3 const& pos
+                          , float change
+                          , float radius
+                          , float inner_radius
+                          , int brush_type
+                          , float opacity_factor
+                          );
+
+  void flattenLiquidHeight ( glm::vec3 const& pos
+                           , float remain
+                           , float radius
+                           , int brush_type
+                           , flatten_mode const& mode
+                           , glm::vec3 const& origin
+                           , math::degrees angle
+                           , math::degrees orientation
+                           , float opacity_factor
+                           );
+
+  void smoothLiquidHeight ( glm::vec3 const& pos
+                          , float remain
+                          , float radius
+                          , int brush_type
+                          , flatten_mode const& mode
+                          , float opacity_factor
+                          );
+
+  // Forces every stored copy of a shared liquid border vertex to one height. A vertex on a
+  // chunk border is stored twice and one on a tile corner up to four times, and a map can
+  // arrive with those copies already disagreeing - that pre-existing gap is the visible tear.
+  void weldLiquidSeams (glm::vec3 const& pos, float radius, float opacity_factor);
+
+  // Height of the liquid grid vertex nearest (x, z) on the layer with the given liquid id;
+  // pass a negative id to accept the first layer that has data there. The smooth kernel's
+  // sampler: it resolves a world position to exactly one chunk, so both owners of a shared
+  // border vertex smooth towards the same value.
+  bool getLiquidHeight (float x, float z, int liquid_id, float& height);
+
   void CropWaterADT(const TileIndex& pos);
   void setWaterType(const TileIndex& pos, int type, int layer);
   int getWaterType(const TileIndex& tile, int layer) const;

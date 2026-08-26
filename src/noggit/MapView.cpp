@@ -1,6 +1,8 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 #include <noggit/AssetScan.hpp>
+#include <noggit/MissingPlacementLog.hpp>
 #include <noggit/UidCollisionLog.hpp>
+#include <noggit/ui/tools/MissingObjects/MissingObjectsPanel.hpp>
 #include <noggit/database/ChangesetBuilder.hpp>
 #include <noggit/database/DatabaseSettings.hpp>
 #include <noggit/database/GameTeleBuilder.hpp>
@@ -1573,6 +1575,42 @@ bool MapView::focusOnSpawn(Noggit::Database::SpawnRef const& spawn, float distan
     return false;
   }
 
+  // The tile is already loaded -- a spawn cannot be in the scene cache otherwise -- so the
+  // force-load focusOnPoint offers is skipped here rather than paying for a hasTile probe.
+  if (!focusOnPoint(target, distance, false))
+  {
+    return false;
+  }
+
+  _db_spawn_scene->setSelected(spawn);
+
+  return true;
+}
+
+bool MapView::focusOnPoint(glm::vec3 const& target, float distance, bool load_tile)
+{
+  // Copied from move_camera_with_auto_height (MapView.cpp:4429-4432), including the
+  // wait_until_loaded: a row in the Missing Objects panel outlives the ADT it came from, and
+  // flying to a coordinate in an unloaded tile otherwise shows the mapper empty space and no
+  // placeholder, which reads as "the tool is lying about this row".
+  if (load_tile)
+  {
+    TileIndex const tile_index (target);
+
+    if (!tile_index.is_valid())
+    {
+      return false;
+    }
+
+    if (_world->mapIndex.hasTile(tile_index))
+    {
+      makeCurrent();
+      OpenGL::context::scoped_setter const _ (::gl, context());
+
+      _world->mapIndex.loadTile(target)->wait_until_loaded();
+    }
+  }
+
   // Stand back and above, then solve the angles rather than guessing them. Camera::direction is
   // (sin(yaw)cos(pitch), -sin(pitch), cos(yaw)cos(pitch)), so a look vector d gives
   // yaw = atan2(d.x, d.z) and pitch = asin(-d.y / |d|).
@@ -1588,8 +1626,6 @@ bool MapView::focusOnSpawn(Noggit::Database::SpawnRef const& spawn, float distan
   _camera.position = eye;
   _camera.yaw(math::degrees(glm::degrees(std::atan2(to_target.x, to_target.z))));
   _camera.pitch(math::degrees(glm::degrees(std::asin(-to_target.y / length))));
-
-  _db_spawn_scene->setSelected(spawn);
 
   _camera_moved_since_last_draw = true;
   _needs_redraw = true;
@@ -3488,6 +3524,28 @@ void MapView::setupViewMenu()
   //! \todo space+h in object mode
   ADD_TOGGLE_NS (view_menu, "Hidden models", _draw_hidden_models);
 
+  // Placed next to "Models with box" because that is what it is: a box drawn instead of a model.
+  //
+  // Not an ADD_TOGGLE_NS, because that macro binds a Noggit::BoolToggleProperty member of
+  // MapView and the state this one carries has to be readable from WorldRender::draw, which has
+  // no MapView. It lives on MissingPlacementLog instead -- see the comment there, and the report
+  // note about moving it into WorldRenderParams once that header is free.
+  {
+    auto* placeholders (new QAction("Missing model placeholders", this));
+    placeholders->setCheckable(true);
+    placeholders->setChecked(Noggit::MissingPlacementLog::instance().drawPlaceholders());
+    placeholders->setStatusTip
+      ("Draw a checkered cube where a model or WMO could not be loaded, so the placement can be "
+       "seen and selected.");
+    view_menu->addAction(placeholders);
+
+    connect(placeholders, &QAction::toggled, this, [this] (bool on)
+      {
+        Noggit::MissingPlacementLog::instance().setDrawPlaceholders(on);
+        _needs_redraw = true;
+      });
+  }
+
   ADD_TOGGLE_NS(view_menu, "Draw Sky", _draw_sky);
   ADD_TOGGLE_NS(view_menu, "Draw Skybox", _draw_skybox);
 
@@ -3523,6 +3581,38 @@ void MapView::setupViewMenu()
 
     connect(show_panel, &QAction::toggled, spawn_dock, &QWidget::setVisible);
     connect(spawn_dock, &QDockWidget::visibilityChanged, show_panel, &QAction::setChecked);
+  }
+
+  {
+    // Missing objects. Same dock shape as the spawn panel above, on the right, hidden until
+    // asked for -- a healthy map never needs it and it should not take space from the viewport
+    // to say so.
+    //
+    // The panel polls MissingPlacementLog while it is visible; nothing pushes into it from a
+    // loader thread. See MissingObjectsPanel.hpp for why that direction was chosen.
+    auto missing_dock (new QDockWidget("Missing Objects", _main_window));
+    _missing_objects_panel
+      = new Noggit::Ui::Tools::MissingObjects::MissingObjectsPanel(this, missing_dock);
+    missing_dock->setWidget(_missing_objects_panel);
+    missing_dock->setFeatures
+      (QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable
+      | QDockWidget::DockWidgetClosable);
+    _main_window->addDockWidget(Qt::RightDockWidgetArea, missing_dock);
+    missing_dock->hide();
+
+    connect(this, &QObject::destroyed, missing_dock, &QObject::deleteLater);
+
+    _missing_objects_dock = missing_dock;
+
+    auto show_missing (new QAction("Missing objects", this));
+    show_missing->setCheckable(true);
+    show_missing->setStatusTip
+      ("Every placement whose model or WMO failed to load this session, with its UID, position "
+       "and tile.");
+    view_menu->addAction(show_missing);
+
+    connect(show_missing, &QAction::toggled, missing_dock, &QWidget::setVisible);
+    connect(missing_dock, &QDockWidget::visibilityChanged, show_missing, &QAction::setChecked);
   }
 
   {
@@ -6103,22 +6193,84 @@ void MapView::save(save_mode mode)
   if (AsyncLoader::instance->important_object_failed_loading())
   {
     save = false;
-    QPushButton *yes, *no;
+    QPushButton *yes, *no, *show_panel;
+
+    auto const& missing_log = Noggit::MissingPlacementLog::instance();
 
     QMessageBox first_warning;
     first_warning.setIcon(QMessageBox::Critical);
     first_warning.setWindowIcon(QIcon (":/icon"));
     first_warning.setWindowTitle("Some models couldn't be loaded");
-    first_warning.setText("Error:\nSome models could not be loaded and saving will cause collision and culling issues,"
-      " this is most likely caused by missing or corrupted models."
-      "\nCheck the log file for the list of model errors and fix them."
-      "\nWould you still like to save ?");
+
+    // Was: "Check the log file for the list of model errors and fix them."
+    //
+    // That sentence was the entire user-facing account of a broken map, and it asked the mapper
+    // to close the editor, find log.txt in the working directory and read it -- at the one moment
+    // they are least able to act on it, because the dialog is modal and the map is about to be
+    // written. It named nothing and counted nothing.
+    //
+    // It now says what failed and offers the panel that lists it. The count comes from
+    // MissingPlacementLog, which is filled at the point of failure
+    // (AsyncObject::error_on_loading), so it is the same set of files the panel shows.
+    QString first_text
+      ( "Error:\nSome models could not be loaded and saving will cause collision and culling"
+        " issues, this is most likely caused by missing or corrupted models.\n"
+      );
+
+    if (missing_log.fileCount() > 0)
+    {
+      first_text += QString("\n%1 file%2 could not be loaded")
+                      .arg(missing_log.fileCount())
+                      .arg(missing_log.fileCount() == 1 ? "" : "s");
+
+      if (missing_log.totalPlacementCount() > 0)
+      {
+        first_text += QString(", affecting %1 placement%2 found so far")
+                        .arg(missing_log.totalPlacementCount())
+                        .arg(missing_log.totalPlacementCount() == 1 ? "" : "s");
+      }
+
+      first_text += ".\n";
+    }
+
+    first_text += "\nWould you still like to save ?";
+
+    first_warning.setText(first_text);
+
     // roles are swapped to force the user to pay attention and both are "accept" roles so that escape does nothing
     no = first_warning.addButton("No", QMessageBox::ButtonRole::AcceptRole);
     yes = first_warning.addButton("Yes", QMessageBox::ButtonRole::YesRole);
+    show_panel = first_warning.addButton("Show missing objects", QMessageBox::ButtonRole::HelpRole);
     first_warning.setDefaultButton(no);
 
     first_warning.exec();
+
+    if (first_warning.clickedButton() == show_panel)
+    {
+      // Cancels the save, deliberately. The mapper asked to look at the problem, and quietly
+      // writing the ADTs behind that request is exactly what this dialog exists to prevent.
+      //
+      // Deferred to the next event-loop turn rather than shown here. save() is reached from menu
+      // actions today, but showing a dock resizes the main window and can drive a repaint, and
+      // the rule in this renderer is that nothing which can re-enter drawing is done inline from
+      // a path that might one day be called during one. QTimer::singleShot(0, ...) is how that is
+      // spelled everywhere else here.
+      QTimer::singleShot(0, this, [this]
+        {
+          if (_missing_objects_dock)
+          {
+            _missing_objects_dock->show();
+            _missing_objects_dock->raise();
+          }
+
+          if (_missing_objects_panel)
+          {
+            _missing_objects_panel->refresh();
+          }
+        });
+
+      return;
+    }
 
     if (first_warning.clickedButton() == yes)
     {

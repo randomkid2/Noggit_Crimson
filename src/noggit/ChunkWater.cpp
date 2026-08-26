@@ -484,6 +484,170 @@ void ChunkWater::paintLiquid( glm::vec3 const& pos
   update_layers();
 }
 
+bool ChunkWater::changeLiquidHeight ( glm::vec3 const& pos
+                                    , float change
+                                    , float radius
+                                    , float inner_radius
+                                    , int brush_type
+                                    , MapChunk* chunk
+                                    , float opacity_factor
+                                    )
+{
+  bool changed (false);
+
+  for (liquid_layer& layer : _layers)
+  {
+    changed |= layer.changeHeight (pos, change, radius, inner_radius, brush_type, chunk, opacity_factor);
+  }
+
+  if (changed)
+  {
+    update_layers();
+  }
+
+  return changed;
+}
+
+bool ChunkWater::flattenLiquidHeight ( glm::vec3 const& pos
+                                     , float remain
+                                     , float radius
+                                     , int brush_type
+                                     , flatten_mode const& mode
+                                     , glm::vec3 const& origin
+                                     , math::radians const& angle
+                                     , math::radians const& orientation
+                                     , MapChunk* chunk
+                                     , float opacity_factor
+                                     )
+{
+  bool changed (false);
+
+  for (liquid_layer& layer : _layers)
+  {
+    changed |= layer.flattenHeight (pos, remain, radius, brush_type, mode, origin, angle, orientation
+                                   , chunk, opacity_factor);
+  }
+
+  if (changed)
+  {
+    update_layers();
+  }
+
+  return changed;
+}
+
+bool ChunkWater::gatherSmoothedLiquidHeights ( glm::vec3 const& pos
+                                             , float remain
+                                             , float radius
+                                             , int brush_type
+                                             , flatten_mode const& mode
+                                             , std::function<bool (float, float, int, float&)> const& sampler
+                                             , std::vector<LiquidHeightPatch>& patches
+                                             ) const
+{
+  bool any (false);
+
+  for (std::size_t i (0); i < _layers.size(); ++i)
+  {
+    LiquidHeightPatch patch {};
+    patch.layer = i;
+
+    if (_layers[i].gatherSmoothedHeights (pos, remain, radius, brush_type, mode, sampler
+                                         , patch.height, patch.mask))
+    {
+      patches.emplace_back (patch);
+      any = true;
+    }
+  }
+
+  return any;
+}
+
+bool ChunkWater::applyLiquidHeightPatches ( std::vector<LiquidHeightPatch> const& patches
+                                          , MapChunk* chunk
+                                          , float opacity_factor
+                                          )
+{
+  bool changed (false);
+
+  for (LiquidHeightPatch const& patch : patches)
+  {
+    if (patch.layer >= _layers.size())
+    {
+      continue;
+    }
+
+    _layers[patch.layer].applyHeights (patch.height, patch.mask, chunk, opacity_factor);
+    changed = true;
+  }
+
+  if (changed)
+  {
+    update_layers();
+  }
+
+  return changed;
+}
+
+bool ChunkWater::liquidHeightAt (float x, float z, int liquid_id, float& height) const
+{
+  for (liquid_layer const& layer : _layers)
+  {
+    if (liquid_id >= 0 && layer.liquidID() != liquid_id)
+    {
+      continue;
+    }
+
+    int const vx (liquid_layer::gridIndex (x) - layer.gridOriginX());
+    int const vz (liquid_layer::gridIndex (z) - layer.gridOriginZ());
+
+    if (layer.vertexHeight (vx, vz, height))
+    {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool ChunkWater::setLiquidHeightAt (float x, float z, int liquid_id, float height, MapChunk* chunk, float opacity_factor)
+{
+  bool written (false);
+
+  for (liquid_layer& layer : _layers)
+  {
+    if (liquid_id >= 0 && layer.liquidID() != liquid_id)
+    {
+      continue;
+    }
+
+    int const vx (liquid_layer::gridIndex (x) - layer.gridOriginX());
+    int const vz (liquid_layer::gridIndex (z) - layer.gridOriginZ());
+
+    float existing;
+
+    if (!layer.vertexHeight (vx, vz, existing))
+    {
+      continue;
+    }
+
+    layer.setVertexHeight (vx, vz, height, chunk, opacity_factor);
+    written = true;
+  }
+
+  return written;
+}
+
+void ChunkWater::finishLiquidHeightEdit()
+{
+  for (liquid_layer& layer : _layers)
+  {
+    layer.updateMinMax();
+  }
+
+  update_layers();
+}
+
 MapChunk* ChunkWater::getChunk()
 {
   return _chunk;

@@ -7,24 +7,98 @@
 #include <noggit/ui/FontAwesome.hpp>
 #include <noggit/ui/windows/projectSelection/NoggitProjectSelectionWindow.hpp>
 #include <noggit/ui/windows/projectSelection/widgets/ProjectListItem.hpp>
+#include <noggit/ui/windows/UiStyle.hpp>
 
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
 #include <QList>
+#include <QListWidget>
+#include <QLocale>
 #include <QMenu>
 #include <QProcess>
 #include <QSettings>
+#include <QStringList>
 #include <QUrl>
 
 #include <filesystem>
 
 using namespace Noggit::Ui::Component;
 
+namespace Style = Noggit::Ui::Windows::Style;
+
+namespace
+{
+  //! The date a project card shows: the modification time of the project's own .noggitproj file.
+  //!
+  //! It used to be QDateTime::currentDateTime(), so EVERY card read today's date, every day, on
+  //! every machine. That is not a stale value, it is a fabricated one, and the card redesign puts
+  //! the date in its own footer at the bottom right where it is read rather than skimmed past.
+  //!
+  //! An empty string when no project file can be found is deliberate and is handled: the card
+  //! hides its whole footer, separator included. A card that says nothing beats a card that says
+  //! something untrue.
+  QString lastEditedLabel (std::filesystem::path const& project_path)
+  {
+    QDir const directory (QString::fromStdString (project_path.generic_string()));
+
+    QFileInfoList const candidates
+      (directory.entryInfoList (QStringList (QStringLiteral ("*.noggitproj")), QDir::Files));
+
+    if (candidates.isEmpty())
+    {
+      return QString();
+    }
+
+    QDateTime const edited (candidates.first().lastModified());
+
+    return edited.isValid()
+      ? QLocale::system().toString (edited.date(), QLocale::ShortFormat)
+      : QString();
+  }
+}
+
 
 void RecentProjectsComponent::buildRecentProjectsList(Noggit::Ui::Windows::NoggitProjectSelectionWindow* parent)
 {
+  // THE CARD CARRIES THE SELECTION NOW, not the view. A card is opaque -- it has a fill of its
+  // own -- so any wash the view painted underneath it would be invisible, which is exactly why
+  // the row widget used to be transparent. The sheet's ::item selection rules are therefore
+  // transparent and the state is set here instead, on the widget the user can actually see.
+  //
+  // WIRED ONCE. buildRecentProjectsList runs again after every create, forget and favourite
+  // change, and a connection to a lambda cannot be deduplicated with Qt::UniqueConnection -- that
+  // flag only works for a pointer-to-member or a QObject slot -- so a flag on the view is what
+  // stops one copy of this handler accumulating per rebuild.
+  if (!parent->_ui->listView->property ("card_state_wired").toBool())
+  {
+    parent->_ui->listView->setProperty ("card_state_wired", true);
+
+    QObject::connect
+      ( parent->_ui->listView
+      , &QListWidget::currentItemChanged
+      , [view = parent->_ui->listView] (QListWidgetItem* now, QListWidgetItem* before)
+        {
+          for (QListWidgetItem* const item : {before, now})
+          {
+            if (!item)
+            {
+              continue;
+            }
+
+            if (QWidget* const card = view->itemWidget (item))
+            {
+              // Style::applyState does the unpolish/polish Qt requires before it will re-evaluate
+              // a rule that selects on a dynamic property set after the first polish. Setting the
+              // property alone is silently inert.
+              Style::applyState (card, item == now ? QStringLiteral ("selected") : QString());
+            }
+          }
+        }
+      );
+  }
+
   parent->_ui->listView->clear();
 
   // auto application_configuration = parent->_noggit_application->getConfiguration();
@@ -55,7 +129,7 @@ void RecentProjectsComponent::buildRecentProjectsList(Noggit::Ui::Windows::Noggi
     project_data.project_version = project->projectVersion;
     project_data.project_directory = QString::fromStdString(project_path.generic_string());
     project_data.project_name = QString::fromStdString(project->ProjectName);
-    project_data.project_last_edited = QDateTime::currentDateTime().date().toString();
+    project_data.project_last_edited = lastEditedLabel (project_path);
     project_data.is_favorite = favorite_proj_idx == i ? true : false;
 
     auto project_list_item = new Noggit::Ui::Widget::ProjectListItem(project_data, parent->_ui->listView);

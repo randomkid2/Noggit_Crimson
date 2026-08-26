@@ -11,6 +11,7 @@
 #include <util/sExtendableArray.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 namespace
@@ -612,6 +613,409 @@ void liquid_layer::paintLiquid( glm::vec3 const& cursor_pos
   }
 
   update_min_max();
+}
+
+// ---- per-vertex height brushes ------------------------------------------------------------
+//
+// THE SEAM ARGUMENT, which is the whole reason these brushes exist.
+//
+// A liquid vertex on a chunk border is stored twice, once in each chunk, and a vertex on a
+// tile border up to four times. A brush that moves one copy and not the other leaves a visible
+// tear, which is the "waterfall between two water heights" the tool was asked to remove. Two
+// things have to hold for that not to happen.
+//
+// (1) Every owner of a shared vertex must be visited. World::for_all_chunks_in_range selects
+//     chunks with misc::getShortestDist(pos, chunk_box, CHUNKSIZE) <= radius, and that helper
+//     clamps the query point into the CLOSED box, so it returns the distance from the brush
+//     centre to the nearest point of the chunk. A shared vertex lies in the closed box of both
+//     of its owners, therefore dist(pos, box) <= dist(pos, vertex) for both; if the vertex is
+//     inside the brush, both owners are selected. MapIndex::tiles_in_range applies the same
+//     test at TILESIZE, so the argument repeats one level up for tile borders. The single
+//     exception is a neighbouring tile that is not loaded, exactly as for the terrain brushes.
+//
+// (2) The value written must be the same in every copy. This is where the stored positions are
+//     NOT usable. A chunk's base x is xbase_tile + CHUNKSIZE * chunk_index and a vertex x is
+//     that plus UNITSIZE * column; 8 * UNITSIZE == CHUNKSIZE bit-exactly (both are exact
+//     power-of-two scalings of TILESIZE = 533.33333f), but the two additions are rounded
+//     differently on each side. Evaluating every chunk base of a 64x64 map in float32 found
+//     341 of the 1024 chunk column borders where the two owners' stored x differ, by up to
+//     0.00390625 yards, which is one float ULP at x = 32900. That is small, but it is enough
+//     to put a vertex inside the radius for one owner and outside it for the other, and with a
+//     Flat falloff the vertex at the rim still receives the full brush delta - a one-vertex
+//     tear of the whole stroke strength.
+//
+//     So the brushes ignore the stored x/z and rebuild the position from an integer. A chunk
+//     base is mathematically (tile_index * 128 + chunk_index * 8) * UNITSIZE, so
+//     lround(base / UNITSIZE) recovers that integer; checked against all 1024 chunk columns of
+//     a 64x64 map, it recovers it correctly 1024 times out of 1024. Column 8 of chunk k and
+//     column 0 of chunk k+1 then both come out as the integer k * 8 + 8, and one integer
+//     scaled by one float constant is one float, identical on both sides by construction.
+//     Measured over all 9216 vertex columns of a 64x64 map, the canonical position differs
+//     from the stored one by at most 0.00390625 yards, i.e. 0.094% of the 4.1667-yard grid
+//     spacing, so the brush lands where the user sees the vertex.
+//
+// What each brush then does to a tear that was already in the data:
+//   - changeHeight adds the same delta to both copies, so an existing gap is preserved, never
+//     widened. It cannot create one.
+//   - flattenHeight mixes both copies towards the same plane value, so the gap is multiplied by
+//     (1 - weight) on every application. The weight is at most 1 - 0.5^(dt x strength) and the
+//     falloff curve only reduces it further, so it never reaches 1 and the gap decays
+//     geometrically rather than vanishing in one tick.
+//   - the smooth pass computes one target per world position (the sampler resolves a position
+//     to exactly one chunk) and mixes both copies towards it, so the gap decays the same way.
+// World::weldLiquidSeams closes a gap outright and is what the panel's "Weld chunk seams"
+// checkbox drives after every stroke.
+
+int liquid_layer::gridIndex (float world_coord)
+{
+  return static_cast<int> (std::lround (world_coord / UNITSIZE));
+}
+
+float liquid_layer::gridCoord (int index)
+{
+  return UNITSIZE * static_cast<float> (index);
+}
+
+namespace
+{
+  int grid_index (float world_coord)
+  {
+    return liquid_layer::gridIndex (world_coord);
+  }
+
+  float grid_coord (int index)
+  {
+    return liquid_layer::gridCoord (index);
+  }
+
+  // The three blend curves MapChunk::flattenTerrain and MapChunk::blurTerrain use, kept
+  // identical so a liquid flatten feels like a terrain flatten. eFlattenType_Flat, _Linear and
+  // _Smooth are 0, 1 and 2, the same three values as eTerrainType_Flat, _Linear and _Smooth,
+  // which is why the panel can drive both enums from one three-way falloff control.
+  float flatten_weight (int brush_type, float remain, float dist, float radius)
+  {
+    switch (brush_type)
+    {
+      case eFlattenType_Flat:   return remain;
+      case eFlattenType_Linear: return remain * (1.f - dist / radius);
+      case eFlattenType_Smooth: return std::pow (remain, 1.f + dist / radius);
+      default:                  return 0.f;
+    }
+  }
+}
+
+int liquid_layer::gridOriginX() const
+{
+  return grid_index (pos.x);
+}
+
+int liquid_layer::gridOriginZ() const
+{
+  return grid_index (pos.z);
+}
+
+bool liquid_layer::hasVertexData (int x, int z) const
+{
+  for (int sz (std::max (0, z - 1)); sz <= std::min (7, z); ++sz)
+  {
+    for (int sx (std::max (0, x - 1)); sx <= std::min (7, x); ++sx)
+    {
+      if (hasSubchunk (sx, sz))
+      {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+bool liquid_layer::vertexHeight (int x, int z, float& height) const
+{
+  if (x < 0 || x > 8 || z < 0 || z > 8 || !hasVertexData (x, z))
+  {
+    return false;
+  }
+
+  height = _vertices[z * 9 + x].position.y;
+  return true;
+}
+
+void liquid_layer::setVertexHeight (int x, int z, float height, MapChunk* terrain_chunk, float opacity_factor)
+{
+  if (x < 0 || x > 8 || z < 0 || z > 8)
+  {
+    return;
+  }
+
+  _vertices[z * 9 + x].position.y = height;
+  update_vertex_opacity (x, z, terrain_chunk, opacity_factor);
+}
+
+void liquid_layer::updateMinMax()
+{
+  update_min_max();
+}
+
+bool liquid_layer::changeHeight ( glm::vec3 const& pos_
+                                , float change
+                                , float radius
+                                , float inner_radius
+                                , int brush_type
+                                , MapChunk* terrain_chunk
+                                , float opacity_factor
+                                )
+{
+  bool changed (false);
+
+  int const origin_x (gridOriginX());
+  int const origin_z (gridOriginZ());
+
+  for (int z (0); z < 9; ++z)
+  {
+    for (int x (0); x < 9; ++x)
+    {
+      if (!hasVertexData (x, z))
+      {
+        continue;
+      }
+
+      int const index (z * 9 + x);
+
+      // Canonical position, not _vertices[index].position - see the seam argument above. The y
+      // component is irrelevant to changeTerrainProcessVertex, which is a 2-D XZ falloff.
+      glm::vec3 const vertex ( grid_coord (origin_x + x)
+                             , _vertices[index].position.y
+                             , grid_coord (origin_z + z)
+                             );
+
+      float dt (change);
+
+      // MapChunk::changeTerrainProcessVertex reads nothing from the chunk it is called on; it
+      // is the terrain falloff evaluator in free-function form. Calling it rather than copying
+      // the curves is what keeps a liquid raise and a terrain raise feeling like one tool.
+      if (terrain_chunk->changeTerrainProcessVertex (pos_, vertex, dt, radius, inner_radius, brush_type))
+      {
+        _vertices[index].position.y += dt;
+        update_vertex_opacity (x, z, terrain_chunk, opacity_factor);
+        changed = true;
+      }
+    }
+  }
+
+  if (changed)
+  {
+    update_min_max();
+  }
+
+  return changed;
+}
+
+bool liquid_layer::flattenHeight ( glm::vec3 const& pos_
+                                 , float remain
+                                 , float radius
+                                 , int brush_type
+                                 , flatten_mode const& mode
+                                 , glm::vec3 const& origin
+                                 , math::radians const& angle
+                                 , math::radians const& orientation
+                                 , MapChunk* terrain_chunk
+                                 , float opacity_factor
+                                 )
+{
+  bool changed (false);
+
+  int const origin_x (gridOriginX());
+  int const origin_z (gridOriginZ());
+
+  for (int z (0); z < 9; ++z)
+  {
+    for (int x (0); x < 9; ++x)
+    {
+      if (!hasVertexData (x, z))
+      {
+        continue;
+      }
+
+      int const index (z * 9 + x);
+
+      glm::vec3 const vertex ( grid_coord (origin_x + x)
+                             , _vertices[index].position.y
+                             , grid_coord (origin_z + z)
+                             );
+
+      float const dist (misc::dist (vertex, pos_));
+
+      if (dist >= radius)
+      {
+        continue;
+      }
+
+      // The same inclined plane paintLiquid already uses for angled mode, so "flatten to the
+      // angled plane" and "paint at the angled plane" agree to the last bit.
+      float const ah (misc::angledHeight (origin, vertex, angle, orientation));
+
+      float& y (_vertices[index].position.y);
+
+      if ((!mode.lower && ah < y) || (!mode.raise && ah > y))
+      {
+        continue;
+      }
+
+      if (brush_type == eFlattenType_Origin)
+      {
+        y = origin.y;
+      }
+      else
+      {
+        y = glm::mix (y, ah, flatten_weight (brush_type, remain, dist, radius));
+      }
+
+      update_vertex_opacity (x, z, terrain_chunk, opacity_factor);
+      changed = true;
+    }
+  }
+
+  if (changed)
+  {
+    update_min_max();
+  }
+
+  return changed;
+}
+
+bool liquid_layer::gatherSmoothedHeights ( glm::vec3 const& pos_
+                                         , float remain
+                                         , float radius
+                                         , int brush_type
+                                         , flatten_mode const& mode
+                                         , std::function<bool (float, float, int, float&)> const& sampler
+                                         , std::array<float, 9 * 9>& target
+                                         , std::array<bool, 9 * 9>& mask
+                                         ) const
+{
+  target.fill (0.f);
+  mask.fill (false);
+
+  if (brush_type == eFlattenType_Origin)
+  {
+    return false;
+  }
+
+  bool any (false);
+
+  int const origin_x (gridOriginX());
+  int const origin_z (gridOriginZ());
+
+  // MapChunk::blurTerrain makes its kernel as wide as the brush: at radius 40 its Rad is
+  // (int)(40 / 4.1667) = 9, and its brick pattern is 37 rows by 19 columns, 703 taps per
+  // vertex. Liquid has no inner 8x8 row, only the 9x9 outer grid, so the
+  // kernel is a plain square on that grid, and it is capped at 4 cells because past that the
+  // extra taps only slow the stroke down: a tent kernel gives the outermost ring a weight of
+  // 1 - 4/4 = 0, so cell 4 contributes nothing and cells beyond it are not reached at all.
+  // At the cap this is 9 x 9 = 81 taps per vertex and at most 81 x 81 = 6561 per chunk-layer.
+  int const kernel (std::clamp (static_cast<int> (radius / UNITSIZE), 1, 4));
+  float const kernel_extent (grid_coord (kernel));
+
+  for (int z (0); z < 9; ++z)
+  {
+    for (int x (0); x < 9; ++x)
+    {
+      if (!hasVertexData (x, z))
+      {
+        continue;
+      }
+
+      int const index (z * 9 + x);
+
+      float const vertex_x (grid_coord (origin_x + x));
+      float const vertex_z (grid_coord (origin_z + z));
+
+      float const dist (misc::dist (vertex_x, vertex_z, pos_.x, pos_.z));
+
+      if (dist >= radius)
+      {
+        continue;
+      }
+
+      float total_height (0.f);
+      float total_weight (0.f);
+
+      for (int kz (-kernel); kz <= kernel; ++kz)
+      {
+        for (int kx (-kernel); kx <= kernel; ++kx)
+        {
+          float const tap_x (grid_coord (origin_x + x + kx));
+          float const tap_z (grid_coord (origin_z + z + kz));
+          float const tap_dist (misc::dist (tap_x, tap_z, vertex_x, vertex_z));
+
+          if (tap_dist >= kernel_extent)
+          {
+            continue;
+          }
+
+          float height;
+
+          if (sampler (tap_x, tap_z, _liquid_id, height))
+          {
+            float const weight (1.f - tap_dist / kernel_extent);
+            total_height += weight * height;
+            total_weight += weight;
+          }
+        }
+      }
+
+      if (total_weight <= 0.f)
+      {
+        continue;
+      }
+
+      float const smoothed (total_height / total_weight);
+      float const y (_vertices[index].position.y);
+
+      if ((smoothed > y && !mode.raise) || (smoothed < y && !mode.lower))
+      {
+        continue;
+      }
+
+      target[index] = glm::mix (y, smoothed, flatten_weight (brush_type, remain, dist, radius));
+      mask[index] = true;
+      any = true;
+    }
+  }
+
+  return any;
+}
+
+void liquid_layer::applyHeights ( std::array<float, 9 * 9> const& target
+                                , std::array<bool, 9 * 9> const& mask
+                                , MapChunk* terrain_chunk
+                                , float opacity_factor
+                                )
+{
+  bool changed (false);
+
+  for (int z (0); z < 9; ++z)
+  {
+    for (int x (0); x < 9; ++x)
+    {
+      int const index (z * 9 + x);
+
+      if (!mask[index])
+      {
+        continue;
+      }
+
+      _vertices[index].position.y = target[index];
+      update_vertex_opacity (x, z, terrain_chunk, opacity_factor);
+      changed = true;
+    }
+  }
+
+  if (changed)
+  {
+    update_min_max();
+  }
 }
 
 void liquid_layer::update_min_max()

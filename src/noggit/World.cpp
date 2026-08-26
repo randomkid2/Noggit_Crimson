@@ -41,11 +41,14 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <functional>
 #include <limits>
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 
 bool World::IsEditableWorld(BlizzardDatabaseLib::Structures::BlizzardDatabaseRow& record)
@@ -2904,6 +2907,267 @@ void World::paintLiquid( glm::vec3 const& pos
   });
 }
 
+bool World::getLiquidHeight (float x, float z, int liquid_id, float& height)
+{
+  // getChunkAt already returns nullptr for an unloaded or still-loading tile, which is the
+  // answer the smooth kernel wants at a map edge: that tap simply does not contribute.
+  MapChunk* chunk (getChunkAt (glm::vec3 (x, 0.f, z)));
+
+  if (!chunk)
+  {
+    return false;
+  }
+
+  ChunkWater* water (chunk->liquid_chunk());
+
+  return water && water->liquidHeightAt (x, z, liquid_id, height);
+}
+
+void World::changeLiquidHeight ( glm::vec3 const& pos
+                               , float change
+                               , float radius
+                               , float inner_radius
+                               , int brush_type
+                               , float opacity_factor
+                               )
+{
+  ZoneScoped;
+  for_all_chunks_in_range (pos, radius, [&] (MapChunk* chunk)
+  {
+    NOGGIT_CUR_ACTION->registerChunkLiquidChange (chunk);
+    return chunk->liquid_chunk()->changeLiquidHeight (pos, change, radius, inner_radius, brush_type
+                                                     , chunk, opacity_factor);
+  });
+}
+
+void World::flattenLiquidHeight ( glm::vec3 const& pos
+                                , float remain
+                                , float radius
+                                , int brush_type
+                                , flatten_mode const& mode
+                                , glm::vec3 const& origin
+                                , math::degrees angle
+                                , math::degrees orientation
+                                , float opacity_factor
+                                )
+{
+  ZoneScoped;
+  for_all_chunks_in_range (pos, radius, [&] (MapChunk* chunk)
+  {
+    NOGGIT_CUR_ACTION->registerChunkLiquidChange (chunk);
+    return chunk->liquid_chunk()->flattenLiquidHeight (pos, remain, radius, brush_type, mode, origin
+                                                      , math::radians (angle), math::radians (orientation)
+                                                      , chunk, opacity_factor);
+  });
+}
+
+void World::smoothLiquidHeight ( glm::vec3 const& pos
+                               , float remain
+                               , float radius
+                               , int brush_type
+                               , flatten_mode const& mode
+                               , float opacity_factor
+                               )
+{
+  ZoneScoped;
+
+  // Two passes, and the reason is the seam. The smooth kernel reaches up to four grid cells
+  // (16.67 yards) past the vertex it is smoothing, so for a vertex on a chunk border the taps
+  // land in the neighbouring chunk. If the stroke wrote chunk N before gathering for chunk N+1,
+  // the second chunk would average against heights the first pass had already moved, the two
+  // owners of the shared vertex would compute different targets, and the tool would manufacture
+  // the tear it is meant to remove. Gathering everything first makes the whole stroke read one
+  // consistent pre-stroke state, which is also what makes the result independent of chunk
+  // iteration order.
+  std::unordered_map<MapChunk*, std::vector<LiquidHeightPatch>> patches;
+
+  std::function<bool (float, float, int, float&)> const sampler
+    ( [this] (float x, float z, int liquid_id, float& height)
+      {
+        return getLiquidHeight (x, z, liquid_id, height);
+      }
+    );
+
+  for_all_chunks_in_range (pos, radius, [&] (MapChunk* chunk)
+  {
+    std::vector<LiquidHeightPatch> chunk_patches;
+
+    if (chunk->liquid_chunk()->gatherSmoothedLiquidHeights (pos, remain, radius, brush_type, mode
+                                                           , sampler, chunk_patches))
+    {
+      patches.emplace (chunk, std::move (chunk_patches));
+    }
+
+    // Nothing was written, so this chunk's tile is not dirty yet. The apply pass below reports
+    // the change and marks it.
+    return false;
+  });
+
+  if (patches.empty())
+  {
+    return;
+  }
+
+  // The second range query returns the same chunk set as the first - same centre, same radius,
+  // same predicate - so every gathered patch is applied.
+  for_all_chunks_in_range (pos, radius, [&] (MapChunk* chunk)
+  {
+    auto const found (patches.find (chunk));
+
+    if (found == patches.end())
+    {
+      return false;
+    }
+
+    NOGGIT_CUR_ACTION->registerChunkLiquidChange (chunk);
+    return chunk->liquid_chunk()->applyLiquidHeightPatches (found->second, chunk, opacity_factor);
+  });
+}
+
+void World::weldLiquidSeams (glm::vec3 const& pos, float radius, float opacity_factor)
+{
+  ZoneScoped;
+
+  // A liquid vertex on a chunk border is stored once per owning chunk: twice on an edge, four
+  // times at a corner. The brushes above keep every copy in step, but a map can arrive with the
+  // copies already disagreeing, and that pre-existing gap is what the user sees as a tear
+  // between two water heights. This forces them all to their mean.
+  //
+  // Only the 32 border vertices of the 9x9 grid can be shared (x or z equal to 0 or 8); the
+  // other 49 are interior and are skipped. Each shared vertex is reached from up to four
+  // chunks, so it is processed more than once per pass - which is harmless, because once the
+  // copies are equal their mean is that same value and a second visit writes nothing new.
+  //
+  // Cost, for the record: a chunk box is 33.33 yards, so a 40-yard brush reaches at most a 5x5
+  // block, 25 chunks. 25 x 32 x 4 probes is 3200 getChunkAt calls, each an index lookup. The
+  // part that would NOT have been cheap is the derived state - min/max, the fishable and
+  // fatigue masks, the render tag - so the writes leave it stale and one
+  // finishLiquidHeightEdit per touched chunk brings it back, rather than one per vertex.
+  float const half_unit (UNITSIZE * 0.5f);
+
+  std::unordered_set<ChunkWater*> touched;
+
+  for_all_chunks_in_range (pos, radius, [&] (MapChunk* chunk)
+  {
+    ChunkWater* water (chunk->liquid_chunk());
+
+    if (!water)
+    {
+      return false;
+    }
+
+    bool changed (false);
+
+    for (liquid_layer& layer : *water->getLayers())
+    {
+      int const liquid_id (layer.liquidID());
+      int const origin_x (layer.gridOriginX());
+      int const origin_z (layer.gridOriginZ());
+
+      for (int z (0); z < 9; ++z)
+      {
+        for (int x (0); x < 9; ++x)
+        {
+          if (x != 0 && x != 8 && z != 0 && z != 8)
+          {
+            continue;
+          }
+
+          float height;
+
+          if (!layer.vertexHeight (x, z, height))
+          {
+            continue;
+          }
+
+          float const vertex_x (liquid_layer::gridCoord (origin_x + x));
+          float const vertex_z (liquid_layer::gridCoord (origin_z + z));
+
+          if (misc::dist (vertex_x, vertex_z, pos.x, pos.z) > radius)
+          {
+            continue;
+          }
+
+          // Probe the centre of each of the four grid cells meeting at this vertex. Each probe
+          // lands unambiguously inside one chunk, and the set of distinct chunks it finds is
+          // exactly the set of owners of this vertex.
+          MapChunk* owners[4] = {nullptr, nullptr, nullptr, nullptr};
+          int owner_count (0);
+
+          for (int quadrant (0); quadrant < 4; ++quadrant)
+          {
+            float const probe_x (vertex_x + ((quadrant & 1) ? half_unit : -half_unit));
+            float const probe_z (vertex_z + ((quadrant & 2) ? half_unit : -half_unit));
+
+            MapChunk* owner (getChunkAt (glm::vec3 (probe_x, 0.f, probe_z)));
+
+            if (!owner || !owner->liquid_chunk())
+            {
+              continue;
+            }
+
+            bool duplicate (false);
+
+            for (int i (0); i < owner_count; ++i)
+            {
+              duplicate |= owners[i] == owner;
+            }
+
+            if (!duplicate)
+            {
+              owners[owner_count++] = owner;
+            }
+          }
+
+          float total (0.f);
+          int samples (0);
+
+          for (int i (0); i < owner_count; ++i)
+          {
+            float owner_height;
+
+            if (owners[i]->liquid_chunk()->liquidHeightAt (vertex_x, vertex_z, liquid_id, owner_height))
+            {
+              total += owner_height;
+              ++samples;
+            }
+          }
+
+          if (samples < 2)
+          {
+            continue;
+          }
+
+          float const mean (total / static_cast<float> (samples));
+
+          for (int i (0); i < owner_count; ++i)
+          {
+            // Registering per owner rather than per iterated chunk matters: an owner across a
+            // tile border is written here, and Action dedupes by chunk pointer so this stays
+            // one snapshot per chunk per stroke.
+            NOGGIT_CUR_ACTION->registerChunkLiquidChange (owners[i]);
+
+            if (owners[i]->liquid_chunk()->setLiquidHeightAt (vertex_x, vertex_z, liquid_id, mean
+                                                             , owners[i], opacity_factor))
+            {
+              mapIndex.setChanged (owners[i]->mt);
+              touched.emplace (owners[i]->liquid_chunk());
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+
+    return changed;
+  });
+
+  for (ChunkWater* water : touched)
+  {
+    water->finishLiquidHeightEdit();
+  }
+}
+
 void World::setWaterType(const TileIndex& pos, int type, int layer)
 {
   ZoneScoped;
@@ -3882,8 +4146,18 @@ void World::select_objects_in_area(
     for (auto const& pair : tile->getObjectInstances())
     {
       [[unlikely]]
-      if (!(pair.first->finishedLoading()) || pair.first->loading_failed())
+      if (!(pair.first->finishedLoading()))
         continue;
+
+      // `|| pair.first->loading_failed()` used to be part of the test above, and it is the
+      // reason a placement whose model is missing could not be marquee-selected any more than it
+      // could be clicked. Both routes to selecting it were closed, so the only way to remove a
+      // broken placement from a map was to edit the ADT outside Noggit.
+      //
+      // Failed assets are now let through and picked against the placeholder cube that
+      // ModelInstance::recalcExtents and WMOInstance::recalcExtents give them. What they are NOT
+      // let through to is the refinement pass further down -- see the second guard below.
+      bool const load_failed = pair.first->loading_failed();
 
       [[unlikely]]
       if (pair.second.empty())
@@ -3974,6 +4248,21 @@ void World::select_objects_in_area(
           }
         }
         
+        // Everything from here down refines the hit using the object's LOCAL bounding box and
+        // its transform matrix, and for a failed asset both are indeterminate: Model's
+        // bounding_box_min/max and WMO::extents are never written when loading throws
+        // (Model.cpp:19-24 has the constructor memset commented out, and GLM_FORCE_CTOR_INIT is
+        // not defined in this tree), and ModelInstance::recalcExtents returns before
+        // updateTransformMatrix() in the failed case so _transform_mat is the uninitialised
+        // default from SceneObject.hpp:94. getBoundingBoxScreenBounds on those values selects
+        // arbitrary objects, or none, depending on stack contents.
+        //
+        // The centre test above is sufficient on its own here: the placeholder is a small cube
+        // and its centre is the whole of it. Refining it would add nothing even if the data were
+        // sound.
+        if (load_failed)
+          continue;
+
         // 4 : if center point raycast didn't succeed, check again if bounding box is within selection in 2D screen space to test other points
 
         std::array<glm::vec3, 2> local_extents;

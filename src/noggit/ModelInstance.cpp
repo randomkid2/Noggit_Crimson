@@ -3,6 +3,7 @@
 #include <noggit/ContextObject.hpp>
 #include <noggit/MapHeaders.h> // ENTRY_MDDF
 #include <noggit/Misc.h> // checkinside
+#include <noggit/MissingPlacementLog.hpp>
 #include <noggit/Model.h> // Model, etc.
 #include <noggit/ModelInstance.h>
 #include <noggit/rendering/Primitives.hpp>
@@ -179,9 +180,36 @@ void ModelInstance::intersect (glm::mat4x4 const& model_view
                               , int animtime
                               , bool animate
                               )
-{  
-  if (!finishedLoading() || model->loading_failed())
+{
+  if (!finishedLoading())
     return;
+
+  // A placement whose model failed to load used to return here, and that is the defect this
+  // whole change exists to fix: with no geometry there was nothing to ray-test, so the object
+  // could not be clicked, which meant it could not be selected, which meant it could not be
+  // deleted or repointed. The map was unfixable from inside the editor.
+  //
+  // The placeholder cube is picked instead. recalcExtents below gives the instance a real,
+  // fixed-size axis-aligned box for exactly this reason, so the same box the viewport draws is
+  // the box the ray hits -- there is no second definition of where the placeholder is.
+  //
+  // Note the deliberate absence of _transform_mat here. The rotation of a model that does not
+  // exist means nothing, and ModelInstance::recalcExtents returns before updateTransformMatrix()
+  // in the failed case, so _transform_mat is the default-constructed glm::mat4x4 from
+  // SceneObject.hpp:94, which glm leaves UNINITIALISED unless GLM_FORCE_CTOR_INIT is defined --
+  // and it is not defined anywhere in this tree. A world-space test cannot read it and so cannot
+  // be poisoned by it.
+  if (model->loading_failed())
+  {
+    ensureExtents();
+
+    if (auto const distance = ray.intersect_bounds(extents[0], extents[1]))
+    {
+      results->emplace_back(*distance, this);
+    }
+
+    return;
+  }
 
   ensureExtents();
 
@@ -224,13 +252,26 @@ bool ModelInstance::isInRenderDist(const float cull_distance, const glm::vec3& c
 {
   float dist;
 
+  // model->bounding_box_radius is INDETERMINATE for a model that failed to load: Model's
+  // constructor leaves it unset (the memset at Model.cpp:19-24 is commented out) and glm does
+  // not zero-initialise without GLM_FORCE_CTOR_INIT, which this tree never defines. This was
+  // already a latent garbage read before placeholders existed -- WorldRender.cpp reaches here
+  // for failed instances -- and the placeholder path makes it reachable on every frame, so the
+  // radius is taken from the placeholder cube instead.
+  float const radius
+    ( model->loading_failed()
+      ? Noggit::MissingPlacementGeometry::halfExtentFor(Noggit::MissingPlacementKind::Model)
+          * 1.7320508f
+      : model->bounding_box_radius * scale
+    );
+
   if (display == display_mode::in_3D)
   {
-    dist = glm::distance(camera, pos) - (model->bounding_box_radius * scale);
+    dist = glm::distance(camera, pos) - radius;
   }
   else
   {
-    dist = std::abs(pos.y - camera.y) - model->bounding_box_radius * scale;
+    dist = std::abs(pos.y - camera.y) - radius;
   }
 
   if (dist >= cull_distance)
@@ -277,7 +318,40 @@ void ModelInstance::recalcExtents()
 
   if (model->loading_failed())
   {
-    extents[0] = extents[1] = pos;
+    // Was `extents[0] = extents[1] = pos;`, a zero-volume box. Every frustum test then reported
+    // "not visible" and every ray test missed, which is the other half of why a broken placement
+    // could not be selected -- World::select_objects_in_area projects this box to screen space
+    // and a degenerate box projects to a single point.
+    //
+    // A FIXED cube, never model->bounding_box_*: those three floats are uninitialised for a
+    // model that failed to load (Model.cpp:19-24 has the memset commented out), so the previous
+    // code was right to avoid them and wrong about what to do instead.
+    float const half
+      (Noggit::MissingPlacementGeometry::halfExtentFor
+        ( isWMODoodad() ? Noggit::MissingPlacementKind::WorldModelDoodad
+                        : Noggit::MissingPlacementKind::Model
+        ));
+
+    // get_pos(), not pos. wmo_doodad_instance overrides it to return world_pos, because a WMO
+    // doodad's `pos` is in the owning WMO's local space; centring the box on `pos` would drop it
+    // wherever the map origin happens to be. update_transform_matrix_wmo gates only on
+    // finishedLoading(), which is true after a failure, so world_pos is valid here.
+    glm::vec3 const centre (get_pos());
+
+    extents[0] = centre - glm::vec3(half, half, half);
+    extents[1] = centre + glm::vec3(half, half, half);
+
+    // The circumscribed sphere of that cube: half * sqrt(3). World.cpp:3952 subtracts this from
+    // a screen-space w to decide whether an object clips the near plane, so leaving it at
+    // whatever it happened to be would make a placeholder near the camera flicker in and out of
+    // marquee selection.
+    bounding_radius = half * 1.7320508f;
+
+    // size_cat drives the distance ladder in isInRenderDist. A placeholder is a diagnostic and
+    // must not be culled by size before the thing it stands for would have been, so it is given
+    // the cube's diagonal -- the same quantity the loaded path computes from the real box.
+    size_cat = half * 2.0f * 1.7320508f;
+
     _need_recalc_extents = false;
     return;
   }
@@ -545,13 +619,22 @@ bool wmo_doodad_instance::isInRenderDist(const float cull_distance, const glm::v
 {
   float dist;
 
+  // Same indeterminate read as ModelInstance::isInRenderDist above, and reached from the WMO
+  // doodad loop in WorldRender.cpp, which does not filter failed models before calling this.
+  float const radius
+    ( model->loading_failed()
+      ? Noggit::MissingPlacementGeometry::halfExtentFor
+          (Noggit::MissingPlacementKind::WorldModelDoodad) * 1.7320508f
+      : model->bounding_box_radius * scale
+    );
+
   if (display == display_mode::in_3D)
   {
-    dist = glm::distance(camera, world_pos) - model->bounding_box_radius * scale;
+    dist = glm::distance(camera, world_pos) - radius;
   }
   else
   {
-    dist = std::abs(world_pos.y - camera.y) - model->bounding_box_radius * scale;
+    dist = std::abs(world_pos.y - camera.y) - radius;
   }
 
   if (dist >= cull_distance)

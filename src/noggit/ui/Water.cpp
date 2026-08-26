@@ -5,6 +5,7 @@
 #include <noggit/ui/Checkbox.hpp>
 #include <noggit/ui/pushbutton.hpp>
 #include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
+#include <noggit/ui/tools/UiCommon/ExtendedSlider.hpp>
 #include <noggit/ui/Water.h>
 #include <noggit/unsigned_int_property.hpp>
 #include <noggit/World.h>
@@ -16,6 +17,8 @@
 #include <QtWidgets/QGroupBox>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QRadioButton>
+
+#include <cmath>
 
 namespace Noggit
 {
@@ -35,6 +38,11 @@ namespace Noggit
       , _angled_mode(false)
       , _override_liquid_id(true)
       , _override_height(true)
+      , _brush_mode(water_brush_paint)
+      , _falloff_type(eFlattenType_Linear)
+      , _flatten_raise(true)
+      , _flatten_lower(true)
+      , _weld_seams(true)
       , _opacity_mode(auto_opacity)
       , _custom_opacity_factor(RIVER_OPACITY_VALUE)
       , _lock_pos(glm::vec3(0.0f, 0.0f, 0.0f))
@@ -102,6 +110,105 @@ namespace Noggit
       brush_layout->addRow (waterType);
 
       layout->addRow (brush_group);
+
+      // ---- vertex height ------------------------------------------------------------------
+      //
+      // The liquid height field has always been one float per vertex, 81 per chunk-layer, but
+      // every write before this group was an absolute assignment through an inclined plane:
+      // there was no way to nudge a height, no falloff at all (the radius test was a plain
+      // in/out) and nothing that read a neighbouring height. That is why shaping a slope meant
+      // stepping between flat plateaus. These controls drive the same brushes the terrain tools
+      // use, on the liquid grid.
+      auto height_group (new QGroupBox ("Vertex height", this));
+      auto height_layout (Tools::ToolPanelStyle::sectionForm (height_group));
+
+      _brush_mode_combo = new QComboBox (this);
+      _brush_mode_combo->addItem ("Paint water", QVariant (water_brush_paint));
+      _brush_mode_combo->addItem ("Raise / lower", QVariant (water_brush_raise_lower));
+      _brush_mode_combo->addItem ("Flatten", QVariant (water_brush_flatten));
+      _brush_mode_combo->addItem ("Smooth", QVariant (water_brush_smooth));
+      _brush_mode_combo->setCurrentIndex (_brush_mode);
+      _brush_mode_combo->setToolTip
+        ( "What Shift+LMB and Ctrl+LMB do.\n"
+          "Paint water: Shift adds liquid, Ctrl removes it. The original behaviour.\n"
+          "Raise / lower: Shift raises the liquid vertices under the brush, Ctrl lowers them.\n"
+          "Flatten: Shift pulls them towards the target plane, Ctrl smooths.\n"
+          "Smooth: both average each vertex against its neighbours.\n"
+          "The three height modes never add or remove liquid.\n"
+          "Flatten aims at the Angled mode plane, anchored on the Lock position when Lock is\n"
+          "on and on the liquid surface under the cursor when it is off."
+        );
+
+      // Read the item's data rather than its row, so that reordering or inserting an entry
+      // cannot silently repoint a mode at the wrong brush.
+      connect ( _brush_mode_combo, qOverload<int> (&QComboBox::currentIndexChanged)
+              , [this] { _brush_mode = _brush_mode_combo->currentData().toInt(); }
+              );
+
+      height_layout->addRow ("Mode", _brush_mode_combo);
+
+      _falloff_combo = new QComboBox (this);
+      _falloff_combo->addItem ("Flat", QVariant (eFlattenType_Flat));
+      _falloff_combo->addItem ("Linear", QVariant (eFlattenType_Linear));
+      _falloff_combo->addItem ("Smooth", QVariant (eFlattenType_Smooth));
+      _falloff_combo->setCurrentIndex (_falloff_type);
+      _falloff_combo->setToolTip
+        ( "How the brush strength falls off towards the rim, using the same curves as the\n"
+          "terrain tools. Flat applies the full strength everywhere inside the radius, which\n"
+          "is what the water tool did before it had a falloff at all."
+        );
+
+      connect ( _falloff_combo, qOverload<int> (&QComboBox::currentIndexChanged)
+              , [this] { _falloff_type = _falloff_combo->currentData().toInt(); }
+              );
+
+      height_layout->addRow ("Falloff", _falloff_combo);
+
+      // Range 0-10 and start 2, which is flatten_blur_tool's Speed slider verbatim
+      // (FlattenTool.cpp:112-114). It has to be that one and not TerrainTool's, whose range is
+      // 0-1000, because this single slider feeds both the raise/lower rate and the exponent of
+      // the flatten and smooth blend, and an exponent of 1000 would snap in one tick.
+      _strength_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider (this);
+      _strength_slider->setPrefix ("Strength:");
+      _strength_slider->setRange (0, 10);
+      _strength_slider->setSingleStep (1);
+      _strength_slider->setValue (2.0f);
+      height_layout->addRow (_strength_slider);
+
+      _inner_radius_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider (this);
+      _inner_radius_slider->setPrefix ("Inner radius:");
+      _inner_radius_slider->setRange (0.0, 1.0);
+      _inner_radius_slider->setDecimals (2);
+      _inner_radius_slider->setSingleStep (0.05f);
+      _inner_radius_slider->setValue (0);
+      _inner_radius_slider->setToolTip
+        ( "How much strength survives at the rim of the brush. The Linear curve in\n"
+          "MapChunk::changeTerrainProcessVertex is 1 - dist * (1 - inner) / radius, so 0 falls\n"
+          "away to nothing at the rim and 1 removes the falloff entirely. That curve is the\n"
+          "only one that consults it, so it is inert on Flat and Smooth -- the same as in the\n"
+          "terrain tools."
+        );
+      height_layout->addRow (_inner_radius_slider);
+
+      auto* const raise_check (new CheckBox ("Raise", &_flatten_raise, this));
+      raise_check->setToolTip ("Let Flatten and Smooth move a vertex upwards.");
+      height_layout->addRow (raise_check);
+
+      auto* const lower_check (new CheckBox ("Lower", &_flatten_lower, this));
+      lower_check->setToolTip ("Let Flatten and Smooth move a vertex downwards.");
+      height_layout->addRow (lower_check);
+
+      auto* const weld_check (new CheckBox ("Weld chunk seams", &_weld_seams, this));
+      weld_check->setToolTip
+        ( "A liquid vertex on a chunk border is stored once per chunk, twice on an edge and up\n"
+          "to four times at a tile corner, and a map can arrive with those copies already\n"
+          "disagreeing -- which is what a tear at a water seam is. This averages every copy\n"
+          "the brush touched after each stroke, so the seam closes instead of merely not\n"
+          "getting worse."
+        );
+      height_layout->addRow (weld_check);
+
+      layout->addRow (height_group);
 
       auto angle_group (new QGroupBox ("Angled mode", this));
       angle_group->setCheckable (true);
@@ -337,6 +444,107 @@ namespace Noggit
                          , _override_liquid_id.get()
                          , get_opacity_factor()
                          );
+    }
+
+    flatten_mode water::current_flatten_mode() const
+    {
+      return flatten_mode (_flatten_raise.get(), _flatten_lower.get());
+    }
+
+    glm::vec3 water::flatten_origin (World* world, glm::vec3 const& pos) const
+    {
+      if (_locked.get())
+      {
+        return _lock_pos;
+      }
+
+      float height;
+
+      // A negative liquid id means "whatever layer has data here", which is right for an
+      // anchor: the user is pointing at a water surface, not at a layer index.
+      if (world->getLiquidHeight (pos.x, pos.z, -1, height))
+      {
+        return glm::vec3 (pos.x, height, pos.z);
+      }
+
+      return pos;
+    }
+
+    void water::weld_if_enabled (World* world, glm::vec3 const& pos)
+    {
+      if (_weld_seams.get())
+      {
+        world->weldLiquidSeams (pos, _radius, get_opacity_factor());
+      }
+    }
+
+    void water::raiseLowerLiquid (World* world, glm::vec3 const& pos, float delta_time, bool raise)
+    {
+      // 7.5 units per second per point of strength, which is the constant RaiseLowerTool::onTick
+      // passes to TerrainTool::changeTerrain before the speed slider multiplies it. Reusing it
+      // means a liquid raise and a ground raise at the same strength climb together, which is
+      // what you want when you are shaping a river bed and its water in the same session.
+      float const change ((raise ? 7.5f : -7.5f) * delta_time
+                          * static_cast<float> (_strength_slider->value()));
+
+      world->changeLiquidHeight ( pos
+                                , change
+                                , _radius
+                                , static_cast<float> (_inner_radius_slider->value())
+                                , _falloff_type
+                                , get_opacity_factor()
+                                );
+
+      weld_if_enabled (world, pos);
+    }
+
+    void water::flattenLiquid (World* world, glm::vec3 const& pos, float delta_time)
+    {
+      world->flattenLiquidHeight ( pos
+                                 , blend_for (delta_time)
+                                 , _radius
+                                 , _falloff_type
+                                 , current_flatten_mode()
+                                 , flatten_origin (world, pos)
+                                 , math::degrees (_angled_mode.get() ? _angle : 0.0f)
+                                 , math::degrees (_angled_mode.get() ? _orientation : 0.0f)
+                                 , get_opacity_factor()
+                                 );
+
+      weld_if_enabled (world, pos);
+    }
+
+    void water::smoothLiquid (World* world, glm::vec3 const& pos, float delta_time)
+    {
+      world->smoothLiquidHeight ( pos
+                                , blend_for (delta_time)
+                                , _radius
+                                , _falloff_type
+                                , current_flatten_mode()
+                                , get_opacity_factor()
+                                );
+
+      weld_if_enabled (world, pos);
+    }
+
+    float water::blend_for (float delta_time) const
+    {
+      // 1 - 0.5^(dt * strength), the same exponential approach flatten_blur_tool uses for
+      // terrain. It is the frame-rate-independent form: the fraction of the gap LEFT after a
+      // tick is 0.5^(dt * strength), and two 8 ms ticks leave 0.5^(0.008 * k) squared, which is
+      // 0.5^(0.016 * k) - exactly what one 16 ms tick leaves. A fixed weight per tick would
+      // instead make the brush bite twice as hard at twice the frame rate.
+      return 1.f - std::pow (0.5f, delta_time * static_cast<float> (_strength_slider->value()));
+    }
+
+    int water::brushMode() const
+    {
+      return _brush_mode;
+    }
+
+    float water::innerRadius() const
+    {
+      return static_cast<float> (_inner_radius_slider->value());
     }
 
     void water::lockPos(glm::vec3 const& cursor_pos)

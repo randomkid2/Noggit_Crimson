@@ -189,6 +189,49 @@
  * Neither is pure white or pure black -- the editor has to stay legible beside
  * a sunlit viewport, and pure endpoints bloom against it.
  *
+ * THE BRAND RANK -- the project-selection window and brand furniture ONLY.
+ * This is a product identity, not a second accent, and the rule that keeps it
+ * honest is set out in full at the launcher section near the foot of this file.
+ * It appears on exactly one window, on the banner, the wordmark, the primary
+ * action's fill and border, the section ticks and a selected project card.
+ * Nothing in the editor's chrome, none of the 34 generated icons, no
+ * DesignTokens value and no QPalette role moves.
+ *   brand.crimson    #E5405C   hue 349.8, sat 76.0%, L 57.5%. void 4.790,
+ *                              band.left 4.620, band.right 4.939, panel 3.746.
+ *                              BARRED FROM bg.raised: 2.925, under the 3:1
+ *                              graphical floor. Ink on it 4.790; text.hi on it
+ *                              3.535, so a SOLID crimson surface carries ink
+ *                              and never light text.
+ *   brand.crimson.hi #F05A73   hover on a brand border. 5.887 on void, 4.689
+ *                              on the hover fill below, and 1.229:1 above
+ *                              brand.crimson so the step is felt.
+ *   band.left        #17120F   the banner band at its lit end
+ *   band.right       #0B0908   and at its dark end. 1.069:1 apart -- a felt
+ *                              darkening, not a boundary.
+ *   brand.fill       #2E1516   brand.crimson at 14% straight sRGB alpha over
+ *                              bg.void. text.hi on it 14.940, the crimson
+ *                              border on it 4.226.
+ *   brand.fill.hi    #3F191D   at 22%. text.hi 13.487, crimson.hi border 4.689,
+ *                              and 1.108:1 above brand.fill.
+ *   brand.fill.lo    #501D23   at 30%. text.hi 11.973, crimson border 3.387,
+ *                              and 1.248:1 above brand.fill.
+ *   card.hover       #34312C   text #E4DFD7 at 6% over bg.panel -- a project
+ *                              card hovered. 1.164:1 above the card fill;
+ *                              text.hi 11.378, text.dim 6.517, info 5.404.
+ *   card.select      #3C2927   brand.crimson at 10% over bg.panel -- a project
+ *                              card selected. text.hi 11.992, text.dim 6.869,
+ *                              info 5.696, crimson border on it 3.392.
+ * THE FILLS ARE PRE-COMPOSITED for the same reason bad.tint and warn.tint are:
+ * a widget-level sheet outranks this one, so a control dressed from C++ has to
+ * be able to name the identical literal. An rgba() would composite against
+ * whatever happened to be underneath.
+ * SEPARATION: brand.crimson is 16.0 degrees from bad #E86F62, which is the same
+ * order this sheet already lives with between accent and warn (15.8), and 50.5
+ * degrees from the accent. It is safe on this one window for a checkable
+ * reason -- there is no destructive control on it -- and FORM does the rest: a
+ * 72px full-width action card with a 40px filled tile and a halo is not
+ * something a 28px inline danger button could be mistaken for.
+ *
  * WORKED ARITHMETIC, so the method can be checked. Relative luminance: per
  * channel c/255, then c<=0.04045 ? c/12.92 : ((c+0.055)/1.055)^2.4;
  * L = 0.2126R + 0.7152G + 0.0722B. Ratio = (Lmax+0.05)/(Lmin+0.05).
@@ -3323,12 +3366,15 @@ QWidget[accessibleName="main_menu_minimap_holder"] {
 	border-radius: 12px;
 }
 
-/* The two headings on the project selection window -- "Recent Projects" and
-   "Getting Started". They head a whole window column rather than a section
-   inside a panel, so they take 17/600 text.hi, one rank above the 15px window
-   title. They used to carry an INLINE style sheet set from
-   NoggitProjectSelectionWindow.cpp, which outranks the application sheet; that
-   inline sheet is gone and this is the rule that dresses them now. */
+/* The published column-heading rank, Style::NAME_SECTION_TITLE in UiStyle.hpp.
+   17/600 text.hi, one rank above the 15px window title, for a heading that
+   names a whole window column rather than a section inside a panel.
+
+   NOTHING WEARS IT AT THE MOMENT. The project-selection window's two headings
+   moved to QLabel#launcher-heading at the foot of this file, which is the same
+   rank expressed as letterspaced capitals. The rule stays because the name is
+   published from UiStyle.hpp as part of the design system's vocabulary, and a
+   published handle that resolves to nothing is worse than an unused rule. */
 QLabel#project-section-title {
 	color: #F3F0E9;
 	background: transparent;
@@ -3337,54 +3383,53 @@ QLabel#project-section-title {
 	padding: 0px 0px 6px 0px;
 }
 
-/* The recent-projects list. Every row is a ProjectListItem widget laid over
-   the item, so the ROW draws the hover and the ITEM draws the selection: the
-   widget background is transparent, which is what lets the view own selection
-   wash show through from underneath it.
+/* The recent-projects list. THE WELL IS GONE and so are the view's own
+   selection states, and both for the same reason: the rows are CARDS now.
 
-   THE WELL IS WHAT FIXED THE ROW. In the previous sheet this list sat on
-   bg.base and its five selection states measured 5.38 / 4.75 / 4.35 / 3.80 /
-   4.33 for the secondary caption -- three of them under the 4.5 floor -- which
-   is what the extra `text.mid` token existed to paper over. On a bg.void well
-   the same five states measure, for text.dim:
+   The old shape was a bg.void well with an edge border holding transparent
+   rows, so the WELL was the object and a row was a line of text inside it.
+   That worked while the window body was bg.panel. The launcher body is bg.void
+   now, which makes a bg.void well a box drawn around nothing -- 1.000:1
+   against the ground it sits on -- so the well is deleted and each project is
+   an object in its own right: a bg.panel fill on the bg.void root, a 1.279:1
+   surface step, with an edge #8A8378 border at 4.018:1 against its own fill
+   and 5.138:1 against the root.
 
-     row at rest            #100E0B    9.70
-     row hovered            #292621    7.58
-     row selected, active   #423213    6.23
-     row selected + hovered #564117    4.88
-     row selected, inactive #3C3732    5.92
+   SELECTION MOVED TO THE CARD, at QWidget#project-card below. A card is
+   opaque, so any wash the view painted underneath it would be invisible --
+   which is exactly why the row widget used to be transparent. The state is set
+   from RecentProjectsComponent through Style::applyState.
 
-   The worst reading in the matrix is 4.88:1 against 3.80:1 before, so the
-   caption goes back to text.dim and text.mid is deleted rather than
-   maintained. */
+   The 12px bottom margin on ::item is what separates one card from the next;
+   ProjectListItem's ITEM_CHROME_HEADROOM is the same number, because the
+   delegate takes the margin back off the row it hands the card. */
 QListWidget[accessibleName="project_list"] {
-	background-color: #100E0B;
-	border: 1px solid #8A8378;
-	border-radius: 12px;
-	padding: 4px;
+	background: transparent;
+	border: none;
+	padding: 0px;
 }
 
 QListWidget[accessibleName="project_list"]::item {
 	background: transparent;
 	border: none;
-	border-left: 2px solid transparent;
-	border-radius: 6px;
 	padding: 0px;
-	margin: 2px 2px;
+	margin: 0px 0px 12px 0px;
 }
 
-QListWidget[accessibleName="project_list"]::item:selected:active {
-	background-color: rgba(223, 165, 46, 0.24);
-	border-left: 2px solid #DFA52E;
-}
-
+QListWidget[accessibleName="project_list"]::item:selected:active,
 QListWidget[accessibleName="project_list"]::item:selected:!active {
-	background-color: #3C3732;
-	border-left: 2px solid #746D64;
+	background: transparent;
+	border: none;
 }
 
-/* The row widget itself. It is a plain QWidget, so it only paints a style
-   sheet background because the constructor sets WA_StyledBackground.
+/* The map-list and bookmark row. THIS IS NO LONGER THE PROJECT ROW: the
+   project-selection window's rows became cards and moved to #project-card at
+   the foot of this file. MapListItem.cpp and MapBookmarkListItem.cpp are what
+   still wear this name, and they are still strips inside a well, so everything
+   below is unchanged and still correct for them.
+
+   It is a plain QWidget, so it only paints a style sheet background because
+   the constructor sets WA_StyledBackground.
 
    Hover is a TRANSLUCENT lift rather than an opaque plate, deliberately: an
    opaque fill here would cover the selection wash the view painted underneath,
@@ -3663,4 +3708,360 @@ QLabel#DockWidgetAreaLabel {
 	color: #BFB7AA;
 	font-size: 11px;
 	font-weight: 700;
+}
+
+
+/* ============================================================================
+   THE PROJECT-SELECTION WINDOW -- THE BRAND RANK
+   ============================================================================
+   brand.crimson is scoped to THIS WINDOW and to brand furniture, and it has to
+   stay that way. Red already means "will destroy your data" everywhere else in
+   this application (bad #E86F62), and the accent moved OFF crimson precisely
+   because one red could not carry both meanings -- the old accent #E8543F and
+   the old error #E0574B measured 1.024:1 apart in luminance and 4.0 degrees in
+   hue, i.e. the same colour, which is why red meant eight different things.
+
+   brand.crimson is 16.0 degrees from bad and 50.5 degrees from the accent. The
+   16.0 is the same order of separation this sheet already lives with between
+   accent and warn (15.8), and it is safe HERE for one checkable reason:
+
+     THERE IS NO DESTRUCTIVE CONTROL ON THIS WINDOW.
+
+   Create, Open, Convert, Settings, and a context menu whose only destructive
+   action is commented out. If a [state="danger"] control is ever added to the
+   project-selection window, this whole section has to go back to the accent.
+   That is the test; it is one grep.
+
+   TWO HARD LIMITS, both measured:
+
+     * text.hi on SOLID brand.crimson is 3.535:1 and fails the 4.5 body floor.
+       A solid crimson surface carries INK #100E0B (4.790:1) and nothing else.
+       The primary action's LABEL is therefore not on crimson at all -- it sits
+       on the tinted fill brand.fill, at 14.940:1.
+     * brand.crimson is BARRED FROM bg.raised at 2.925:1, under the 3:1 floor
+       for a graphical object. It appears on bg.void (4.790), band.left
+       (4.620), band.right (4.939) and bg.panel (3.746) only.
+
+   THE BANNER IS NOT STYLED HERE beyond its colours. BrandBanner paints itself:
+   Qt style sheets have no letter-spacing and no text-transform, and no way at
+   all to fill glyphs with a gradient, so the wordmark is a QPainter. The
+   qproperty- declarations below are how the theme keeps ownership of the
+   colours that painter would otherwise hardcode.
+   ========================================================================= */
+
+/* The near-black ground the mockup asks for. QMainWindow is already bg.void,
+   but the central widget was matching the global QWidget rule and painting
+   bg.panel, so the launcher body was panel-grey under a bg.void title bar. */
+QWidget#project-selection-root {
+	background-color: #100E0B;
+}
+
+/* The band. It paints an opaque texture over its whole rect, so this rule is
+   about the colours rather than about the fill; `background: transparent` is
+   here so a future revision that leaves a gap does not show bg.panel through
+   it. qproperty- resolves ONCE, at polish, which is before the first paint --
+   the widget's setters only have to drop its cached pixmap. */
+Noggit--Ui--Widget--BrandBanner {
+	background: transparent;
+	qproperty-bandLeft: #17120F;
+	qproperty-bandRight: #0B0908;
+	qproperty-contourInk: #E5405C;
+	qproperty-ruleInk: #E5405C;
+	qproperty-wordmarkTop: #F3F0E9;
+	qproperty-wordmarkMid: #E4DFD7;
+	qproperty-wordmarkBottom: #A9A296;
+	qproperty-wordmarkAccent: #E5405C;
+}
+
+/* --- the section headings ------------------------------------------------ */
+
+/* THE CAPITALS ARE IN THE STRING and the tracking is a QFont, because Qt style
+   sheets have neither text-transform nor letter-spacing -- see
+   applyHeadingTracking() in NoggitProjectSelectionWindow.cpp for the mechanism
+   that makes the tracking survive this sheet's font resolution.
+
+   text.dim rather than text.hi: a heading that names a region is a label for
+   what is under it, and the cards and the action buttons are the objects. It
+   is 9.699:1 on the bg.void ground, well over the 7:1 prose floor this sheet
+   sets for itself.
+
+   The tick is this label's border-left, and it is the one place the mockup
+   cannot be followed exactly: a border-left is always the full height of the
+   label's box, so it cannot be the short mark the mockup draws. 3px against an
+   11px line box with 3px of padding either side gives a 19px tick, which is
+   the closest honest approximation. brand.crimson on bg.void is 4.790:1. */
+QLabel#launcher-heading {
+	color: #BFB7AA;
+	background: transparent;
+	font-size: 11px;
+	font-weight: 700;
+	border-left: 3px solid #E5405C;
+	padding: 3px 0px 3px 10px;
+}
+
+/* stroke, not stroke.soft: 2.422:1 on bg.void against 1.740:1, and this rule
+   has to carry across a whole column rather than seam two surfaces inside a
+   panel. A seam carries no 3:1 duty -- it is not an object. */
+QFrame#launcher-heading-rule {
+	background-color: #565049;
+	border: none;
+	max-height: 1px;
+}
+
+/* The row that holds the two of them. A plain QWidget picks up the global
+   QWidget background under this sheet, so it has to be told not to. */
+QWidget#launcher-heading-row {
+	background: transparent;
+	border: none;
+}
+
+/* --- the action cards ---------------------------------------------------- */
+
+/* A 72px BOX, and the arithmetic matters because QSS min-/max-height size the
+   CONTENT rect and not the box:
+
+       1 border + 14 padding + 42 content + 14 padding + 1 border = 72
+
+   BOTH min and max, because the form gives these buttons Preferred vertical
+   policy and the column carries an Expanding spacer that would stretch them.
+   The 40px icon tile fits the 42px content rect with a pixel either side.
+
+   text-align: left aligns the icon and the label as ONE GROUP --
+   QCommonStyle::drawControl(CE_PushButtonLabel) lays them out together with a
+   hardcoded 4px between them, which is why the tile pixmap carries 12px of
+   transparency on its right rather than this rule trying to space them.
+
+   The fill is bg.panel on the bg.void root, a 1.279:1 surface step, and the
+   edge border is 4.018:1 against that fill and 5.138:1 against the root. The
+   label is text at 11.364:1. */
+QPushButton#launcher-action {
+	background-color: #292621;
+	color: #E4DFD7;
+	border: 1px solid #8A8378;
+	border-radius: 12px;
+	padding: 14px 20px 14px 16px;
+	min-height: 42px;
+	max-height: 42px;
+	font-size: 14px;
+	font-weight: 600;
+	text-align: left;
+}
+
+/* HOVER LIFTS: the fill goes up one surface step to bg.raised (1.281:1) and
+   the edge goes to the hover stroke text.dim, 5.922:1 on that fill and 1.888:1
+   above the resting edge. Label to text.hi, 10.339:1. */
+QPushButton#launcher-action:hover {
+	background-color: #3C3732;
+	color: #F3F0E9;
+	border: 1px solid #BFB7AA;
+}
+
+/* PRESS RECESSES to the floor. text.hi on bg.void is 16.933:1 and the edge is
+   5.138:1, so the card is at its most legible at the moment it is clicked. */
+QPushButton#launcher-action:pressed {
+	background-color: #100E0B;
+	color: #F3F0E9;
+	border: 1px solid #8A8378;
+}
+
+/* Focus stays GOLD even on this window. Focus means "the thing you are acting
+   on" and that is the accent's one job application-wide; making it crimson
+   here would be the brand leaking into a system signal. 6.860:1 on the card
+   fill. */
+QPushButton#launcher-action:focus {
+	border: 1px solid #DFA52E;
+}
+
+/* The disabled card RECEDES to bg.alt and drops to a seam edge. It must not
+   share bg.panel with an enabled card, which is what the base QPushButton
+   :disabled rule would have given it -- 1.000:1, literally the same surface.
+   bg.alt is 1.158:1 below the enabled fill and 1.104:1 below the root, and
+   text.off on it is 3.988:1: sub-threshold BY DESIGN. WCAG 2.1 SC 1.4.3
+   exempts inactive components, and being under the floor IS the signal. */
+QPushButton#launcher-action:disabled {
+	background-color: #1D1916;
+	color: #7F786A;
+	border: 1px solid #403B35;
+}
+
+/* THE PRIMARY. The fill is brand.crimson pre-composited over bg.void at 14%,
+   the border is the brand colour at full strength, and the label is text.hi at
+   14.940:1 on that fill -- which is the whole point of tinting rather than
+   filling: text.hi on SOLID crimson would be 3.535:1 and would fail.
+
+   The border reads 4.226:1 against its own fill and 4.790:1 against the
+   bg.void root, so the card's outline clears the 3:1 graphical floor twice
+   over.
+
+   THE OUTER GLOW IS NOT HERE. Qt style sheets have no box-shadow -- it is not
+   in the Qt 5.15 property list, so it would be silently dropped and
+   check_qss.py would report it as an unknown property. It is a
+   QGraphicsDropShadowEffect with a zero offset, applied in applyVisualDesign()
+   at brand.crimson 40%; the halo's brightest point composites to #65222B,
+   1.667:1 above bg.void. */
+QPushButton#launcher-action[state="primary"] {
+	background-color: #2E1516;
+	color: #F3F0E9;
+	border: 1px solid #E5405C;
+}
+
+QPushButton#launcher-action[state="primary"]:hover {
+	background-color: #3F191D;
+	color: #F3F0E9;
+	border: 1px solid #F05A73;
+}
+
+/* THE PRESSED BORDER STAYS brand.crimson rather than dropping to a darker
+   crimson. A #B82E46 border on this fill measures 2.282:1 -- under the 3:1
+   floor, so the card would lose its outline at the moment it is pressed.
+   brand.crimson on the same fill is 3.387:1 and clears it. The press is felt
+   through the fill instead: 1.248:1 below the resting fill, which is a larger
+   step than the hover's 1.108:1. */
+QPushButton#launcher-action[state="primary"]:pressed {
+	background-color: #501D23;
+	color: #F3F0E9;
+	border: 1px solid #E5405C;
+}
+
+/* The one place text.hi is a BORDER on this window. On the crimson card a gold
+   focus ring would sit 50.5 degrees from a border it has to be told apart
+   from; text.hi on the rest fill is 14.940:1 and is unmistakable. This matches
+   what the sheet already does for QPushButton[state="primary"]:focus. */
+QPushButton#launcher-action[state="primary"]:focus {
+	border: 1px solid #F3F0E9;
+}
+
+/* --- the gear ------------------------------------------------------------ */
+
+/*     1 border + 8 padding + 22 content + 8 padding + 1 border = 40
+
+   border-left is restated in every state because the base QToolButton rule
+   declares `border-left: 3px solid transparent` as a reserve for the active
+   marker, and a bare `border:` shorthand in one state but not another reflows
+   the button by two pixels as the pointer crosses it. */
+QToolButton#launcher-gear {
+	background-color: #292621;
+	color: #BFB7AA;
+	border: 1px solid #8A8378;
+	border-left: 1px solid #8A8378;
+	border-radius: 10px;
+	padding: 8px;
+	min-width: 22px;
+	min-height: 22px;
+	max-width: 22px;
+	max-height: 22px;
+}
+
+QToolButton#launcher-gear:hover {
+	background-color: #3C3732;
+	color: #F3F0E9;
+	border: 1px solid #BFB7AA;
+	border-left: 1px solid #BFB7AA;
+}
+
+QToolButton#launcher-gear:pressed {
+	background-color: #100E0B;
+	color: #F3F0E9;
+	border: 1px solid #8A8378;
+	border-left: 1px solid #8A8378;
+}
+
+QToolButton#launcher-gear:focus {
+	border: 1px solid #DFA52E;
+	border-left: 1px solid #DFA52E;
+}
+
+/* --- the project card ---------------------------------------------------- */
+
+/* One project. bg.panel on the bg.void root is a 1.279:1 surface step and the
+   edge border is 4.018:1 against the fill and 5.138:1 against the root, so the
+   card is an object by both cues rather than by a fill difference alone --
+   which is the failure the whole edge ramp exists to fix.
+
+   12px radius: the CONTAINER tier. A card is a container, not a control. */
+QWidget#project-card {
+	background-color: #292621;
+	border: 1px solid #8A8378;
+	border-radius: 12px;
+}
+
+QWidget#project-card:hover {
+	background-color: #34312C;
+	border: 1px solid #BFB7AA;
+}
+
+/* SELECTED, and it has to come after :hover -- the two selectors tie on Qt
+   specificity (an element name is +1 and an id and an attribute selector are
+   +0x10 each, so both are 1 + 0x10 + 0x10 = 33) and a tie is decided by
+   document order. A selected card that loses its state under the pointer would
+   be worse than no state at all.
+
+   The state is set from RecentProjectsComponent through Style::applyState,
+   because Qt only re-evaluates a rule that selects on a dynamic property after
+   an unpolish/polish. */
+QWidget#project-card[state="selected"] {
+	background-color: #3C2927;
+	border: 1px solid #E5405C;
+}
+
+QWidget#project-card[state="selected"]:hover {
+	background-color: #3C2927;
+	border: 1px solid #F05A73;
+}
+
+QLabel#project-card-name {
+	color: #F3F0E9;
+	background: transparent;
+	font-size: 17px;
+	font-weight: 600;
+	padding: 0px;
+}
+
+QLabel#project-card-path {
+	color: #BFB7AA;
+	background: transparent;
+	font-size: 11px;
+	padding: 0px;
+}
+
+/* The expansion is INFORMATION -- an identity, not a location and not an
+   action -- so it takes info and not the accent, for the same reason
+   QLabel[openExternalLinks="true"] does. 6.289:1 on the card fill, 5.696:1 on
+   the selected fill and 5.404:1 on the hover fill. It used to share the path's
+   caption rank and colour, which said the two lines were the same kind of
+   thing. */
+QLabel#project-card-expansion {
+	color: #6FAEDC;
+	background: transparent;
+	font-size: 12px;
+	font-weight: 600;
+	padding: 0px;
+}
+
+QLabel#project-card-date {
+	color: #BFB7AA;
+	background: transparent;
+	font-size: 11px;
+	padding: 0px;
+}
+
+/* A seam inside a container, which is exactly what stroke.soft is for: 1.360:1
+   on the card fill. It carries no 3:1 duty because it is not an object -- it
+   separates the card's footer from its body and nothing depends on seeing it.
+   It is hidden altogether when the project has no readable date. */
+QFrame#project-card-separator {
+	background-color: #403B35;
+	border: none;
+	max-height: 1px;
+}
+
+/* The three painted marks and the footer row. All of them are pixmaps or plain
+   containers, so they only need to be told to stay out of the card's way. */
+QLabel#project-card-icon,
+QLabel#project-card-art,
+QLabel#project-card-date-glyph,
+QWidget#project-card-date-row {
+	background: transparent;
+	border: none;
+	padding: 0px;
 }

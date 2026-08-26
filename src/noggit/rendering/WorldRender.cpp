@@ -14,8 +14,10 @@
 #include <noggit/TileIndex.hpp>
 #include <noggit/MinimapRenderSettings.hpp>
 #include <noggit/Misc.h>
+#include <noggit/MissingPlacementLog.hpp>
 #include <noggit/Model.h>
 #include <noggit/ModelInstance.h>
+#include <noggit/rendering/PlaceholderCube.hpp>
 #include <noggit/project/CurrentProject.hpp>
 #include <noggit/World.h>
 
@@ -406,6 +408,26 @@ void WorldRender::draw (glm::mat4x4 const& model_view
   std::vector<WMOInstance*> wmos_to_draw;
   std::unordered_map<Model*, std::size_t> model_boxes_to_draw;
 
+  // Placements whose model or WMO failed to load. Filled in the three branches below and drawn
+  // once, after the model boxes, as PlaceholderCube.
+  //
+  // Before this existed a failed placement was drawn as NOTHING -- ModelRender::draw and
+  // WMOInstance::draw both return at the top on loading_failed() -- so the mapper's map had a
+  // hole in it with no indication that anything was meant to be there. It is collected here
+  // rather than being handed straight to a draw call because a draw call per object inside the
+  // gather loop would break the one program bind the batch is worth.
+  std::vector<Noggit::Rendering::Primitives::PlaceholderCubeInstance> placeholders_to_draw;
+
+  // Never in a generated minimap: a placeholder is a diagnostic about the editor's client data,
+  // and baking one into a .blp that ships to players would be a real defect rather than a
+  // cosmetic one.
+  //
+  // The toggle is read from MissingPlacementLog rather than from render_settings because
+  // WorldRenderParams -- where it belongs, beside draw_models_with_box -- is in a header being
+  // edited by other work in this change set. Read once per frame, not per object.
+  bool const draw_placeholders
+    (!render_settings.minimap_render && Noggit::MissingPlacementLog::instance().drawPlaceholders());
+
   // Database spawns, grouped by (model, display id) rather than by model alone.
   //
   // The extra key is not incidental. A creature M2 carries no skin of its own -- the mesh is
@@ -464,6 +486,69 @@ void WorldRender::draw (glm::mat4x4 const& model_view
     {
       if (!pair.first->finishedLoading())
         continue;
+
+      // MISSING ASSET PLACEHOLDERS.
+      //
+      // Handled here, above the eMODEL/eWMO split, because the two branches below immediately
+      // reinterpret_cast the key to a Model* or the instances to WMOInstance* and then read
+      // members that a failed load never wrote. Catching the failure first means neither branch
+      // has to be made defensive.
+      //
+      // Deliberately NOT gated on render_settings.draw_models or draw_wmo. Hiding models is how
+      // a mapper looks at terrain; hiding the markers that say "a model is broken here" at the
+      // same time would remove them from the one view where they are easiest to find. The
+      // dedicated toggle in the View menu is what turns these off.
+      if (pair.first->loading_failed())
+      {
+        for (auto& instance : pair.second)
+        {
+          instance->_rendered_last_frame = false;
+        }
+
+        if (!draw_placeholders || pair.second.empty())
+        {
+          continue;
+        }
+
+        Noggit::MissingPlacementKind const placeholder_kind
+          ( pair.second[0]->which() == eWMO ? Noggit::MissingPlacementKind::WorldModel
+                                            : Noggit::MissingPlacementKind::Model
+          );
+
+        for (auto& instance : pair.second)
+        {
+          if (instance->frame == frame)
+          {
+            continue;
+          }
+
+          instance->frame = frame;
+
+          // getExtents() is virtual and both subclasses now return the placeholder cube for a
+          // failed asset, so this is the same box the ray test in intersect() uses -- there is
+          // exactly one definition of where a placeholder is.
+          auto const& placeholder_extents = instance->getExtents();
+
+          if (!frustum.intersects(placeholder_extents[1], placeholder_extents[0]))
+          {
+            continue;
+          }
+
+          if (glm::distance(camera_pos, instance->pos) > _cull_distance)
+          {
+            continue;
+          }
+
+          Noggit::Rendering::Primitives::PlaceholderCubeInstance placeholder;
+          placeholder.centre = instance->pos;
+          placeholder.kind = placeholder_kind;
+          placeholder.selected = _world->is_selected(instance->uid);
+
+          placeholders_to_draw.push_back(placeholder);
+        }
+
+        continue;
+      }
 
       if (pair.second[0]->which() == eMODEL)
       {
@@ -637,6 +722,56 @@ void WorldRender::draw (glm::mat4x4 const& model_view
                     if (doodad.frame == frame)
                         continue;
                     doodad.frame = frame;
+
+                    // Nothing in this loop checked finishedLoading(), and the two lines further
+                    // down read doodad.model->bounding_box_radius, which is written only by a
+                    // successful load. A doodad still streaming in was therefore measured
+                    // against an indeterminate float every frame until it arrived. Skipping it
+                    // costs nothing: ModelRender::draw returns at the top for the same condition,
+                    // so it was never drawn on those frames either.
+                    if (!doodad.model->finishedLoading())
+                      continue;
+
+                    // A doodad named in the WMO's MODD chunk whose .m2 is not in the client data.
+                    // This is the case nothing in the program distinguished before: the building
+                    // is there and one of its props silently is not, so the mapper sees a room
+                    // that looks finished and is not, with no way to find out which model is
+                    // wanted short of opening the .wmo in an external tool.
+                    //
+                    // It also has to be caught HERE, before the two lines below: `dist` reads
+                    // doodad.model->bounding_box_radius and isInRenderDist reads it again, and
+                    // that float is indeterminate for a model that failed to load. That garbage
+                    // read predates this feature -- nothing in this loop filtered failed models.
+                    //
+                    // world_pos, not pos: a WMO doodad's pos is in the owning WMO's local space.
+                    // update_transform_matrix_wmo gates only on finishedLoading(), which is true
+                    // after a failure, so world_pos and the extents it feeds are both valid.
+                    if (doodad.model->loading_failed())
+                    {
+                      if (!draw_placeholders)
+                        continue;
+
+                      auto const& doodad_extents = doodad.getExtents();
+
+                      if (!frustum.intersects(doodad_extents[1], doodad_extents[0]))
+                        continue;
+
+                      if (glm::distance(camera_pos, doodad.world_pos) > _cull_distance)
+                        continue;
+
+                      Noggit::Rendering::Primitives::PlaceholderCubeInstance placeholder;
+                      placeholder.centre = doodad.world_pos;
+                      placeholder.kind = Noggit::MissingPlacementKind::WorldModelDoodad;
+
+                      // Never highlighted as selected, because a WMO doodad is not a selectable
+                      // placement -- it has no MDDF entry and no uid of its own. The handle for
+                      // fixing it is the owning WMO, whose uid the Missing Objects panel shows.
+                      placeholder.selected = false;
+
+                      placeholders_to_draw.push_back(placeholder);
+
+                      continue;
+                    }
 
                     // skip no geometry boxes for WMO doodads
                     if (doodad.model->use_fake_geometry())
@@ -1213,6 +1348,18 @@ void WorldRender::draw (glm::mat4x4 const& model_view
       }
     }
     model_boxes_to_draw.clear();
+
+    // Missing-asset placeholders, drawn here and not earlier for two reasons: the state the
+    // block above leaves behind is exactly what an opaque cube wants (blending off, depth writes
+    // on), and drawing after the real geometry means a placeholder standing inside a building is
+    // depth-tested against it rather than painted over it.
+    if (!placeholders_to_draw.empty())
+    {
+      Noggit::Rendering::Primitives::PlaceholderCube::getInstance(_world->_context)
+        .draw(projection * model_view, placeholders_to_draw);
+    }
+
+    placeholders_to_draw.clear();
 
     // render m2 selection boxes.
     // TODO can try to move to m2 box shader but it requires some refactor
@@ -1800,6 +1947,7 @@ void WorldRender::unload()
   _vertex_arrays.unload();
 
   Noggit::Rendering::Primitives::WireBox::getInstance(_world->_context).unload();
+  Noggit::Rendering::Primitives::PlaceholderCube::getInstance(_world->_context).unload();
 }
 
 

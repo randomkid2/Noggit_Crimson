@@ -67,6 +67,11 @@ namespace Noggit
   {
     class ToolPanel;
 
+    namespace MissingObjects
+    {
+      class MissingObjectsPanel;
+    }
+
     namespace AssetBrowser::Ui
     {
       class AssetBrowserWidget;
@@ -336,6 +341,12 @@ private:
   // Owned by its dock. Null until the dock is built, which is why every use is guarded.
   Noggit::Ui::DatabaseSpawnPanel* _db_spawn_panel = nullptr;
 
+  // The missing-placement report and its dock. Both null until setupViewMenu has run, and both
+  // owned by the dock/main window rather than by MapView -- the dock is deleteLater'd from
+  // MapView's destroyed signal, exactly as the spawn dock is.
+  Noggit::Ui::Tools::MissingObjects::MissingObjectsPanel* _missing_objects_panel = nullptr;
+  QDockWidget* _missing_objects_dock = nullptr;
+
   // Does the object transform gizmo have something to draw for World's current selection?
   //
   // Not `_world->has_selection()`, which is the trap: draw_map calls doSelection(true) on every
@@ -513,6 +524,19 @@ public:
   // The one place a spawn is framed, so nothing that focuses on one can drift into framing it
   // differently.
   bool focusOnSpawn(Noggit::Database::SpawnRef const& spawn, float distance = 12.0f);
+
+  // Point the camera at an arbitrary world position, framing it the way focusOnSpawn frames a
+  // spawn -- the body of that function, extracted, so the two cannot drift into framing things
+  // differently.
+  //
+  // Not move_camera_with_auto_height (MapView.cpp:4424), which the minimap uses: that one
+  // discards the Y it is given and snaps to terrain + 50. For a missing placement the exact Y is
+  // known and is often the whole point -- a broken object on a bridge, inside a building or
+  // under the terrain is precisely where terrain-snapping puts the camera in the wrong place.
+  //
+  // `load_tile` force-loads the ADT the point sits in first, for rows whose tile the world has
+  // since streamed out. False when the point is outside the 64x64 grid.
+  bool focusOnPoint(glm::vec3 const& target, float distance = 12.0f, bool load_tile = true);
 
   void tick (float dt);
   void change_selected_wmo_nameset(int set);

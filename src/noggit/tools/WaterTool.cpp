@@ -87,6 +87,10 @@ namespace Noggit
         return
         {
             .radius = _guiWater->brushRadius(),
+            // The cursor's inner ring. ToolDrawParameters has carried this field since the tool
+            // framework was written and the water tool was the one editor that never filled it
+            // in, because until the height brushes there was no falloff for it to describe.
+            .inner_radius = _guiWater->innerRadius(),
             .angle = _guiWater->angle(),
             .orientation = _guiWater->orientation(),
             .ref_pos = _guiWater->ref_pos(),
@@ -106,19 +110,58 @@ namespace Noggit
         auto mv = mapView();
         if (params.displayMode == display_mode::in_3D && !params.underMap)
         {
-            if (params.mod_shift_down)
+            // Shift and Ctrl keep meaning "the tool's action" and "its opposite", which is the
+            // convention every terrain tool already follows -- Shift raises and Ctrl lowers in
+            // RaiseLowerTool, Shift flattens and Ctrl blurs in FlattenBlurTool. The Mode combo
+            // in the panel picks WHICH pair, so no new modifier chord had to be invented and
+            // the original Shift-adds / Ctrl-removes behaviour is untouched in Paint mode.
+            //
+            // One action is begun per stroke, not per tick: ActionManager::beginAction keeps
+            // the running action alive while the same modality controllers hold, and
+            // Action::registerChunkLiquidChange dedupes by chunk pointer, so a stroke that
+            // passes over one chunk two hundred times stores one copy of its liquid_layer
+            // vector and undoes in one step.
+            bool const apply(params.mod_shift_down);
+            bool const inverse(!apply && params.mod_ctrl_down);
+
+            if (apply || inverse)
             {
                 NOGGIT_ACTION_MGR->beginAction(mv, Noggit::ActionFlags::eCHUNKS_WATER,
-                    Noggit::ActionModalityControllers::eSHIFT
+                    (apply ? Noggit::ActionModalityControllers::eSHIFT
+                           : Noggit::ActionModalityControllers::eCTRL)
                     | Noggit::ActionModalityControllers::eLMB);
-                _guiWater->paintLiquid(mv->getWorld(), mv->cursorPosition(), true);
-            }
-            else if (params.mod_ctrl_down)
-            {
-                NOGGIT_ACTION_MGR->beginAction(mv, Noggit::ActionFlags::eCHUNKS_WATER,
-                    Noggit::ActionModalityControllers::eCTRL
-                    | Noggit::ActionModalityControllers::eLMB);
-                _guiWater->paintLiquid(mv->getWorld(), mv->cursorPosition(), false);
+
+                auto* const world = mv->getWorld();
+                auto const cursor = mv->cursorPosition();
+
+                switch (_guiWater->brushMode())
+                {
+                case Noggit::Ui::water::water_brush_raise_lower:
+                    _guiWater->raiseLowerLiquid(world, cursor, deltaTime, apply);
+                    break;
+
+                case Noggit::Ui::water::water_brush_flatten:
+                    // Ctrl smooths, mirroring FlattenBlurTool, where the flatten tool's inverse
+                    // is the blur rather than a second flatten in the other direction.
+                    if (apply)
+                    {
+                        _guiWater->flattenLiquid(world, cursor, deltaTime);
+                    }
+                    else
+                    {
+                        _guiWater->smoothLiquid(world, cursor, deltaTime);
+                    }
+                    break;
+
+                case Noggit::Ui::water::water_brush_smooth:
+                    _guiWater->smoothLiquid(world, cursor, deltaTime);
+                    break;
+
+                case Noggit::Ui::water::water_brush_paint:
+                default:
+                    _guiWater->paintLiquid(world, cursor, apply);
+                    break;
+                }
             }
         }
 

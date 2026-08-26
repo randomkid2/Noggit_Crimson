@@ -4,7 +4,9 @@
 
 #include <math/trig.hpp>
 #include <noggit/MapHeaders.h>
+#include <noggit/tool_enums.hpp>
 #include <array>
+#include <functional>
 #include <glm/vec2.hpp>
 
 class MapChunk;
@@ -106,6 +108,80 @@ public:
                   , MapChunk* chunk
                   , float opacity_factor
                   );
+
+  // ---- per-vertex height brushes ----------------------------------------------------------
+  //
+  // These edit the same std::array<liquid_vertex, 9 * 9> that the MH2O and MCLQ paths already
+  // round-trip (heights live in liquid_vertex::position.y), so none of them reaches
+  // serialization: only the float values that were already being written change.
+  //
+  // Every one of them measures distance from a CANONICAL grid position rather than from the
+  // stored liquid_vertex::position. The seam argument for that is at the head of the brush
+  // block in liquid_layer.cpp and it is the reason these brushes do not tear at chunk edges.
+
+  bool changeHeight ( glm::vec3 const& pos
+                    , float change
+                    , float radius
+                    , float inner_radius
+                    , int brush_type
+                    , MapChunk* terrain_chunk
+                    , float opacity_factor
+                    );
+
+  bool flattenHeight ( glm::vec3 const& pos
+                     , float remain
+                     , float radius
+                     , int brush_type
+                     , flatten_mode const& mode
+                     , glm::vec3 const& origin
+                     , math::radians const& angle
+                     , math::radians const& orientation
+                     , MapChunk* terrain_chunk
+                     , float opacity_factor
+                     );
+
+  // Smoothing is split in two because the kernel reaches across chunk borders: if a stroke
+  // wrote chunk N before sampling for chunk N+1, the second chunk would average against
+  // already-smoothed values and the two owners of a shared border vertex would disagree.
+  // gather reads only pre-stroke heights, apply writes; World runs all the gathers first.
+  bool gatherSmoothedHeights ( glm::vec3 const& pos
+                             , float remain
+                             , float radius
+                             , int brush_type
+                             , flatten_mode const& mode
+                             , std::function<bool (float, float, int, float&)> const& sampler
+                             , std::array<float, 9 * 9>& target
+                             , std::array<bool, 9 * 9>& mask
+                             ) const;
+
+  void applyHeights ( std::array<float, 9 * 9> const& target
+                    , std::array<bool, 9 * 9> const& mask
+                    , MapChunk* terrain_chunk
+                    , float opacity_factor
+                    );
+
+  // A vertex carries data when at least one of the up-to-four subchunks touching it exists.
+  // The four corners of the 9x9 grid touch one subchunk, the edges two, the interior four.
+  bool hasVertexData (int x, int z) const;
+  bool vertexHeight (int x, int z, float& height) const;
+
+  // Deliberately does NOT refresh the layer's derived min/max: the seam weld writes one vertex
+  // at a time and would otherwise pay an 81-vertex rescan plus a fatigue check per write.
+  // Call updateMinMax() once when a batch of these is finished.
+  void setVertexHeight (int x, int z, float height, MapChunk* terrain_chunk, float opacity_factor);
+
+  void updateMinMax();
+
+  // Index of this layer's (0, 0) vertex on the map-wide liquid grid, counted in UNITSIZE
+  // steps from the world origin. Two chunks sharing a border vertex produce the same pair.
+  int gridOriginX() const;
+  int gridOriginZ() const;
+
+  // The map-wide liquid vertex grid. Every caller that needs a vertex world position or a
+  // vertex index from one must go through these two, so that the whole feature agrees on one
+  // definition of where a vertex is; the seam argument in liquid_layer.cpp depends on it.
+  static int gridIndex (float world_coord);
+  static float gridCoord (int index);
 
   void copy_subchunk_height(int x, int z, liquid_layer const& from);
 
