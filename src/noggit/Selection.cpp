@@ -179,7 +179,13 @@ void selected_chunk_type::updateDetails(Noggit::Ui::detail_infos* detail_widget)
       if (waterchunk->hasData(0))
       {
           
-          liquid_layer liquid = waterchunk->getLayers()->at(0); // only getting data from layer 0, maybe loop them ?
+          // A reference, not a copy. This function is called every frame for as long as a brush
+          // stroke is held (MapView::tick reaches it while NOGGIT_CUR_ACTION is set), and
+          // liquid_layer carries a std::array<liquid_vertex, 9 * 9> (liquid_layer.hpp:141) -- 81
+          // vertices of glm::vec3 + glm::vec2 + float, 24 bytes each with no padding, so 1,944
+          // bytes in that member alone -- which was being deep-copied per frame to read three
+          // fields and then thrown away. Everything below only reads.
+          liquid_layer& liquid = waterchunk->getLayers()->at(0); // only getting data from layer 0, maybe loop them ?
           int liquid_flags = liquid.getSubchunks();
 
           select_info << "<br><b>Liquid type</b>: " << liquid.liquidID() << " (\"" << gLiquidTypeDB.getLiquidName(liquid.liquidID()) << "\")"

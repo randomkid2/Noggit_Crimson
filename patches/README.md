@@ -1,9 +1,10 @@
 # Patches against submodules
 
-`src/external/blizzard-archive-library` is a submodule pointing at
-`gitlab.com/T1ti/blizzard-archive-library`, which this project cannot push to. The parent
-repository records only that submodule's **commit pointer**, so a fix made inside it works on the
-machine that made it and does not exist for anyone who clones.
+Two submodules carry fixes this project cannot push upstream:
+`src/external/blizzard-archive-library` (`gitlab.com/T1ti/blizzard-archive-library`) and `cmake`
+(`gitlab.com/T1ti/build-dependencies`). The parent repository records only a submodule's **commit
+pointer**, so a fix made inside one works on the machine that made it and does not exist for
+anyone who clones.
 
 Anything fixed there is therefore also exported here as a patch file, so the change is visible,
 reviewable, and reapplicable.
@@ -25,6 +26,16 @@ cd src/external/blizzard-archive-library
 git am ../../../patches/0001-blizzard-archive-mpq-backslash-names.patch
 ```
 
+```
+cd cmake
+git am ../patches/0002-revision-h-duplicate-strproductver.patch
+```
+
+`0002` is cosmetic rather than load-bearing: `cmake/revision.h.in` defined `STRPRODUCTVER` twice
+and the second definition silently won, so the first was dead code. Skipping it costs nothing at
+run time — the version string is identical either way — but a duplicate object-like macro with
+differing replacement lists is a constraint violation, and a stricter compiler may reject it.
+
 Afterwards `git status` in the parent reports that submodule as modified. **That is the intended
 steady state** — leave it. Never commit the resulting pointer.
 
@@ -37,6 +48,7 @@ repository records a commit that exists on no remote and **`git submodule update
 
 ```
 git ls-tree HEAD src/external/blizzard-archive-library
+git ls-tree HEAD cmake
 ```
 
 That must print the last public commit, `6cac3304b272ee6688e88573057e94e085d35caf`. If it prints

@@ -7,6 +7,7 @@
 #include <noggit/MapView.h>
 #include <noggit/Model.h>
 #include <noggit/ui/FontAwesome.hpp>
+#include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 #include <noggit/ui/widgets/LightViewWidget.h>
 #include <noggit/World.h>
 
@@ -43,11 +44,10 @@ LightEditor::LightEditor(MapView* map_view, QWidget* parent)
 , _map_view(map_view)
 , _world(map_view->getWorld())
 {
-	setMinimumWidth(250);
-	// setMaximumWidth(250);
-
-	auto layout = new QVBoxLayout(this);
-	layout->setAlignment(Qt::AlignTop);
+	// The dock's shared shell -- zero margins, S3 between sections, 250px floor. This layout set
+	// no margins, so it took QStyle::PM_LayoutLeftMargin (13px on windowsvista here) on top of
+	// ToolPanel's own 12px. See ToolWidgetStyle.hpp.
+	auto layout = ToolPanelStyle::toolColumn(this);
 
 	lightning_tabs = new QTabWidget(this);
 	layout->addWidget(lightning_tabs);
@@ -1214,17 +1214,25 @@ Noggit::Ui::Tools::LightningInfoDialog::LightningInfoDialog(LightEditor* editor,
 	setWindowTitle("Lightning Info");
 	setWindowFlags(Qt::Dialog);
 	
+	// THIS DIALOG'S THREE COLUMNS WERE NEVER LAID OUT, and the three lines that did it are the
+	// same defect ZoneIDBrowser carried. Each column was constructed as new QVBoxLayout(THIS) on
+	// a widget that already owned main_layout: the constructor cannot install a second layout
+	// (QWidget::setLayout warns and returns) but it HAS already taken the widget as its QObject
+	// parent, and QLayout::addChildLayout refuses any layout that already has a parent -- so
+	// every one of the three addLayout calls below returned without adding anything.
+	//
+	// The dial, the two time spin boxes and every label and field in the other two columns were
+	// therefore parented to the dialog by their layouts and then given geometry by nothing, i.e.
+	// drawn stacked in the top-left corner at the default 100x30. Parentless layouts here, and
+	// addLayout does the owning -- which is what the code always meant.
 	auto main_layout = new QHBoxLayout(this);
 
-	auto layout_column1 = new QVBoxLayout(this);
+	auto layout_column1 = new QVBoxLayout;
 	main_layout->addLayout(layout_column1);
-	// layout_column1->setDirection(QBoxLayout::TopToBottom);
-	auto layout_column2 = new QVBoxLayout(this);
+	auto layout_column2 = new QVBoxLayout;
 	main_layout->addLayout(layout_column2);
-	// layout_column2->setDirection(QBoxLayout::TopToBottom);
-	auto layout_column3 = new QVBoxLayout(this);
+	auto layout_column3 = new QVBoxLayout;
 	main_layout->addLayout(layout_column3);
-	// layout_column3->setDirection(QBoxLayout::TopToBottom);
 
 	// initialize widgets /////
 
@@ -1246,7 +1254,8 @@ Noggit::Ui::Tools::LightningInfoDialog::LightningInfoDialog(LightEditor* editor,
 	TimeSelectorMin->setMinimum(0);
 	TimeSelectorMin->setMaximum(59);
 
-	auto time_hlayout = new QHBoxLayout(this);
+	// Parentless for the same reason as the three columns above.
+	auto time_hlayout = new QHBoxLayout;
 	time_hlayout->addWidget(new QLabel(tr("Hours"), this));
 	time_hlayout->addWidget(TimeSelectorHour);
 	time_hlayout->addWidget(new QLabel(tr("Minutes"), this));

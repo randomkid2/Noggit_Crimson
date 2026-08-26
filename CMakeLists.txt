@@ -364,6 +364,12 @@ if (UNIX)
 ENDIF()
 
 
+# dwmapi carries DwmSetWindowAttribute, which is how src/noggit/ui/WindowChrome.cpp paints the
+# title bar in the application palette. Windows only -- the file compiles to nothing elsewhere.
+IF (WIN32)
+  TARGET_LINK_LIBRARIES (noggit dwmapi)
+ENDIF()
+
 TARGET_LINK_LIBRARIES (noggit
   ${OPENGL_LIBRARIES}
   StormLib

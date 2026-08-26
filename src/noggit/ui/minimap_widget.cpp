@@ -121,6 +121,38 @@ namespace Noggit
           if (!_selected_tiles)
             return;
 
+          // Ctrl deselects, anything else selects. Read once rather than per cell: it was queried
+          // inside the 3x3 loop, so a shift-brush asked the window system for the modifier state
+          // nine times per event.
+          char const new_state
+            (QApplication::keyboardModifiers().testFlag(Qt::ControlModifier) ? 0 : 1);
+
+          // Whether the buffer actually moved. This handler runs on every mouse-move event while
+          // the button is held (mouseMoveEvent re-emits tile_clicked), and it used to repaint
+          // unconditionally -- which is the "massive performance drop after clicking the minimap
+          // once" the \todo on paintEvent describes: a drag inside one tile, or a drag over tiles
+          // that are already in the wanted state, was still forcing a full repaint per event.
+          // Repainting only on a real change is not a behaviour change; nothing else in the paint
+          // path can differ between two paints with an identical buffer, and mousePressEvent still
+          // calls update() itself so the click that starts a drag always lands.
+          bool selection_changed = false;
+
+          auto const set_tile
+            ( [&] (int x, int y)
+              {
+                if (!_world->mapIndex.hasTile(TileIndex(x, y)))
+                  return;
+
+                char& slot = (*_selected_tiles)[64 * x + y];
+
+                if (slot != new_state)
+                {
+                  slot = new_state;
+                  selection_changed = true;
+                }
+              }
+            );
+
           if (QApplication::keyboardModifiers().testFlag(Qt::ShiftModifier))
           {
             int x = tile.x() - 1;
@@ -130,25 +162,19 @@ namespace Noggit
             {
               for (int j = 0; j < 3; ++j)
               {
-                if (_world->mapIndex.hasTile(TileIndex(x + i, y + j)))
-                {
-                  (*_selected_tiles)[64 * (x + i) + (y + j)]
-                    = !QApplication::keyboardModifiers().testFlag(Qt::ControlModifier);
-                }
-
+                set_tile (x + i, y + j);
               }
             }
           }
           else
           {
-            if (_world->mapIndex.hasTile(TileIndex(tile.x(), tile.y())))
-            {
-              (*_selected_tiles)[64 * tile.x() + tile.y()]
-                = !QApplication::keyboardModifiers().testFlag(Qt::ControlModifier);
-            }
+            set_tile (tile.x(), tile.y());
           }
 
-          update();
+          if (selection_changed)
+          {
+            update();
+          }
         }
       );
 
@@ -306,56 +332,189 @@ namespace Noggit
 
       if (world())
       {
-        painter.drawImage (drawing_rect, world()->horizon._qt_minimap);
+        // Scaled once and kept, not resampled per paint -- see _scaled_minimap for why the
+        // cacheKey is a sound invalidation key for an image map_horizon edits in place.
+        //
+        // The scale is now QImage::scaled's area-average filter rather than the painter's bilinear
+        // sample, and the cached copy is premultiplied ARGB32 so the blit is a straight composite
+        // with no per-paint format conversion. On a downscale an area average is the more correct
+        // of the two: bilinear reads four source pixels regardless of how many the destination
+        // pixel covers, so it drops detail between them.
+        //
+        // THE SCALE IS IN DEVICE PIXELS, NOT LOGICAL ONES, and getting that wrong is what the
+        // first version of this cache did. drawing_rect comes from rect(), which is logical. The
+        // old code that this cache replaced was `drawImage(drawing_rect, image)`, and QPainter
+        // carries the window's 2x transform, so on a 200% display it resolved the 1024x1024
+        // source into 1024x1024 DEVICE pixels. A QPixmap built by QPixmap::fromImage has
+        // devicePixelRatio() == 1, and drawPixmap(QPoint, QPixmap) draws size() / dpr logical
+        // pixels -- so scaling to the logical 512 and blitting it produced a 512x512 image
+        // stretched 2x by the compositor. Half the resolution, on the one widget in the editor
+        // whose entire job is to be a picture. This machine reports devicePixelRatio 2, so that
+        // was not a hypothetical.
+        //
+        // Scaling to size * dpr and stamping the ratio back onto the pixmap restores the old
+        // behaviour exactly (1024 device pixels at the 512 sizeHint on a 2x screen) while still
+        // paying for the resample once instead of once per frame. Note the consequence for the
+        // filter argument above: at dpr 2 and the 512 sizeHint the "downscale" becomes a 1:1
+        // copy, and above 1x at the 1024 maximum it is an upscale -- Qt::SmoothTransformation is
+        // still the right request there, it just stops being an area average.
+        //
+        // The ratio is the third term of the cache key. Moving the window between monitors of
+        // different scaling changes devicePixelRatioF() without changing the logical size or the
+        // source image, and a two-term key would serve the stale pixmap forever.
+        QImage const& horizon_image = world()->horizon._qt_minimap;
+
+        qreal const device_pixel_ratio (devicePixelRatioF());
+        QSize const device_size (drawing_rect.size() * device_pixel_ratio);
+
+        if ( _scaled_minimap.size() != device_size
+          || _scaled_minimap_dpr != device_pixel_ratio
+          || _scaled_minimap_key != horizon_image.cacheKey()
+           )
+        {
+          _scaled_minimap = QPixmap::fromImage
+            ( horizon_image.scaled ( device_size
+                                   , Qt::IgnoreAspectRatio
+                                   , Qt::SmoothTransformation
+                                   )
+            );
+          _scaled_minimap.setDevicePixelRatio (device_pixel_ratio);
+          _scaled_minimap_key = horizon_image.cacheKey();
+          _scaled_minimap_dpr = device_pixel_ratio;
+        }
+
+        painter.drawPixmap (drawing_rect.topLeft(), _scaled_minimap);
 
         if (draw_boundaries())
         {
-          //! \todo Draw non-existing tiles aswell?
-          painter.setBrush (QColor (255, 255, 255, 30));
+          // Antialiasing OFF for the grid, back ON for the markers below. Every shape in this loop
+          // is an axis-aligned integer rectangle stroked with a 1px to 3px pen, and antialiasing
+          // buys nothing on those: a 1px pen centred on an integer edge comes out as two rows at
+          // half coverage instead of one solid row, so the grid was rendered soft AND paid the
+          // coverage-mask path 4096 times. Turning it off is what makes the tile borders crisp.
+          // It changes no colour, so every contrast figure in the block at the top of this file
+          // still holds -- if anything a full-coverage row measures closer to the stated ratio
+          // than a half-covered one did.
+          painter.setRenderHint (QPainter::Antialiasing, false);
+
+          // THE GRID ITSELF, which is the one thing on this widget that did not obey the rule
+          // at the top of this file. It was four hand-picked RGBA pens and a white brush, and
+          // three of the four pens were below the graphical floor on the terrain each was worst
+          // on. Composited over white, mid-grey and black -- source blended in float, the result
+          // rounded to 8 bits, then WCAG 2.1 sRGB against the backdrop it sits on:
+          //
+          //                                        on #FFFFFF  on #808080  on #000000
+          //   loaded          rgba(0,0,0,0.6)         5.742       3.199       1.000
+          //   external        rgba(1,0.7,0.5,0.6)     1.398       1.649       4.565
+          //   exists, unloaded rgba(0.8,0.8,0.8,0.4)  1.192       1.474       2.688
+          //   does not exist  rgba(1,1,1,0.05)        1.000       1.085       1.080
+          //
+          // The mid-grey figure for the external pen read 1.662 here and again in the paragraph
+          // below until this pass, in both places. It is 1.649: the pen composites to
+          // (204, 158, 128) over #808080 and that measures 1.6493:1. The other eleven cells
+          // reproduce exactly under the stated model and are unchanged. The conclusion the
+          // table was drawn for does not move -- 1.649 is further under the 3:1 floor, not
+          // closer to it.
+          //
+          // The last one is at or under 1.09:1 on every backdrop -- it was 4096 drawRect calls
+          // per paint that put nothing on the screen. Non-existent tiles now get NO rule at
+          // all, which is both the honest signal (a hole in the grid reads instantly) and the
+          // cheaper one.
+          //
+          // TWO RULE COLOURS, AND EXACTLY TWO, because that is how many the palette has here.
+          // Only four tokens sit inside the [0.100, 0.300] luminance band this file derives
+          // above as the only band that clears 3:1 against black AND white, and the four are so
+          // close together that most pairs cannot be told apart as 1px lines:
+          //
+          //     STROKE_HI    #746D64   L 0.1557   S 14%    5.104:1 on white   4.114:1 on black
+          //     TEXT_OFF     #7F786A   L 0.1899   S 17%    4.378              4.797
+          //     ACCENT_PRESS #B8801F   L 0.2573   S 83%    3.417              6.146
+          //     BAD          #E86F62   L 0.2941   S 58%    3.052              6.881
+          //
+          //     STROKE_HI / TEXT_OFF      1.166:1  -- two greys, indistinguishable as lines
+          //     ACCENT_PRESS / BAD        1.120:1  -- and BAD means destructive, not "loaded"
+          //     STROKE_HI / ACCENT_PRESS  1.494:1  -- plus 14% vs 83% saturation. The pair.
+          //
+          // So: STROKE_HI, the design system's own "separator" token, is the ordinary rule, and
+          // ACCENT_PRESS -- a muted gold, separated from it by saturation far more than by
+          // lightness -- marks a tile that is loaded. Both clear the 3:1 floor at BOTH extremes
+          // a minimap can reach, which is the thing none of the four pens they replace managed.
+          //
+          // EXTERNAL DROPS OFF THE RULE and onto the marker path below, where the two-stroke
+          // doctrine at the top of this file applies and the ratio stops moving with the
+          // terrain. That is not a demotion: an external tile is an unusual condition worth
+          // noticing, where a loaded one is routine, and the peach pen it replaces measured
+          // 1.398:1 on white and 1.649:1 on mid grey -- on any bright map it was not there at
+          // all.
+          //
+          // THE WHITE BRUSH IS GONE. QColor(255,255,255,30) is an 11.8% white wash and it was
+          // filled into every one of the 4096 cells -- a flat veil over the whole minimap
+          // image, taking #000000 to #1E1E1E and #404040 to #565656. Washing the map out in
+          // order to draw a grid over it is backwards, and it was a direct contributor to the
+          // minimap reading as faded.
+          QPen const grid_pen (Design::color (Design::STROKE_HI), MARKER_PEN_WIDTH);
+          QPen const loaded_pen (Design::color (Design::ACCENT_PRESS), MARKER_PEN_WIDTH);
+
+          painter.setBrush (Qt::NoBrush);
+          painter.setPen (grid_pen);
+
           for (int i (0); i < 64; ++i)
           {
             for (int j (0); j < 64; ++j)
             {
               TileIndex const tile (i, j);
-              bool changed = false;
+              bool const exists (world()->mapIndex.hasTile (tile));
+              bool const loaded (exists && world()->mapIndex.tileLoaded (tile));
+              bool const changed (loaded && world()->mapIndex.has_unsaved_changes (tile));
 
-              if (world()->mapIndex.hasTile (tile))
+              // The pen is only ever changed by the loaded rule or by a marker branch below, so
+              // it is restored only when one of them ran rather than being re-set 4096 times a
+              // paint.
+              bool pen_changed (false);
+
+              if (exists)
               {
-                if (world()->mapIndex.tileLoaded (tile))
+                if (loaded)
                 {
-                  if (world()->mapIndex.has_unsaved_changes(tile))
-                  {
-                    changed = true;
-                  }
+                  painter.setPen (loaded_pen);
+                  pen_changed = true;
+                }
 
-                  painter.setPen(QColor::fromRgbF(0.f, 0.f, 0.f, 0.6f));
-                }
-                else if (world()->mapIndex.isTileExternal(tile))
-                {
-                  painter.setPen(QColor::fromRgbF(1.0f, 0.7f, 0.5f, 0.6f));
-                }
-                else
-                {
-                  painter.setPen (QColor::fromRgbF (0.8f, 0.8f, 0.8f, 0.4f));
-                }
+                painter.drawRect ( QRect ( tile_size * i
+                                         , tile_size * j
+                                         , tile_size
+                                         , tile_size
+                                         )
+                                 );
               }
-              else
-              {
-                painter.setPen (QColor::fromRgbF (1.0f, 1.0f, 1.0f, 0.05f));
-              }
-
-              painter.drawRect ( QRect ( tile_size * i
-                                       , tile_size * j
-                                       , tile_size
-                                       , tile_size
-                                       )
-                               );
 
               QRect const marker_rect ( tile_size * i + 1
                                       , tile_size * j + 1
                                       , tile_size - 2
                                       , tile_size - 2
                                       );
+
+              // Loaded takes precedence over external, exactly as the four pens did -- a loaded
+              // tile has already taken the ACCENT_PRESS rule above and is not marked again.
+              if (exists && !loaded && world()->mapIndex.isTileExternal (tile))
+              {
+                // INFO. "This tile comes from outside the map's own data" is informational, and
+                // the token is otherwise spent only on the sky spheres, which are ellipses, are
+                // an order of magnitude larger, and are off unless draw_skies() is switched on
+                // (_draw_skies starts false). Different shape, different scale, rarely both on
+                // screen -- that is an acceptable reuse and the palette does not offer a fifth
+                // survivable colour anyway.
+                //
+                // Haloed, so the ratio does not move with the terrain: the pair is 19.272:1 on
+                // white and 8.764:1 on black, and INFO against its own INK outline is 8.043:1.
+                // The peach rgba(1,0.7,0.5,0.6) it replaces was 1.398:1 on white.
+                painter.setPen (markerHaloPen (tileMarkerHaloWidth (tile_size)));
+                painter.drawRect (marker_rect);
+
+                painter.setPen (markerPen (Design::INFO));
+                painter.drawRect (marker_rect);
+                pen_changed = true;
+              }
 
               if (changed)
               {
@@ -375,8 +534,14 @@ namespace Noggit
 
                 painter.setPen (markerPen (Design::WARN));
                 painter.drawRect (marker_rect);
+                pen_changed = true;
               }
 
+              // Deliberately NOT gated on `exists`, unlike the three marks above. The selection
+              // buffer is written by this widget's own tile_clicked handler, which refuses any
+              // index the map does not have, but the buffer is owned by the caller and a future
+              // "select all" has no such guard. A selection that was set is a selection that
+              // gets drawn.
               if (_use_selection && _selected_tiles->at(64 * i + j))
               {
                 // ACCENT, matching every other selection in the application. This was pure
@@ -396,9 +561,20 @@ namespace Noggit
 
                 painter.setPen (markerPen (Design::ACCENT));
                 painter.drawRect (marker_rect);
+                pen_changed = true;
+              }
+
+              if (pen_changed)
+              {
+                painter.setPen (grid_pen);
               }
             }
           }
+
+          // Restored for the ellipses, the camera line and the WMO rectangle below, which are not
+          // axis-aligned and do want it. Restored inside the branch, so the painter is left in the
+          // same state it was in before the grid ran whether or not the grid ran at all.
+          painter.setRenderHint (QPainter::Antialiasing, true);
         }
 
         if (draw_skies() && _world->renderer()->skies())
@@ -621,9 +797,23 @@ namespace Noggit
 
       QPoint tile = locateTile(event);
 
-      std::string str("ADT: " + std::to_string(tile.x()) + "_" + std::to_string(tile.y()));
+      // Rebuilt only when the cursor crosses a tile boundary. The text is a function of the tile
+      // and nothing else, but it was assembled from scratch -- two std::to_string calls, a
+      // std::string concatenation and a QString::fromStdString, four allocations -- on every
+      // mouse-move event, and a gaming mouse delivers those at 125 Hz to 1000 Hz.
+      //
+      // showText itself is still called unconditionally. It has to be: Qt hides a tooltip on a
+      // timer and re-showing the same text is what keeps it alive, so gating the call as well
+      // would make the tip expire while the cursor wanders inside one tile. Qt already suppresses
+      // the redundant work at that end -- QToolTip::showText returns early without moving the
+      // widget when the text it is handed is the one already displayed.
+      if (tile != _last_hovered_tile)
+      {
+        _last_hovered_tile = tile;
+        _hovered_tile_tooltip = QStringLiteral ("ADT: %1_%2").arg (tile.x()).arg (tile.y());
+      }
 
-      QToolTip::showText(mapToGlobal(QPoint(event->pos().x(), event->pos().y() + 5)), QString::fromStdString(str));
+      QToolTip::showText(mapToGlobal(QPoint(event->pos().x(), event->pos().y() + 5)), _hovered_tile_tooltip);
 
       if (_is_selecting)
       {

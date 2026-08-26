@@ -30,44 +30,56 @@
     children of the vertical layout, which makes the hidden bar genuinely free.
 
     Third, the slider took whatever height the style's slider thickness happened to be - around
-    22px under Fusion, and none of it used. The theme draws a 6px groove with a 16px handle
-    (margin -5px top and bottom on a 6px groove is exactly 16px of handle), so 16px is the band.
-    It is pinned as a MINIMUM as well as a maximum, so the row height is this file's decision
-    rather than the style's and the handle cannot be clipped if a theme thickens it. That is the
-    single biggest saving on the panel: ~6px x 18 instances, before the row gap below drops from
-    3 to 2.
+    22px under Fusion, and none of it used. The band is pinned as a MINIMUM as well as a maximum,
+    so the row height is this file's decision rather than the style's. That was the single
+    biggest saving on the panel, before the row gap below dropped from 3 to 2.
 
-    THE BAND WAS BRIEFLY 20px AND THAT WAS A REGRESSION, NOW REVERTED. The argument for widening
-    it was that the band, not the sheet, sets the hit target - that Qt derives the
-    SC_SliderHandle rect from the WIDGET's height - so that at 16px the top and bottom rows of
-    the grip a user can SEE would page-step instead of drag. That is true of an UNSTYLED slider
-    and false of this one. Re-measured with a standalone Qt 5.15.2 probe that loads the shipped
-    sheet, puts a 212px slider at 50 percent, and sweeps the pointer pixel by pixel over the
-    whole control counting the positions QStyle::hitTestComplexControl(CC_Slider, ...) reports
-    as SC_SliderHandle - which is the exact call QSlider::mousePressEvent uses to choose between
-    starting a drag and page-stepping:
+    THE BAND IS 20px AND IT IS DERIVED, NOT CHOSEN. It is Design::SLIDER_BAND, and the whole
+    derivation is on that constant in DesignTokens.hpp; in one line, QSS width/height size the
+    CONTENT rect and the border adds, QStyleSheetStyle places the handle inside the groove's
+    contents rect expanded by the handle's negative margins, and the WIDGET band then clips it:
+
+        handle box = declared QSS size + 2 x border width
+        handle box = groove box + 2 x |cross-axis margin|
+        grabbable  = min(handle box, band), centred
+
+    The theme draws a 6px groove with the handle margin at -7px, so 6 + 7 + 7 = 20 is the box
+    and a band under 20 clips the grip into a circle with a flat top and bottom.
+
+    BOTH NUMBERS BELOW HAVE TO MOVE TOGETHER. A maximumHeight clamps the widget below any QSS
+    min-height, so changing only the minimum leaves the grip clipped to the maximum, and changing
+    only the maximum leaves the layout free to give it less.
+
+    THIS IS THE CHANGE AN EARLIER PASS MADE AND THEN REVERTED, AND THE REASON TO REDO IT IS NOT
+    THE REASON IT WAS MADE. That pass widened the band while the sheet's handle box stayed at
+    16, and it argued that the band sets the hit target because Qt derives SC_SliderHandle from
+    the WIDGET height. That argument is true of an UNSTYLED slider and false of this one, and
+    the revert measured it with a standalone Qt 5.15.2 probe that loads the shipped sheet, puts
+    a 212px slider at 50 percent and sweeps the pointer pixel by pixel counting the positions
+    QStyle::hitTestComplexControl(CC_Slider, ...) reports as SC_SliderHandle - the exact call
+    QSlider::mousePressEvent uses to choose between dragging and page-stepping:
 
       sheet                    band   handle rect       pixels that GRAB the handle
       6px tick, 4px groove      16     6x16 @(103,0)     96 =  6 x 16
       16px grip, 6px groove     14    16x16 @(98,-1)    224 = 16 x 14  (grip clipped by band)
-      16px grip, 6px groove     16    16x16 @(98,0)     256 = 16 x 16  (this file)
+      16px grip, 6px groove     16    16x16 @(98,0)     256 = 16 x 16
       16px grip, 6px groove     18    16x16 @(98,1)     256 = 16 x 16
       16px grip, 6px groove     20    16x16 @(98,2)     256 = 16 x 16
       16px grip, 6px groove     22    16x16 @(98,3)     256 = 16 x 16
       none, QWindowsVistaStyle  16    16x16 @(98,0)     256 = 16 x 16
       none, QWindowsVistaStyle  20    16x20 @(98,0)     320 = 16 x 20
 
-    With a sheet loaded QStyleSheetStyle sizes the handle from the QSS box - 6px groove plus the
-    -5px margins - and CENTRES it in the band, so the handle rect is 16x16 at every band from 16
-    upwards and the widening bought exactly zero grabbable pixels. Only the last two rows, with
-    no sheet at all, behave the way the widening assumed; this application always has one. So 16
-    is the smallest band that does not clip the grip, and at 16 every pixel of the grip that is
-    drawn also grabs it. 20 instead added four rows where a click JUMPS the value, inside the
-    grip's own row, on the control that sets brush radius and speed - and charged 4px x 18
-    instances for it.
+    Read the middle four rows again: with a sheet loaded the handle rect is 16x16 at EVERY band
+    from 16 up, because QStyleSheetStyle sizes it from the QSS box and centres it. So widening
+    the band alone bought exactly zero grabbable pixels and charged 4px x 18 instances for it -
+    which is why it was reverted, correctly.
 
-    What did move the hit target is the theme's grip rewrite, from 6x16 = 96 to 16x16 = 256
-    (2.7x), measured in the first two lines above. It did that without this file changing at all.
+    What is different now is that the BOX moves with the band: the sheet's grip goes to a 20px
+    box in the same pass, and by the same table a 20px box in a 20px band is 20 x 20 = 400
+    grabbable pixels against the 256 those rows all report. The cost is unchanged and honest -
+    +4px x 18 instances, +12px of dock height in the densest panel, Raise/Lower with three of
+    these - but this time it buys 56 percent more hit target on the control that sets brush
+    radius and speed, instead of nothing.
 
     Fourth, the value was left-aligned, so in a column of three sliders the digits started at
     three different x positions and the eye had nothing to scan down. The spinbox is now
@@ -83,7 +95,8 @@
     ExtendedSlider.cpp, the popup it opens holds "Use Tablet" and a sensitivity slider. It had
     no tooltip at all, which is most of why it reads as mysterious. It is now flat (the theme's
     QPushButton:flat is transparent until hovered) so it stops carrying the same visual weight
-    as the number beside it, and 20px rather than 22px so it fits the 16px-min-height row band.
+    as the number beside it, and 20px rather than 22px - which is the slider band exactly, so the
+    two rows of this widget agree on one height instead of the button setting the taller one.
 
     No widget was renamed, removed or reordered; ExtendedSlider.cpp addresses the same five
     objects and none of its ranges or connections changed.
@@ -183,13 +196,13 @@
      <property name="minimumSize">
       <size>
        <width>0</width>
-       <height>16</height>
+       <height>20</height>
       </size>
      </property>
      <property name="maximumSize">
       <size>
        <width>16777215</width>
-       <height>16</height>
+       <height>20</height>
       </size>
      </property>
      <property name="orientation">

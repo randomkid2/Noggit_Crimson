@@ -2,8 +2,10 @@
 
 #include <noggit/application/NoggitApplication.hpp>
 #include <noggit/DBC.h>
+#include <noggit/ui/DesignTokens.hpp>
 #include <noggit/ui/FontAwesome.hpp>
 #include <noggit/ui/tools/MapCreationWizard/Ui/MapCreationWizard.hpp>
+#include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 #include <noggit/ui/tools/UiCommon/expanderwidget.h>
 #include <noggit/ui/windows/EditorWindows/SoundEntryPickerWindow.h>
 #include <noggit/ui/windows/EditorWindows/ZoneIntroMusicPickerWindow.h>
@@ -39,12 +41,30 @@ namespace Noggit
             , mapID(-1)
         {
             setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-            setMinimumWidth(250);
 
-            QVBoxLayout* mainLayout = new QVBoxLayout(this);
-            this->setLayout(mainLayout);
+            // THIS PANEL'S CONTENTS WERE NEVER LAID OUT. Read the three lines this replaces:
+            // a QVBoxLayout was constructed on `this`, redundantly re-set with setLayout, and
+            // then a QFormLayout was constructed on `this` AS WELL. The second constructor
+            // cannot install itself -- QWidget::setLayout warns "which already has a layout"
+            // and returns -- but it has already taken the widget as its QObject parent, and
+            // that is fatal to the addLayout at the bottom of this constructor:
+            // QLayout::addChildLayout refuses any layout that already has a parent, and
+            // QBoxLayout::insertLayout returns without inserting when it does.
+            //
+            // So every row below -- the radius spin box, the filter, the area tree, the three
+            // buttons -- was parented to this widget by addRow and then given no geometry by
+            // anything, i.e. drawn at the default 100x30 in the top-left corner on top of each
+            // other. Two Qt warnings per construction were the only report of it.
+            //
+            // The form is parentless now and mainLayout does the owning, which is what the code
+            // has always meant. The 250px floor and the shared gutter come from the tool dock's
+            // one shell, like every other tool.
+            QVBoxLayout* mainLayout (Tools::ToolPanelStyle::toolColumn (this));
 
-            auto layout = new QFormLayout(this);
+            auto layout = new QFormLayout;
+            layout->setContentsMargins(0, 0, 0, 0);
+            layout->setHorizontalSpacing(Design::S1);
+            layout->setVerticalSpacing(Design::S3);
 
             _radius_spin = new QDoubleSpinBox(this);
             _radius_spin->setRange(0.0f, 1000.0f);

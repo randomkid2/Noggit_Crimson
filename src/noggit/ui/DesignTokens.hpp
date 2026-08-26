@@ -61,10 +61,49 @@ namespace Noggit::Ui::Design
   constexpr char const* BG_OVERLAY = "#4A4640";  // menus, tooltips, floating viewport cards
   constexpr char const* BG_HOVER   = "#5B5651";  // hover plate on an overlay surface
 
-  // === STROKES ==============================================================================
-  constexpr char const* STROKE_SOFT = "#403B35"; // hairline inside a panel or a void well
-  constexpr char const* STROKE      = "#565049"; // the visible 1px border of a control
-  constexpr char const* STROKE_HI   = "#746D64"; // hover outline; separators on BG_OVERLAY
+  // === STROKES AND EDGES ====================================================================
+  //
+  // FIVE NEUTRAL LINE COLOURS, AND THE ONLY ONE THAT MAY EDGE AN ENABLED CONTROL IS EDGE.
+  //
+  // This is the correction of a real defect, not a re-shuffle. The border of a control is the
+  // single most repeated mark in the interface, and the token that used to carry it -- STROKE,
+  // described here until this pass as "the visible 1px border of a control" -- does not reach
+  // the 3:1 graphical floor on ANY surface a control sits on. Measured, every neutral against
+  // every surface, WCAG 2.1 sRGB, (Lmax + 0.05) / (Lmin + 0.05):
+  //
+  //                  void    alt    panel  raised overlay hover
+  //   STROKE_SOFT    1.739  1.575  1.360  1.062  1.183  1.528
+  //   STROKE         2.422  2.194  1.894  1.479  1.178  1.097
+  //   STROKE_HI      3.775  3.420  2.952  2.305  1.836  1.421
+  //   EDGE           5.138  4.654  4.018  3.137  2.498  1.934
+  //   EDGE_LIT       7.613  6.896  5.953  4.648  3.701  2.866
+  //
+  // EDGE is the first row that clears 3:1 on all four surfaces a control can rest on -- void,
+  // alt, panel and raised -- where STROKE clears none of them and STROKE_HI clears only void
+  // and alt. EDGE is BARRED from BG_OVERLAY (2.498) and BG_HOVER (1.934); a line drawn on
+  // either of those is a separator on a floating surface and takes STROKE_HI, which is what
+  // that token is now for.
+  //
+  // EDGE_LIT is the lit top of a one-pixel bevel: 4.648 on the BG_RAISED button fill and
+  // 3.143 against the STROKE that grounds the bottom of the same button, so the bevel is a
+  // legible step rather than the 1.05:1 rumour it used to be.
+  //
+  // The hover edge is TEXT_DIM used as a stroke, the same way INK is BG_VOID used as a pen:
+  // 5.922 on raised and 1.888 above EDGE, so rest -> hover steps in the same direction the
+  // fill does. STROKE_HI cannot serve there -- at 2.305 on raised it is DARKER than EDGE and
+  // the hover would read as a recess.
+  //
+  // KEEP THIS BLOCK EQUAL TO theme.qss's palette header. The sheet declares the same five
+  // tokens with the same figures; these two lists are the only two places the design system
+  // exists and there is no compile-time link between them. EDGE and EDGE_LIT were added to
+  // the sheet first and their absence here is exactly how the opacity-slider groove in
+  // texturing_tool.cpp ended up outlined in a colour that measured 1.894:1 against the panel
+  // behind it, under a comment that said so and shipped it anyway.
+  constexpr char const* STROKE_SOFT = "#403B35"; // hairline SEAM inside a panel; disabled edge
+  constexpr char const* STROKE      = "#565049"; // grounded BOTTOM of a bevel; disabled fills
+  constexpr char const* STROKE_HI   = "#746D64"; // separators and card edges ON BG_OVERLAY
+  constexpr char const* EDGE        = "#8A8378"; // THE EDGE OF AN ENABLED CONTROL
+  constexpr char const* EDGE_LIT    = "#A9A296"; // the lit top of a one-pixel bevel
 
   // === TEXT, four ranks =====================================================================
   //
@@ -191,6 +230,50 @@ namespace Noggit::Ui::Design
   constexpr int RADIUS_CONTROL   = 5;  // buttons, inputs, combos, tool buttons
   constexpr int RADIUS_CONTAINER = 8;  // item-view wells, floating cards, the minimap holder
   constexpr int RADIUS_INDICATOR = 4;  // check box, scrollbar thumb
+
+  // === CONTROL BANDS ========================================================================
+  //
+  // SLIDER_BAND is the height a horizontal QSlider (or the width of a vertical one) must be
+  // given so the theme's grip is drawn whole. It is derived, not chosen:
+  //
+  //     handle box = declared QSS size + 2 x border width
+  //     handle box = groove box + 2 x |cross-axis margin|
+  //     grabbable  = min(handle box, widget band), centred and clipped by the band
+  //
+  // The sheet draws a 6px groove with the handle margin at -7px, so the handle box is
+  // 6 + 7 + 7 = 20 and a band under 20 clips the grip. Anything that pins a slider's height
+  // from C++ or from a .ui file has to use this number or undo the theme's grip.
+  //
+  // WHERE IT ACTUALLY BITES. The three claims that stood here were all wrong and are corrected
+  // rather than deleted, because each one is a thing that looks true and is not:
+  //
+  //   * "ExtendedSliderUi.ui ... overrides any QSS min-height." The .ui does pin the band as a
+  //     maximum as well as a minimum, and that part is true -- but a .ui file cannot read a C++
+  //     constant, so it carries a hardcoded 20 and this symbol is not what keeps it correct. A
+  //     comment in the .ui is.
+  //   * "the three vendored color_widgets sliders ... a style sheet cannot fully reach." The
+  //     shipped sheet DOES reach them, at theme.qss "color_widgets--GradientSlider,
+  //     color_widgets--HueSlider { min-height: 20px; }" -- a Qt type selector resolves them
+  //     because both classes carry Q_OBJECT. Worse for the old claim: QStyleSheetStyle::
+  //     setGeometry() ASSIGNS the minimum rather than raising it, so under CrimsonSlate the
+  //     sheet's 20 replaces whatever ShaderTool set and the C++ calls change nothing at all.
+  //   * "OpacitySlider, which paints everything itself." It does, but it has never read this
+  //     constant. Its cross-axis size is OPACITY_GROOVE_WIDTH = 35 and its grip is 12 tall.
+  //
+  // SO WHY THE CONSTANT SURVIVES, and this is the one true reason: CrimsonSlate is not the only
+  // sheet that can be active. SettingsPanel lists "System" plus every directory under
+  // <exe>/themes/ that has a theme.qss, and CMakeLists.txt:400-418 deploys dist/themes (Dark,
+  // McNet) alongside dist/noggit-themes (CrimsonSlate). Neither Dark nor McNet declares a
+  // widget-level QSlider geometry rule -- their QSlider rules are all ::groove / ::handle
+  // subcontrols, which do not drive setGeometry -- and "System" applies no sheet at all. Under
+  // three of the four selectable options nothing assigns a minimum and ShaderTool's
+  // setMinimumHeight is the only floor those three sliders have.
+  //
+  // Net: under the shipped theme SLIDER_BAND is shadowed and inert; under the other three it is
+  // load-bearing. Both numbers are 20 and they must be changed together -- there is no
+  // compile-time link, so if theme.qss:"color_widgets" moves off 20 this constant has to move
+  // with it or the two silently disagree the moment a user switches theme.
+  constexpr int SLIDER_BAND = 20;
 
   // === QColor accessors =====================================================================
   //

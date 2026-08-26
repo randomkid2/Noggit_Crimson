@@ -618,6 +618,26 @@ private:
   QLabel* _status_culling;
   QLabel* _status_database;
 
+  //! The area name in the status bar, kept between frames. tick() called
+  //! AreaDB::getAreaFullName every frame, and that function walks every record in AreaTable.dbc
+  //! twice -- once for the area, once for its parent region -- because DBCFile::getByID is a
+  //! linear scan with no index (DBCFile.cpp:144). The answer only depends on the area id, and the
+  //! DBC is immutable once loaded, so re-deriving it while the camera sits inside one area is
+  //! pure waste. Worse on a custom map: an area id that is not in AreaTable.dbc makes getByID log
+  //! and then THROW, so the old code paid a LogDebug line and a C++ exception every frame.
+  //! _status_area_known distinguishes "not looked up yet" from any id value, including the
+  //! 0xFFFFFFFF getAreaID returns for no chunk.
+  unsigned int _status_area_id = 0;
+  bool _status_area_known = false;
+  QString _status_area_name;
+
+  //! Rate limit for the detail-info panel while a brush stroke is held. See the call site in
+  //! tick(). _detail_infos_stale records that a frame's update was skipped, so the panel is
+  //! always brought up to date once on the first frame after the stroke ends -- a throttle that
+  //! could drop the last update would leave the panel showing values from mid-stroke.
+  QElapsedTimer _detail_infos_clock;
+  bool _detail_infos_stale = false;
+
   Noggit::BoolToggleProperty _locked_cursor_mode = {false};
   Noggit::BoolToggleProperty _rotate_doodads_along_doodads = { false };
   Noggit::BoolToggleProperty _rotate_doodads_along_wmos = { false };

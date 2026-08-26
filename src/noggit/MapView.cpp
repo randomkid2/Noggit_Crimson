@@ -111,7 +111,6 @@
 
 #include <ui_MapViewOverlay.h>
 
-#include "revision.h"
 
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
@@ -3030,6 +3029,12 @@ void MapView::setupAssistMenu()
         else
         {
             QProgressDialog progress_dialog("Converting Alpha format...", "", 0, _world->mapIndex.getNumExistingTiles(), this);
+            // Modal like its three siblings (:3007 just above, :3131, :3149), and it has to be:
+            // QProgressDialog::setValue only calls QCoreApplication::processEvents() when the
+            // dialog isModal(). Without this line the dialog never processed an event for the
+            // entire 4096-tile conversion -- it drew as a grey rectangle and Windows marked the
+            // whole application "Not Responding" until the conversion finished.
+            progress_dialog.setWindowModality(Qt::WindowModal);
             _world->convert_alphamap(&progress_dialog, false);
         }
       )
@@ -4236,7 +4241,7 @@ MapView::MapView( math::degrees camera_yaw0
   , _tablet_manager(Noggit::TabletManager::instance()),
     _project(Project)
 {
-  setWindowTitle ("Noggit Crimson - " STRPRODUCTVER);
+  setWindowTitle ("Noggit Crimson");
   setFocusPolicy (Qt::StrongFocus);
   setMouseTracking (true);
 
@@ -5052,8 +5057,48 @@ void MapView::tick (float dt)
 	  _status_selection->setText(QString::number(currentSelection.size()) + " objects selected");
   }
 
-  if (selection_changed || NOGGIT_CUR_ACTION)
+  // The detail panel, immediately on a selection change and at most ten times a second while a
+  // brush is held.
+  //
+  // NOGGIT_CUR_ACTION is set for the whole duration of a stroke, so the old condition rebuilt the
+  // panel every frame while painting -- and rebuilding it means selected_chunk_type::updateDetails
+  // assembling a multi-kilobyte HTML string through a std::stringstream, two linear scans of
+  // AreaTable.dbc for the area name, and then a full QTextDocument parse and layout inside
+  // QLabel::setText, because DetailInfos.cpp:26 sets Qt::RichText. All of that during exactly the
+  // interaction that has to stay responsive, and only for users who keep the panel open --
+  // updateDetailInfos itself does nothing when it is hidden (MapView.cpp:2005).
+  //
+  // The final value still lands: _detail_infos_stale remembers that a frame was skipped, and the
+  // first frame after the stroke ends runs the update it owes. Ten hertz is a readable refresh for
+  // a panel of numbers; it is not a rate a reader can tell from sixty by looking.
+  constexpr qint64 DETAIL_INFOS_MIN_INTERVAL_MS = 100;
+
+  if (selection_changed)
+  {
     updateDetailInfos(); // checks if sel changed
+    _detail_infos_clock.restart();
+    _detail_infos_stale = false;
+  }
+  else if (NOGGIT_CUR_ACTION)
+  {
+    if ( !_detail_infos_clock.isValid()
+      || _detail_infos_clock.elapsed() >= DETAIL_INFOS_MIN_INTERVAL_MS
+       )
+    {
+      updateDetailInfos();
+      _detail_infos_clock.restart();
+      _detail_infos_stale = false;
+    }
+    else
+    {
+      _detail_infos_stale = true;
+    }
+  }
+  else if (_detail_infos_stale)
+  {
+    updateDetailInfos();
+    _detail_infos_stale = false;
+  }
 
   if (selection_changed)
   {
@@ -5061,8 +5106,21 @@ void MapView::tick (float dt)
       // updateDetailInfos();
   }
 
-  _status_area->setText
-    (QString::fromStdString (gAreaDB.getAreaFullName (_world->getAreaID (_camera.position))));
+  // Only re-derived when the camera crosses into a different area. See _status_area_name in the
+  // header for what the old unconditional call cost per frame.
+  {
+    unsigned int const area_id (_world->getAreaID (_camera.position));
+
+    if (!_status_area_known || area_id != _status_area_id)
+    {
+      _status_area_id = area_id;
+      _status_area_known = true;
+      _status_area_name
+        = QString::fromStdString (gAreaDB.getAreaFullName (static_cast<int>(area_id)));
+    }
+
+    _status_area->setText (_status_area_name);
+  }
 
   {
     int time ((static_cast<int>(_world->time) % 2880) / 2);

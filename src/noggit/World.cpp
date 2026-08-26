@@ -1925,6 +1925,8 @@ void World::convert_alphamap(QProgressDialog* progress_dialog, bool to_big_alpha
     return;
   }
 
+  //! How often the progress dialog is advanced, in tiles. See the setValue call in the loop.
+  constexpr int PROGRESS_PUMP_TILE_INTERVAL = 16;
 
   int count = 0;
   for (size_t z = 0; z < 64; z++)
@@ -1951,10 +1953,37 @@ void World::convert_alphamap(QProgressDialog* progress_dialog, bool to_big_alpha
           mapIndex.unloadTile(tile);
         }
         count++;
-        progress_dialog->setValue(count);
+
+        // Every 16th tile, not every tile, and the final value set once after the loop.
+        //
+        // QProgressDialog::setValue calls QCoreApplication::processEvents() on a modal dialog, so
+        // each of these is a full trip through the event loop -- and a trip through the event loop
+        // here can dispatch a queued repaint of the 3D view. At one call per tile that is up to
+        // 4096 event-loop re-entries, and potentially 4096 rendered frames, interleaved with a
+        // bulk save. Throttling is the pattern NoggitWindow.cpp:1023-1027 already uses and
+        // documents for the same reason.
+        //
+        // The trailing setValue is load-bearing, not decoration: QProgressDialog closes itself
+        // when its value reaches its maximum, so a throttle that could skip the last update would
+        // leave the dialog on screen. This loop is not cancellable (see the note above) and holds
+        // no pointer across the pump, so nothing else here depends on the interval.
+        if (count % PROGRESS_PUMP_TILE_INTERVAL == 0)
+        {
+          progress_dialog->setValue(count);
+        }
       }
     }
   }
+
+  // Guarded: when count is an exact multiple of the interval, the in-loop call above already
+  // delivered this exact value, and QProgressDialog with autoReset treats reaching the maximum as
+  // "done" -- it resets and hides. Calling setValue again with the same value re-shows and
+  // re-hides the dialog, a visible flash at the end of a long conversion.
+  if (count % PROGRESS_PUMP_TILE_INTERVAL != 0)
+  {
+    progress_dialog->setValue(count);
+  }
+
   mapIndex.convert_alphamap(to_big_alpha);
   mapIndex.save();
 }

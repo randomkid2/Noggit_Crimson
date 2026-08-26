@@ -1,6 +1,7 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
 #include <noggit/Tool.hpp>
+#include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 
 #include "ToolPanel.hpp"
 
@@ -8,16 +9,13 @@ using namespace Noggit::Ui::Tools;
 
 namespace
 {
-  // The width every tool widget in this dock has to lay out inside, and the reason each of them
-  // pins its own layout margins rather than taking the style default. ToolPanelScroll.ui gives
-  // the scroll area the same 250px floor; the extra allowance is the vertical scroll bar, which
-  // the tools never get to use because the viewport is inside it.
-  //
-  // Anything whose minimumSizeHint().width() exceeds TOOL_CONTENT_WIDTH gets a horizontal
-  // scroll bar under it at the dock's smallest size, which is why widths in the tool widgets
-  // are measured against this number rather than eyeballed. For reference, rendered with the
-  // shipped theme: the terrain tool asks for 194px and the texturing tool's Paint tab 224px.
-  constexpr int TOOL_CONTENT_WIDTH = 250;
+  // The width every tool widget in this dock has to lay out inside now lives in
+  // ToolWidgetStyle.hpp, because the tool widgets themselves need it: it is the floor
+  // toolColumn/toolForm pin on each of them. ToolPanelScroll.ui does NOT repeat that floor --
+  // its scroll area asks for 274px, the 250px floor plus the 12px of side margin the form adds
+  // on each side, which is exactly what the paragraph below describes. The extra allowance here
+  // is the vertical scroll bar, which the tools never get to use because the viewport is inside
+  // it.
   constexpr int SCROLL_BAR_ALLOWANCE = 15;
 
   // The panel's side margins, which ToolPanelScroll.ui now carries on the scroll area's content
@@ -36,21 +34,22 @@ namespace
   // minimum grows by the same 24px here. The content floor is still exactly 250px and every
   // width measured against it stays valid.
   //
-  // WHAT THIS DOES *NOT* FIX, measured with a standalone Qt 5.15.2 probe and recorded here so
-  // the next pass does not have to rediscover it. The tool widgets inside this panel supply an
-  // inset of their own, and they do not agree on it:
+  // THE SECOND INSET IS NOW GONE, and this note records what it was so the measurement is not
+  // lost with it. The tool widgets inside this panel used to supply an inset of their own, and
+  // they did not agree on it:
   //
   //     QStyle::PM_LayoutLeftMargin (windowsvista, this machine)  13px
-  //     texturing_tool / TerrainTool, which pin their own          9px
+  //     texturing_tool / TerrainTool, which pinned their own       9px
   //
-  // So the dock's contents were never flush against its edge the way a reading of this form
-  // alone suggests -- they sat 9px or 13px in, depending on the tool -- and after this change
-  // they sit at 21px or 25px. The panel margin is the design system's 12px and is correct; the
-  // 9-vs-13 disagreement underneath it is pre-existing and is NOT made worse here, but it is
-  // the reason the total inset is not the flat 12px the spacing scale describes. Closing it
-  // properly means zeroing the contents margins on every tool widget so this panel is the only
-  // thing that insets them, which is a sweep across roughly sixteen files and deliberately out
-  // of scope for an appearance pass that must not reflow tool panels one at a time.
+  // So the dock's contents were never flush against its edge the way a reading of the form
+  // alone suggests -- they sat 21px or 25px in once this panel's own 12px was added, depending
+  // on which tool was showing, and the left edge of the content MOVED by 4px when the user
+  // pressed a key to change tool. ToolWidgetStyle.hpp closes that for the eleven tool widgets it
+  // reaches -- of the fifteen registered, which its own header block lists -- each of which now
+  // takes its column from toolColumn() or toolForm(), both of which zero the contents margins.
+  // For those eleven this panel is the only thing that insets a tool and the total is the flat
+  // 12px the spacing scale describes; the remaining four still carry whatever the style hands
+  // them.
   constexpr int PANEL_SIDE_MARGINS = 24;
 }
 
@@ -62,7 +61,8 @@ ToolPanel::ToolPanel(QWidget* parent)
   setWidget(body);
   setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
   layout()->setAlignment(Qt::AlignTop);
-  setMinimumWidth(TOOL_CONTENT_WIDTH + PANEL_SIDE_MARGINS + SCROLL_BAR_ALLOWANCE);
+  setMinimumWidth
+    (ToolPanelStyle::TOOL_CONTENT_WIDTH + PANEL_SIDE_MARGINS + SCROLL_BAR_ALLOWANCE);
 }
 
 void ToolPanel::setCurrentTool(editing_mode mode)

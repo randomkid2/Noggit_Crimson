@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: randomkid2 <jayden.mattsson101@gmail.com>
+Date: Wed, 26 Aug 2026 17:40:00 +1000
+Subject: [PATCH] Remove the duplicate STRPRODUCTVER definition
+
+revision.h.in defined STRPRODUCTVER twice. The second definition silently won,
+so the first was dead, and a duplicate object-like macro whose replacement lists
+differ is a constraint violation that a stricter compiler is entitled to reject.
+
+The surviving definition is the one that was already in effect, so nothing the
+application displays changes: About still reads "3.<count>+ [<sha>]".
+
+Signed-off-by: randomkid2 <jayden.mattsson101@gmail.com>
+---
+diff --git a/revision.h.in b/revision.h.in
+index 92da9ae..b1fbe69 100644
+--- a/revision.h.in
++++ b/revision.h.in
+@@ -2,5 +2,4 @@
+ 
+ #pragma once
+ 
+-#define STRPRODUCTVER "3.@NOGGIT_GIT_VERSION_STRING@"
+ #define STRPRODUCTVER "3.@NOGGIT_COMMIT_COUNT@ [@NOGGIT_GIT_VERSION_STRING@]"
+-- 
+2.43.0
+

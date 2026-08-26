@@ -644,7 +644,14 @@ namespace Noggit
 
       using Key = std::tuple<int, char32_t, bool, int, int, int, QRgb>;
 
-      static std::map<Key, QPixmap> cache;
+      // Deliberately leaked, exactly like the probe widget in iconProbePalette
+      // (FontAwesome.hpp:1117-1146) and for the same reason: a function-local static is destroyed
+      // during static destruction, which runs AFTER QApplication has gone. A QPixmap is a handle
+      // into the platform integration, so tearing a container of them down at that point is a
+      // crash or a warning on the way out of the process rather than anything the user can act
+      // on. One process-lifetime allocation is the price; the map is not freed, and there is
+      // nothing to free it for.
+      static auto& cache (*new std::map<Key, QPixmap>());
 
       bool const checked (state == QIcon::On);
 

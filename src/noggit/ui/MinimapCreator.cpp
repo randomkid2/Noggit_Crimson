@@ -9,6 +9,8 @@
 #include <noggit/MapView.h>
 #include <noggit/Model.h>
 #include <noggit/project/CurrentProject.hpp>
+#include <noggit/ui/DesignTokens.hpp>
+#include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 #include <noggit/World.h>
 
 #include <qt-color-widgets/color_selector.hpp>
@@ -41,10 +43,12 @@ namespace Noggit
         World* world,
         QWidget* parent ) : QWidget(parent)
     {
-      setMinimumWidth(250);
-      // setMaximumWidth(250);
-      auto layout = new QVBoxLayout(this);
-      layout->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+      // The dock's shared shell -- zero margins, S3 between sections, 250px floor. This layout
+      // set no margins, so it took QStyle::PM_LayoutLeftMargin (13px on windowsvista here) on
+      // top of ToolPanel's own 12px. See ToolWidgetStyle.hpp. The horizontal centring is gone
+      // with it: the only child is a full-width tab widget, so centring it did nothing, and
+      // every other tool in the dock is left-aligned.
+      auto layout = Tools::ToolPanelStyle::toolColumn(this);
 
       auto settings_tabs = new QTabWidget (this);
       layout->addWidget(settings_tabs);
@@ -1218,7 +1222,7 @@ namespace Noggit
     {
       setAttribute(Qt::WA_TranslucentBackground);
       auto layout = new QHBoxLayout(this);
-      layout->setContentsMargins(5, 2, 5, 2);
+      layout->setContentsMargins(Design::S1, Design::S0, Design::S1, Design::S0);
       layout->addWidget(_filename = new QLineEdit(this));
       _filename->setEnabled(false);
       layout->addWidget(_size_category_spin = new QDoubleSpinBox(this));
@@ -1253,7 +1257,7 @@ namespace Noggit
       auto layout = new QHBoxLayout(this);
       layout->addWidget(_filename = new QLineEdit(this));
       _filename->setAttribute(Qt::WA_TranslucentBackground);
-      layout->setContentsMargins(5, 2, 5, 2);
+      layout->setContentsMargins(Design::S1, Design::S0, Design::S1, Design::S0);
       _filename->setEnabled(false);
     }
 
@@ -1273,7 +1277,7 @@ namespace Noggit
       auto layout = new QHBoxLayout(this);
       layout->addWidget(_uid_label = new QLabel(this));
       _uid_label->setAttribute(Qt::WA_TranslucentBackground);
-      layout->setContentsMargins(5, 2, 5, 2);
+      layout->setContentsMargins(Design::S1, Design::S0, Design::S1, Design::S0);
     }
 
     uint32_t MinimapInstanceFilterEntry::getUid() const

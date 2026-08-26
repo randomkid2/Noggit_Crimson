@@ -20,6 +20,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QSizePolicy>
 #include <QLabel>
 #include <QLayout>
 #include <QListWidget>
@@ -29,7 +30,6 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
-#include "revision.h"
 #include "ui_NoggitProjectSelectionWindow.h"
 
 #include <filesystem>
@@ -60,6 +60,40 @@ namespace
   //! pixel the recent-projects well does not want, which is how you get a 500px-wide
   //! "Convert Project".
   constexpr int ACTION_COLUMN_WIDTH = 220;
+
+  // The narrowest the window may become. Qt was enforcing NO minimum at all here -- probed by
+  // asking the window to become 400x300, which succeeded -- so the window could be dragged down
+  // until the action column and the list overlapped. This states the floor the layout actually
+  // needs, measured from the form's own numbers rather than guessed:
+  //
+  //   24 + 24  root margins, SPACE_24 either side
+  //  +380      listView minimumSize from the form
+  //  + 32      SPACE_32 column gutter
+  //  +  2      the vertical Line
+  //  + 32      SPACE_32 column gutter
+  //  +220      ACTION_COLUMN_WIDTH
+  //  = 714     and Qt reports minimumSizeHint().width() as 713 at run time, which is the same
+  //            number arrived at independently.
+  //
+  // NOTHING HERE FIXES A CROPPING BUG, and an earlier draft of this comment claimed it did. The
+  // report that the action column was painted past the right edge came from a screen capture taken
+  // by a DPI-UNAWARE process: this display runs at a scale where Qt reports devicePixelRatio 2, so
+  // GetWindowRect handed the capturing process 1588px for a window whose real surface is 2360px,
+  // and the capture was the top-left corner of the window rather than the window. Qt's own
+  // QWidget::grab of the same window is 2360x1440 and shows the column complete, with the Create
+  // button spanning x 623..843 inside a 1180 logical central widget -- 337px clear of the edge.
+  // The layout was never wrong. This minimum is worth having on its own merits; it is not a fix.
+  constexpr int WINDOW_MIN_WIDTH = 714;
+
+  // 300 of list (PROJECT_LIST_MIN_HEIGHT) plus the banner, the rule under it, the two section
+  // headings and the vertical margins. Deliberately modest: height is what a short screen runs out
+  // of first, and the list scrolls.
+  constexpr int WINDOW_MIN_HEIGHT = 520;
+
+  // What it OPENS at, as opposed to what it may be squeezed to. Wide enough that the list shows a
+  // full project path without eliding and the action column still has air around it.
+  constexpr int WINDOW_DEFAULT_WIDTH = 1180;
+  constexpr int WINDOW_DEFAULT_HEIGHT = 720;
 }
 
 NoggitProjectSelectionWindow::NoggitProjectSelectionWindow(Noggit::Application::NoggitApplication* noggit_app,
@@ -319,9 +353,10 @@ void NoggitProjectSelectionWindow::applyVisualDesign()
   // ----------------------------------------------------------- the brand band --
   //
   // The window opened straight onto two headings with nothing above them, so it read as a panel
-  // that had lost its window. A mark, the product name at the window-title rank and the build at
-  // the secondary rank give the first thing the eye lands on somewhere to land, and they are the
-  // one place in the application that states which build is running without opening About.
+  // that had lost its window. A mark and the product name at the window-title rank give the first
+  // thing the eye lands on somewhere to land. The band carries the product's identity and nothing
+  // else; the build number it used to show belongs in About and in the log, not in front of
+  // someone every time they open the editor.
   QWidget* const banner = new QWidget(centralWidget());
   banner->setObjectName("project-banner");
 
@@ -331,7 +366,16 @@ void NoggitProjectSelectionWindow::applyVisualDesign()
 
   QLabel* const banner_mark = new QLabel(banner);
   banner_mark->setObjectName("project-banner-mark");
-  banner_mark->setPixmap(QIcon(":/icon").pixmap(QSize(BRAND_MARK_EXTENT, BRAND_MARK_EXTENT)));
+
+  // QIcon::pixmap takes a LOGICAL size and hands back a pixmap whose device pixel ratio is 1,
+  // so asking for 28 on a 2x screen yields 28 device pixels that QLabel then draws across 56 --
+  // the mark was the one blurred thing in an otherwise crisp window. Ask for the device size and
+  // stamp the ratio back on, so the label still occupies 28 logical pixels but fills them.
+  const qreal mark_ratio = banner_mark->devicePixelRatioF();
+  QPixmap banner_pixmap = QIcon(":/icon").pixmap(
+      QSize(qRound(BRAND_MARK_EXTENT * mark_ratio), qRound(BRAND_MARK_EXTENT * mark_ratio)));
+  banner_pixmap.setDevicePixelRatio(mark_ratio);
+  banner_mark->setPixmap(banner_pixmap);
   banner_mark->setFixedSize(BRAND_MARK_EXTENT, BRAND_MARK_EXTENT);
 
   // The window-title rank, 15px/600. It is one step BELOW the column headings below it, and that
@@ -341,15 +385,8 @@ void NoggitProjectSelectionWindow::applyVisualDesign()
   banner_title->setObjectName("project-banner-title");
   Style::applyRank(banner_title, Style::RANK_WINDOW_TITLE_PIXELS, Style::RANK_WINDOW_TITLE_WEIGHT);
 
-  // The secondary rank, taken from the sheet by name rather than written here, so the theme keeps
-  // both the 11px and the text.dim that go with it.
-  QLabel* const banner_version = new QLabel(QString::fromLatin1(STRPRODUCTVER), banner);
-  banner_version->setObjectName(Style::NAME_SECONDARY);
-  banner_version->setToolTip(tr("Build in use"));
-
   banner_layout->addWidget(banner_mark, 0, Qt::AlignVCenter);
   banner_layout->addWidget(banner_title, 0, Qt::AlignVCenter);
-  banner_layout->addWidget(banner_version, 0, Qt::AlignBottom);
   banner_layout->addStretch(1);
 
   // One rule under the band, drawn Plain so it is the 1px hairline the design asks for rather
@@ -407,6 +444,18 @@ void NoggitProjectSelectionWindow::applyVisualDesign()
     button->setMinimumWidth(ACTION_COLUMN_WIDTH);
     button->setMaximumWidth(ACTION_COLUMN_WIDTH);
   }
+  // Expanding, against the form's "Fixed". Not a bug fix either -- the form's Fixed policy pins the
+  // list to its size hint, so widening the window grew the empty gutter instead of the list, and
+  // the list is the one thing on this window that is worth more space. The fixed-width action
+  // column is satisfied first regardless; the list takes what is left, down to its 380px floor.
+  _ui->listView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+  // Qt was enforcing no minimum at all on this window -- probed by asking it to become 400x300,
+  // which succeeded. A window with no minimum does not refuse to shrink, it just paints its
+  // content outside itself, which is exactly the reported symptom.
+  setMinimumSize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT);
+  resize(WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT);
+
   _ui->verticalLayout_4->setContentsMargins(0, 0, 0, 0);
   _ui->verticalLayout_4->setSpacing(Style::SPACE_8);
   _ui->horizontalLayout_2->setContentsMargins(0, 0, 0, 0);

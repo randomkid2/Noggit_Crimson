@@ -12,6 +12,7 @@
 #include <noggit/ui/GroundEffectsTool.hpp>
 #include <noggit/ui/texture_swapper.hpp>
 #include <noggit/ui/texturing_tool.hpp>
+#include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 #include <noggit/ui/tools/UiCommon/expanderwidget.h>
 #include <noggit/ui/tools/UiCommon/ExtendedSlider.hpp>
 #include <noggit/ui/tools/UiCommon/ImageMaskSelector.hpp>
@@ -56,8 +57,10 @@ namespace Noggit
       , _map_view(map_view)
     {
       setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-      auto layout (new QVBoxLayout (this));
-      layout->setAlignment(Qt::AlignTop);
+      // The dock's shared shell. This layout previously set no margins at all, so it took
+      // QStyle::PM_LayoutLeftMargin -- 13px on windowsvista here -- on top of ToolPanel's own
+      // 12px, while the tab content below pinned 9. See ToolWidgetStyle.hpp.
+      auto layout (Tools::ToolPanelStyle::toolColumn (this));
 
       _texture_brush.init();
       _inner_brush.init();
@@ -74,11 +77,12 @@ namespace Noggit
       tool_widget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
       auto tool_layout (new QVBoxLayout (tool_widget));
       tool_layout->setAlignment(Qt::AlignTop);
-      // The same gutter figures the terrain tool now states explicitly, so the two tools that
-      // share the dock stop being inset by different amounts depending on which style default
-      // happened to apply. 8px between sections is the panel's one section gap.
-      tool_layout->setContentsMargins(9, 4, 9, 9);
-      tool_layout->setSpacing(8);
+      // Inside a QTabWidget pane, which the theme already pads, so this adds nothing of its own
+      // -- the same zero-gutter, S3-between-sections rule ToolWidgetStyle.hpp states for the
+      // tool widget itself. dressToolLayout is not used here because it also pins a 250px
+      // minimum width, which belongs to the tool, not to one of its tabs.
+      tool_layout->setContentsMargins(0, 0, 0, 0);
+      tool_layout->setSpacing(Design::S3);
 
       auto slider_layout (new QGridLayout);
       slider_layout->setContentsMargins(0, 0, 0, 0);
@@ -560,8 +564,11 @@ namespace Noggit
       set_radius(15.0f);
       toggle_tool(); // to disable
 
-      setMinimumWidth(250);
-      setMaximumWidth(250);
+      // The 250px FLOOR is set once, by toolColumn at the top of this constructor. The 250px
+      // CEILING that used to sit beside it here is gone: it pinned the most-used tool in the
+      // editor to exactly the dock's minimum width, so widening the right-hand dock left a
+      // strip of empty panel beside a tool that refused to grow into it. Only two tools carried
+      // a ceiling -- this one and ShaderTool -- and neither needed it.
     }
 
     texturing_tool::~texturing_tool()
@@ -570,12 +577,30 @@ namespace Noggit
         // delete _ground_effect_tool;
     }
 
+    // Rebuilds the rotated mask, but only when the mask or the rotation actually changed. The
+    // long-form reasoning -- why the radius slider reaches this at all, what the transform costs
+    // per mouse-move event, and why the emit stays unguarded -- is on TerrainTool::updateMaskImage,
+    // which this is a copy of. (The angle conversion here is spelled differently from the other
+    // two and is left exactly as it was; it is not the same rotation for a given dial value, and
+    // changing that would move where the mask points.)
     void texturing_tool::updateMaskImage()
     {
       QPixmap* pixmap = _image_mask_group->getPixmap();
-      QTransform matrix;
-      matrix.rotateRadians(_image_mask_group->getRotation() * M_PI / 180.f);
-      _mask_image = pixmap->toImage().transformed(matrix, Qt::SmoothTransformation);
+      int const rotation = _image_mask_group->getRotation();
+
+      if ( !_mask_image_built
+        || _mask_source_key != pixmap->cacheKey()
+        || _mask_rotation != rotation
+         )
+      {
+        QTransform matrix;
+        matrix.rotateRadians(rotation * M_PI / 180.f);
+        _mask_image = pixmap->toImage().transformed(matrix, Qt::SmoothTransformation);
+
+        _mask_source_key = pixmap->cacheKey();
+        _mask_rotation = rotation;
+        _mask_image_built = true;
+      }
 
       emit _map_view->trySetBrushTexture(&_mask_image, this);
     }
@@ -993,10 +1018,25 @@ namespace Noggit
       return textureHeightmappingData;
     }
 
+    // The width of the ramp, and of the widget it fills. It was a bare 35 written three times
+    // in paintEvent below and once here; the four had to agree and nothing said so.
+    constexpr int OPACITY_GROOVE_WIDTH = 35;
+
     OpacitySlider::OpacitySlider(Qt::Orientation orientation, QWidget* parent)
       : QSlider(orientation, parent)
     {
-      setFixedWidth(35);
+      setFixedWidth(OPACITY_GROOVE_WIDTH);
+
+      // paintEvent now picks the grip colour from underMouse(), so this widget has to be told
+      // when the pointer arrives and leaves. QSlider repaints on a hover subcontrol change, but
+      // only if it is delivered hover events at all, and that depends on WA_Hover having been
+      // set -- normally by QStyleSheetStyle at polish time, which is a dependency on the sheet
+      // this class exists precisely because it cannot rely on. Stated here instead.
+      //
+      // The hover state is the WIDGET's, not the handle's: this is a 35px column and lighting
+      // the grip whenever the pointer is anywhere in it is the affordance, since anywhere in it
+      // is a valid place to click.
+      setAttribute(Qt::WA_Hover, true);
     }
 
     void OpacitySlider::paintEvent(QPaintEvent* event)
@@ -1029,15 +1069,59 @@ namespace Noggit
       // 5.1% trim off the two ends; the ramp still spans 17.36:1 and no user can read the
       // difference in the ramp, which is the point of picking the near-extremes rather than
       // visibly grey ones.
+      //
+      // IT IS NOW A ROUNDED, STROKED WELL rather than a bare fillRect. The theme has always
+      // declared `border: 1px solid #565049; border-radius: 5px` on this groove and NONE of it
+      // was ever painted -- p.fillRect draws square corners and no pen, so the shipped ramp was
+      // a hard-edged rectangle sitting inside a panel where every other control has a 5px
+      // radius and a 1px border. Design::RADIUS_CONTROL is 5 and is the same number the sheet
+      // names, so the two finally agree on the shape. They no longer agree on the COLOUR, and
+      // deliberately -- see the next paragraph. Nothing is lost by that: this paintEvent never
+      // asks the style to draw the groove, so the sheet's `border` declaration on it is a
+      // statement of intent that has never put a pixel on screen. The pen below is the only
+      // thing that does.
+      //
+      // THE OUTLINE IS Design::EDGE AND IT NOW CLEARS THE FLOOR. It was Design::STROKE, and the
+      // note that stood here conceded the failure rather than fixing it: STROKE measures 6.991:1
+      // against the pale end of the ramp but only 2.484:1 against the dark end and 1.894:1
+      // against the panel behind it, i.e. under 3:1 on two of the three things it has to be seen
+      // against. It was written that way because DesignTokens.hpp had no token that did better;
+      // theme.qss had already added edge #8A8378 as "the visible edge of an enabled control" and
+      // demoted stroke out of that role, and the C++ half of the palette had not followed.
+      //
+      // EDGE, measured on the three surfaces this one pen touches: 5.269:1 on RAMP_LO, 3.296:1
+      // on RAMP_HI, 4.018:1 on BG_PANEL. All three clear 3:1, where STROKE cleared one. So the
+      // outline stops being an admitted exception and becomes an ordinary control edge, which is
+      // what it always was -- the excuse it used to carry (that the RAMP's own 17.364:1 span is
+      // the real identification, so the outline may be under the floor) was true but was doing
+      // work no longer needed.
+      //
+      // The ratio moves in the right direction at both ends at once, which is the point of
+      // picking a mid-light neutral: STROKE was strong on the pale end and invisible on the dark
+      // one, EDGE is 3.3 to 5.3 across the whole track.
+      //
+      // The right edge also stops being a pixel wrong. setRight is INCLUSIVE, so the old
+      // setLeft(0)/setRight(35) pair described a 36px rect on a 35px widget and the -1 in the
+      // fillRect adjust was silently correcting for it.
       QRect grooveRect = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderGroove, this);
-      grooveRect.setLeft((width() - 35) / 2);
-      grooveRect.setRight((width() + 35) / 2);
+      grooveRect.setLeft((width() - OPACITY_GROOVE_WIDTH) / 2);
+      grooveRect.setWidth(OPACITY_GROOVE_WIDTH);
+
       QLinearGradient gradient(grooveRect.topLeft(), grooveRect.bottomLeft());
       gradient.setColorAt(0, Design::color(Design::RAMP_LO));
       gradient.setColorAt(1, Design::color(Design::RAMP_HI));
-      p.fillRect(grooveRect.adjusted(0, 0, -1, -1), gradient);
 
-      // THE HANDLE, and why it needs a border where no other handle in the application does.
+      p.setRenderHint(QPainter::Antialiasing, true);
+      p.setBrush(gradient);
+      p.setPen(QPen(Design::color(Design::EDGE), 1.0));
+      // The half-pixel inset centres a 1px cosmetic pen on the boundary rather than straddling
+      // two rows, so the stroked box is exactly OPACITY_GROOVE_WIDTH wide.
+      p.drawRoundedRect( QRectF(grooveRect).adjusted(0.5, 0.5, -0.5, -0.5)
+                       , Design::RADIUS_CONTROL
+                       , Design::RADIUS_CONTROL
+                       );
+
+      // THE HANDLE, and why it needs a ring where no other handle in the application does.
       //
       // It was a pure-red 35x5 rectangle -- the crimson overload in its purest form, sitting on
       // the one control where red cannot mean anything, since this slider has no error state
@@ -1045,32 +1129,106 @@ namespace Noggit
       // for "the thing you are acting on" and is exactly what a slider grip is.
       //
       // But a flat accent grip is unreadable at one end of this particular track, and that is
-      // measured, not suspected: ACCENT against RAMP_LO is 9.00:1 and against RAMP_HI only
-      // 1.93:1. Drag the opacity to full and a borderless gold grip would vanish into the pale
-      // end of its own ramp -- worse than the pure red it replaces, which held 4.00:1 there.
-      // The 1px INK border is therefore load-bearing rather than decoration: INK against
-      // RAMP_HI is 16.93:1 and against ACCENT 8.77:1, so the grip is outlined against the track
-      // at BOTH ends and outlined against its own fill as well. Contrast never drops below
-      // 8.77:1 anywhere on the range.
+      // measured, not suspected: ACCENT against RAMP_LO is 8.996:1 and against RAMP_HI only
+      // 1.930:1. Drag the opacity to full and a borderless gold grip would vanish into the pale
+      // end of its own ramp. The INK ring is therefore load-bearing rather than decoration: INK
+      // against RAMP_HI is 16.932:1 and against ACCENT 8.772:1, so at the light end the RING
+      // carries the grip and at the dark end the CORE does, and nowhere on the range does the
+      // grip drop below 5.640:1 against something adjacent to it.
       //
-      // Antialiasing is turned on for this rounded rectangle only, and the half-pixel inset is
-      // what centres a 1px cosmetic pen on the pixel boundary instead of straddling two rows.
-      constexpr qreal HANDLE_WIDTH = 34.0;
-      constexpr qreal HANDLE_HEIGHT = 6.0;
-      constexpr qreal HANDLE_RADIUS = 2.0;
+      // WHAT CHANGED, and it is geometry as much as colour.
+      //
+      // The pill is 33 x 12 with a 2px ring and a 6px radius, replacing 34 x 6 with a 1px ring
+      // and a 2px radius. 12px doubles the grab band on a control that is dragged rather than
+      // clicked, and a 6px radius is half of 12, so the cap is a full semicircle instead of a
+      // barely-rounded corner.
+      //
+      // THE ARITHMETIC THAT USED TO BE HERE WAS WRONG AND IS CORRECTED RATHER THAN DELETED,
+      // because it is exactly the sum that looks like it checks out. It read: "33 + 2 x 1px of
+      // ring is exactly the 35px widget, where 34 + 2 was 36 and overhung it." Two errors:
+      //
+      //   * THE RING IS NOT ADDED TO HANDLE_WIDTH, it is taken out of it. handle_box below is
+      //     inset by HANDLE_RING / 2 on every side and shrunk by HANDLE_RING on both axes, so a
+      //     pen centred on that path lands its OUTER edge exactly on HANDLE_WIDTH x
+      //     HANDLE_HEIGHT. Worked through for a 35px widget: x0 = (35 - 33) / 2 + 1 = 2.0,
+      //     width = 33 - 2 = 31, so the path runs x 2.0 -> 33.0 and the 2px pen covers
+      //     1.0 -> 34.0. That is 33px of paint with ONE bare pixel of widget either side, not a
+      //     flush 35. The same construction makes the pill exactly 12px tall.
+      //   * THE OLD PILL DID NOT OVERHANG EITHER. HANDLE_WIDTH 34, a flat 0.5 inset, width
+      //     34 - 1 = 33 and a 1px pen put the outer edge at 0.5 -> 34.5: 34px inside 35, half a
+      //     pixel of bare widget each side. It fitted. The 36 in the old sentence is theme.qss's
+      //     BOX for this handle -- 34 of content plus 1px of border on each side -- which the
+      //     sheet states correctly and which never described what this function drew.
+      //
+      // So the change here is 34x6 -> 33x12: one pixel narrower, twice as tall. The theme's own
+      // numbers for this handle described an 8px-tall box while the C++ drew 6, i.e. the band
+      // that grabbed and the pill that was drawn disagreed by a pixel top and bottom; the sheet
+      // is being brought to these figures in the same pass (see the theme's
+      // texturing_brush_level_slider block).
+      //
+      // The core is now picked by STATE. It was a hardcoded ACCENT, so this slider had no hover
+      // and no pressed feedback at all -- paintEvent never read underMouse() or isSliderDown()
+      // for colour, even though it already read isSliderDown() for the style option. Measured,
+      // every core against the ink ring and against both ends of the ramp it slides over:
+      //
+      //                        vs ink ring   vs ramp.lo   vs ramp.hi
+      //   ACCENT       rest       8.772        8.996        1.930
+      //   ACCENT_HI    hover     10.854       11.131        1.560
+      //   ACCENT_PRESS press      5.640        5.784        3.002
+      //   STROKE       disabled   2.422        2.484        6.991   (exempt, SC 1.4.11)
+      //
+      // The inset is HANDLE_RING / 2 rather than the old flat 0.5, and that half-of-the-pen is
+      // what makes the outer edge land on HANDLE_WIDTH exactly, as derived above. Drop it and
+      // the 2px ring straddles the boundary instead: x0 = (35 - 33) / 2 = 1.0 with width 33
+      // strokes 0.0 -> 35.0, a pill flush to both edges of the widget with no bare pixel left.
+      // The radius loses the same half -- 6 - 1 = 5 on the path, plus 1px of pen outside it --
+      // so the OUTER corner keeps HANDLE_RADIUS.
+      constexpr qreal HANDLE_WIDTH = 33.0;
+      constexpr qreal HANDLE_HEIGHT = 12.0;
+      constexpr qreal HANDLE_RADIUS = 6.0;
+      constexpr qreal HANDLE_RING = 2.0;
 
-      QRect handleRect = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, this);
-      QRectF const handle_box
-        ( (width() - HANDLE_WIDTH) / 2.0 + 0.5
-        , handleRect.top() + 0.5
-        , HANDLE_WIDTH - 1.0
-        , HANDLE_HEIGHT - 1.0
+      char const* const handle_core
+        ( !isEnabled()   ? Design::STROKE
+        : isSliderDown() ? Design::ACCENT_PRESS
+        : underMouse()   ? Design::ACCENT_HI
+                         : Design::ACCENT
         );
 
-      p.setRenderHint(QPainter::Antialiasing, true);
-      p.setBrush(Design::color(Design::ACCENT));
-      p.setPen(QPen(Design::color(Design::INK), 1.0));
-      p.drawRoundedRect(handle_box, HANDLE_RADIUS, HANDLE_RADIUS);
+      // CENTRED ON THE STYLE'S HANDLE RECT, NOT ANCHORED TO ITS TOP, and that is the one line
+      // here that is defensive rather than cosmetic. The rect comes from QStyleSheetStyle,
+      // i.e. from theme.qss, and the pill drawn on top of it comes from this file -- two owners
+      // for one control. Anchoring to the top meant the two agreed only while the sheet's
+      // declared handle box was exactly HANDLE_HEIGHT, and it was NOT: the shipped sheet
+      // described an 8px box while this function drew 6, so the band that grabbed and the pill
+      // that was drawn were a pixel out top and bottom.
+      //
+      // Sharing a CENTRE instead makes the pill point at the right value whatever height the
+      // sheet declares, and the clamp keeps it inside the widget if the sheet ever declares a
+      // band shorter than the pill -- flush at the ends rather than sliced by the clip.
+      QRect handleRect = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, this);
+
+      qreal const handle_center (handleRect.top() + handleRect.height() / 2.0);
+      qreal const handle_top
+        ( qBound ( 0.0
+                 , handle_center - HANDLE_HEIGHT / 2.0
+                 , qMax (0.0, qreal (height()) - HANDLE_HEIGHT)
+                 )
+        );
+
+      QRectF const handle_box
+        ( (width() - HANDLE_WIDTH) / 2.0 + HANDLE_RING / 2.0
+        , handle_top + HANDLE_RING / 2.0
+        , HANDLE_WIDTH - HANDLE_RING
+        , HANDLE_HEIGHT - HANDLE_RING
+        );
+
+      p.setBrush(Design::color(handle_core));
+      p.setPen(QPen(Design::color(Design::INK), HANDLE_RING));
+      p.drawRoundedRect( handle_box
+                       , HANDLE_RADIUS - HANDLE_RING / 2.0
+                       , HANDLE_RADIUS - HANDLE_RING / 2.0
+                       );
       p.setRenderHint(QPainter::Antialiasing, false);
 
       // Draw the ticks if needed

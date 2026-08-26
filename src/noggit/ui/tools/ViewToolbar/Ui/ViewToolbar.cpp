@@ -2,6 +2,7 @@
 
 #include <noggit/BoolToggleProperty.hpp>
 #include <noggit/MapView.h>
+#include <noggit/ui/DesignTokens.hpp>
 #include <noggit/ui/FontAwesome.hpp>
 #include <noggit/ui/tools/ActionHistoryNavigator/ActionHistoryNavigator.hpp>
 #include <noggit/ui/tools/ViewToolbar/Ui/ViewToolbar.hpp>
@@ -34,8 +35,10 @@ public:
 
     QWidget* _widget = new QWidget(NULL);
     QHBoxLayout* _layout = new QHBoxLayout();
-    _layout->setSpacing(3);
-    _layout->setMargin(0);
+    // S1 is the design system's "inside a unit" step; the 3 that was here is off the 4px
+    // scale. setMargin has been deprecated since Qt 5.13.
+    _layout->setSpacing(Noggit::Ui::Design::S1);
+    _layout->setContentsMargins(0, 0, 0, 0);
     QLabel* _label = new QLabel(title);
 
     // The read-out text was built twice, here and again in the valueChanged handler, and the
@@ -687,7 +690,7 @@ PushButtonAction::PushButtonAction(const QString& text)
 {
   QWidget* _widget = new QWidget(NULL);
   QHBoxLayout* _layout = new QHBoxLayout();
-  _layout->setMargin(0);
+  _layout->setContentsMargins(0, 0, 0, 0);
 
   _push = new QPushButton(text);
 
@@ -707,7 +710,7 @@ CheckBoxAction::CheckBoxAction(const QString& text, bool checked)
 {
   QWidget* _widget = new QWidget(NULL);
   QHBoxLayout* _layout = new QHBoxLayout();
-  _layout->setMargin(0);
+  _layout->setContentsMargins(0, 0, 0, 0);
 
   _checkbox = new QCheckBox(text);
   _checkbox->setChecked(checked);
@@ -728,7 +731,7 @@ IconAction::IconAction(const QIcon& icon)
 {
   QWidget* _widget = new QWidget(NULL);
   QHBoxLayout* _layout = new QHBoxLayout();
-  _layout->setMargin(0);
+  _layout->setContentsMargins(0, 0, 0, 0);
 
   _icon = new QLabel();
   _icon->setPixmap(icon.pixmap(QSize(22, 22)));
@@ -748,7 +751,7 @@ SpacerAction::SpacerAction(Qt::Orientation orientation)
 {
   QWidget* _widget = new QWidget(NULL);
   QHBoxLayout* _layout = new QHBoxLayout();
-  _layout->setMargin(0);
+  _layout->setContentsMargins(0, 0, 0, 0);
 
   if (orientation == Qt::Vertical)
     _layout->addSpacerItem(new QSpacerItem(0, 0, QSizePolicy::Minimum, QSizePolicy::Expanding));
@@ -765,11 +768,23 @@ SubToolBarAction::SubToolBarAction()
 {
   QWidget* _widget = new QWidget(NULL);
   QHBoxLayout* _layout = new QHBoxLayout();
-  _layout->setSpacing(5);
-  _layout->setMargin(0);
+  _layout->setSpacing(Noggit::Ui::Design::S1);
+  // setMargin has been deprecated since Qt 5.13 and is the same call for all four sides.
+  _layout->setContentsMargins(0, 0, 0, 0);
 
   _toolbar = new QToolBar();
   _toolbar->setContextMenuPolicy(Qt::PreventContextMenu);
+  // THE SUB-BARS WERE THE ONE SET OF TOOL BARS THE TOOLBAR_ICON_EXTENT NOTE ABOVE NEVER
+  // REACHED. Five of them are built -- the secondary bars for the texture, flatten, light and
+  // climb modes -- and every one inherited QStyle::PM_ToolBarIconSize, measured 36 on
+  // windowsvista here, into a content box of roughly 22px. That is the identical 61 percent
+  // resample the note above describes as "a large part of why the chrome read as muddy",
+  // surviving on the bars a user sees every time they pick a sub-mode.
+  //
+  // The three OUTER ViewToolbar constructors and toolbar::toolbar all set this already; this
+  // one did not, and TOOLBAR_ICON_EXTENT is in an anonymous namespace in this same translation
+  // unit, so it was in scope the whole time.
+  _toolbar->setIconSize(QSize(TOOLBAR_ICON_EXTENT, TOOLBAR_ICON_EXTENT));
   _toolbar->setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
   _toolbar->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
   _toolbar->setOrientation(Qt::Horizontal);

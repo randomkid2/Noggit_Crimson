@@ -17,6 +17,8 @@
 #include <QtCore/QString>
 #include <QtGui/QColor>
 #include <QtGui/QFont>
+#include <noggit/ui/WindowChrome.hpp>
+
 #include <QtGui/QPalette>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QFileDialog>
@@ -320,6 +322,12 @@ int main(int argc, char *argv[])
       ( settings.value ("theme", Noggit::Application::defaultThemeName()).toString()
       );
   }
+
+  // AFTER the theme, because the caption colour is read from the same tokens the sheet uses and a
+  // window shown before this point would keep the system title bar. The filter dresses windows on
+  // show, so every window created from here on -- including the ones tools open much later -- is
+  // covered without any of them knowing about it.
+  Noggit::Ui::WindowChrome::install (q_application);
 
   auto project_selection = new Noggit::Ui::Windows::NoggitProjectSelectionWindow(noggit);
   // project_selection->show();

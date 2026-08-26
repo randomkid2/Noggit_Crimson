@@ -18,6 +18,7 @@
 #include <noggit/ui/LightObjectEditor.h>
 #include <noggit/ui/RotationEditor.h>
 #include <noggit/ui/tools/AssetBrowser/Ui/AssetBrowser.hpp>
+#include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 #include <noggit/ui/tools/UiCommon/expanderwidget.h>
 #include <noggit/WMOInstance.h> // WMOInstance
 #include <noggit/World.h>
@@ -70,11 +71,20 @@ namespace Noggit
             , pasteMode(PASTE_ON_TERRAIN)
             , _map_view(mapView)
     {
-      setMinimumWidth(250);
-      // setMaximumWidth(250);
-
-      auto layout = new QVBoxLayout (this);
-      layout->setAlignment(Qt::AlignTop);
+      // The dock's shared shell -- zero margins, S3 between sections, 250px floor. This layout
+      // set no margins, so it took QStyle::PM_LayoutLeftMargin (13px on windowsvista here) on
+      // top of ToolPanel's own 12px, and this is the deepest tool in the dock.
+      //
+      // COUNTED, because the figure that stood here ("eight group boxes and four expanders")
+      // matched no reading of the file. Thirteen widgets are added directly to this column --
+      // four QGroupBox (Selection Brush Radius, Selected WMO Options, Selected Light Options,
+      // Clipboard), four ExpanderWidget (Copy options, Paste Options, Movement Options, Import)
+      // and five QPushButton -- and every one of them was paying the doubled inset. Five further
+      // group boxes are nested inside two of those expanders, so the file constructs nine live
+      // QGroupBox in all; a tenth, drag_selection_depth_group, is dead, with its construction
+      // and its addWidget both inside the block comment below.
+      // See ToolWidgetStyle.hpp.
+      auto layout = Tools::ToolPanelStyle::toolColumn (this);
 
       QGroupBox* radius_group = new QGroupBox("Selection Brush Radius");
       auto radius_layout = new QFormLayout(radius_group);

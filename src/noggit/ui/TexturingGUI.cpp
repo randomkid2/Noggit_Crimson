@@ -17,6 +17,7 @@
 #include <QtCore/QSignalBlocker>
 #include <QtCore/QSortFilterProxyModel>
 #include <QtCore/QTimer>
+#include <QtGui/QIcon>
 #include <QtGui/QStandardItemModel>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
@@ -104,8 +105,20 @@ namespace Noggit
                        << data (Qt::DisplayRole).toString().toStdString()
                        << ": unknown exception" << std::endl;
             }
+
+            // Built once, here, rather than on every data() call. A QIcon is not a handle to the
+            // pixmap: constructing one allocates a QIconPrivate and a QPixmapIconEngine and adds
+            // the pixmap to it, and QIcon::pixmap() then looks its scaled results up in
+            // QPixmapCache under a key derived from the icon's own serial number -- so a fresh
+            // QIcon per call meant a fresh serial per call, a guaranteed cache miss, and a
+            // rescale of a 256x256 pixmap on every repaint of every visible row. data() is called
+            // by QStyledItemDelegate::initStyleOption during painting and again for size hints.
+            //
+            // The exception paths above leave _pixmap null on purpose; QIcon::addPixmap ignores a
+            // null pixmap, so this stays a null QIcon in exactly the cases QIcon(_pixmap) did.
+            that->_icon = QIcon (that->_pixmap);
           }
-          return QIcon(_pixmap);
+          return _icon;
         }
 
         return QStandardItem::data (role);
@@ -113,6 +126,7 @@ namespace Noggit
 
       bool _rendered = false;
       QPixmap _pixmap;
+      QIcon _icon;
     };
 
     tileset_chooser::tileset_chooser (QWidget* parent)

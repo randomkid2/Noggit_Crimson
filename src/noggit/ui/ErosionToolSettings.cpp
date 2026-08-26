@@ -8,7 +8,9 @@
 #include <noggit/MapHeaders.h>
 #include <noggit/World.h>
 #include <noggit/World.inl>
+#include <noggit/ui/DesignTokens.hpp>
 #include <noggit/ui/FontNoggit.hpp>
+#include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 #include <noggit/ui/tools/UiCommon/ExtendedSlider.hpp>
 
 #include <QtGui/QIcon>
@@ -106,36 +108,23 @@ namespace Noggit
     ErosionToolSettings::ErosionToolSettings(QWidget* parent)
       : QWidget(parent)
     {
-      setMinimumWidth(250);
+      // The dock's shared shell -- zero margins, S3 between sections, 250px floor. This layout
+      // set no margins, so it took QStyle::PM_LayoutLeftMargin (13px on windowsvista here) on
+      // top of ToolPanel's own 12px. See ToolWidgetStyle.hpp.
+      auto layout(Tools::ToolPanelStyle::toolColumn(this));
 
-      auto layout(new QVBoxLayout(this));
+      // The keybind hint. This file used to carry its own copy of the fifteen lines that build
+      // it, said in a comment that it was written "in the shape flatten_blur_tool uses" -- and
+      // the two shapes had already diverged, because that file's copy was the one with the
+      // layout-parent defects. There is one implementation now, in ToolWidgetStyle.hpp, and it
+      // is also the one that stopped rasterising these glyphs at devicePixelRatio 1.
+      layout->addWidget
+        ( Tools::ToolPanelStyle::keybindRow
+            (this, FontNoggit::shift, FontNoggit::lmb, tr("Erode Terrain"))
+        );
 
-      // Keybind hint, in the shape flatten_blur_tool uses for the same purpose.
-      auto keybind_layout(new QHBoxLayout);
-      keybind_layout->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-      keybind_layout->setContentsMargins(0, 0, 0, 0);
-      keybind_layout->setSpacing(2);
-
-      auto keybind_shift(new QLabel(this));
-      keybind_shift->setPixmap(QIcon(FontNoggitIcon(FontNoggit::shift)).pixmap(20, 20));
-      keybind_layout->addWidget(keybind_shift);
-
-      keybind_layout->addWidget(new QLabel("+"));
-
-      auto keybind_lmb(new QLabel(this));
-      keybind_lmb->setPixmap(QIcon(FontNoggitIcon(FontNoggit::lmb)).pixmap(20, 20));
-      keybind_layout->addWidget(keybind_lmb);
-
-      keybind_layout->addWidget(new QLabel("Erode Terrain"));
-
-      auto keybind_container(new QWidget(this));
-      keybind_container->setLayout(keybind_layout);
-      keybind_container->setFixedHeight(25);
-      layout->addWidget(keybind_container);
-
-      auto brush_group(new QGroupBox("Brush", this));
-      brush_group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-      auto brush_layout(new QVBoxLayout(brush_group));
+      auto brush_group(Tools::ToolPanelStyle::toolSection(layout, tr("Brush")));
+      auto brush_layout(Tools::ToolPanelStyle::sectionColumn(brush_group));
 
       _radius_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider(this);
       _radius_slider->setPrefix("Radius:");
@@ -155,11 +144,8 @@ namespace Noggit
       _inner_radius_slider->setValue(0.6);
       brush_layout->addWidget(_inner_radius_slider);
 
-      layout->addWidget(brush_group);
-
-      auto erosion_group(new QGroupBox("Erosion", this));
-      erosion_group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-      auto erosion_layout(new QVBoxLayout(erosion_group));
+      auto erosion_group(Tools::ToolPanelStyle::toolSection(layout, tr("Erosion")));
+      auto erosion_layout(Tools::ToolPanelStyle::sectionColumn(erosion_group));
 
       _repose_angle_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider(this);
       _repose_angle_slider->setPrefix("Angle of Repose:");
@@ -179,6 +165,9 @@ namespace Noggit
       erosion_layout->addWidget(_strength_slider);
 
       auto parameter_layout(new QFormLayout);
+      parameter_layout->setContentsMargins(0, 0, 0, 0);
+      parameter_layout->setHorizontalSpacing(Design::S1);
+      parameter_layout->setVerticalSpacing(Design::S3);
 
       _iterations_spin = new QSpinBox(this);
       _iterations_spin->setRange(1, 256);
@@ -201,7 +190,6 @@ namespace Noggit
       parameter_layout->addRow("Edge:", _edge_mode_combo);
 
       erosion_layout->addLayout(parameter_layout);
-      layout->addWidget(erosion_group);
 
       // The panel reports what the last tick measured rather than asserting that erosion happened.
       // Conservation in particular is a claim the kernel makes about itself; this is where it is

@@ -214,8 +214,22 @@ void SpawnTilePicker::setLoadedTiles(std::vector<TileLoadState> states)
 {
   // Same rule as setSpawnCounts: a buffer that is not exactly the grid is dropped rather than
   // padded, because the padding would be drawn as a state and read as a fact.
-  _loaded = states.size() == TILE_BUFFER_SIZE ? std::move(states)
-                                              : std::vector<TileLoadState>();
+  std::vector<TileLoadState> next (states.size() == TILE_BUFFER_SIZE
+                                     ? std::move(states)
+                                     : std::vector<TileLoadState>());
+
+  // Repaint only when the overlay would actually differ. The panel drives this from a poll timer
+  // running at LOAD_STATE_POLL_MS -- 1500 ms, DatabaseSpawnPanel.hpp:106 -- which rebuilds the
+  // state vector whether or not anything moved, and repainting this widget is not cheap: the base
+  // class walks 64x64 cells and this class then walks them twice more, so an idle panel was paying
+  // three full grid passes every 1.5 seconds forever. Comparing 4096 bytes to decide is far less
+  // work than one of those passes.
+  if (next == _loaded)
+  {
+    return;
+  }
+
+  _loaded = std::move(next);
   update();
 }
 

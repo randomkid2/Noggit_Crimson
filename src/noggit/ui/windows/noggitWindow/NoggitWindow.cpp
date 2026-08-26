@@ -64,8 +64,6 @@
 #include <QtCore/QSettings>
 #endif
 
-#include "revision.h"
-
 #include "ui_TitleBar.h"
 #include <noggit/ui/tools/ViewportManager/ViewportManager.hpp>
 
@@ -112,9 +110,12 @@ namespace Noggit::Ui::Windows
       , _project(project)
   {
 
-    std::stringstream title;
-    title << "Noggit Crimson - " << STRPRODUCTVER;
-    setWindowTitle(QString::fromStdString(title.str()));
+    // The product name alone. A window title names this window in the taskbar and in Alt-Tab,
+    // where it is truncated first and read a hundred times a day; a commit hash there is noise.
+    // The build lives in About and in the log. FramelessWindow copies this string into the
+    // in-app title band once at construction, so it shows up twice under the Crimson chrome --
+    // one more reason to keep it short.
+    setWindowTitle(QStringLiteral("Noggit Crimson"));
     setWindowIcon(QIcon(":/icon"));
 
     Log << "Project version : " << Noggit::Project::ClientVersionFactory::MapToStringVersion(project->projectVersion).c_str() << std::endl;

@@ -5,6 +5,7 @@
 #include <noggit/ActionManager.hpp>
 #include <noggit/MapView.h>
 #include <noggit/tool_enums.hpp>
+#include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 #include <noggit/ui/tools/UiCommon/expanderwidget.h>
 #include <noggit/ui/tools/UiCommon/ExtendedSlider.hpp>
 #include <noggit/ui/tools/UiCommon/ImageMaskSelector.hpp>
@@ -37,16 +38,11 @@ namespace Noggit
       , _vertex_mode(eVertexMode_Center)
       , _map_view(map_view)
     {
-      setMinimumWidth(250);
-      // setMaximumWidth(250);
-      auto layout (new QVBoxLayout (this));
-      layout->setAlignment(Qt::AlignTop);
-      // One gutter for the whole tool, stated rather than inherited from whatever the style's
-      // default happens to be, and the same figures the texturing tool now uses. The top inset
-      // is smaller than the sides because the first thing in the panel is a QGroupBox, and the
-      // theme already reserves 20px above every group box frame for its title.
-      layout->setContentsMargins(9, 4, 9, 9);
-      layout->setSpacing(6);
+      // The dock's shared shell: zero margins, S3 between sections, 250px floor. The 9,4,9,9
+      // that used to be here was a second inset inside ToolPanel's own 12px, so this tool sat
+      // 21px from the dock edge while every tool that took the style default sat 25px, and the
+      // content jumped 4px sideways when the user changed tool. See ToolWidgetStyle.hpp.
+      auto layout (Tools::ToolPanelStyle::toolColumn (this));
 
       // The brush type picker. It used to be nine QRadioButtons in a 2-column grid -- five rows
       // of indicator-plus-word, ~134px of the panel, and the widest single block in the dock.
@@ -78,14 +74,13 @@ namespace Noggit
       // untouched.
       _type_button_group = new QButtonGroup (this);
 
+      // One chip factory, shared with FlattenTool, which builds the same control for the same
+      // concept in the same dock slot. It used to be a lambda private to this constructor, so
+      // the second tool could not reuse it and shipped radio buttons instead.
       auto make_type_button
         ( [this] (char const* text) -> QPushButton*
           {
-            auto* button (new QPushButton (text, this));
-            button->setCheckable (true);
-            button->setAutoDefault (false);
-            button->setSizePolicy (QSizePolicy::Preferred, QSizePolicy::Fixed);
-            return button;
+            return Tools::ToolPanelStyle::segmentButton (this, QString::fromUtf8 (text));
           }
         );
 
@@ -118,28 +113,15 @@ namespace Noggit
 
       radio_linear->toggle();
 
-      QGroupBox* terrain_type_group (new QGroupBox ("Type", this));
-      terrain_type_group->setObjectName ("terrainTypeSegments");
-      // The sheet's QPushButton padding is 4px 10px, sized for a standalone button with room
-      // around it. Nine of them three-abreast in a 250px dock is a different problem: at 10px
-      // side padding "Polynomial" alone asks for ~82px and the row overflows to ~254px, which
-      // is wider than the panel and would put a horizontal scroll bar under every terrain tool.
-      // 5px brings the widest chip to ~70px and the row to ~218px, inside the ~232px the dock
-      // has after its own gutters. Padding and font size only -- every colour, border, radius
-      // and state in this control still comes from the application sheet, so a palette change
-      // upstream still reaches it.
-      terrain_type_group->setStyleSheet
-        ( "QGroupBox#terrainTypeSegments QPushButton {"
-          "  padding: 4px 5px;"
-          "  font-size: 11px;"
-          "  min-width: 0px;"
-          "}"
-        );
+      // The section, its object name and the chip-padding sheet that goes with it now come from
+      // ToolWidgetStyle.hpp, because a widget-level style sheet reaches only the widget it is
+      // set on: keeping this copy here meant FlattenTool's identical control could never be
+      // dressed by it. The rule itself is unchanged and its derivation is on segmentedSection.
+      QGroupBox* terrain_type_group
+        (Tools::ToolPanelStyle::segmentedSection (layout, tr ("Type")));
 
-      QGridLayout* terrain_type_layout (new QGridLayout (terrain_type_group));
-      terrain_type_layout->setContentsMargins (0, 0, 0, 0);
-      terrain_type_layout->setHorizontalSpacing (4);
-      terrain_type_layout->setVerticalSpacing (4);
+      QGridLayout* terrain_type_layout
+        (Tools::ToolPanelStyle::segmentGrid (terrain_type_group));
 
       // Filled left to right, three per row, so the grid stays rectangular whether or not the
       // stamp build drops the Vertex entry (9 buttons -> 3/3/3, 8 -> 3/3/2).
@@ -167,8 +149,6 @@ namespace Noggit
         }
       }
 
-      layout->addWidget(terrain_type_group);
-
       _radius_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider(this);
       _radius_slider->setRange (0, 1000);
       _radius_slider->setPrefix("Radius:");
@@ -182,20 +162,17 @@ namespace Noggit
       _inner_radius_slider->setSingleStep(0.05f);
       _inner_radius_slider->setValue(0);
 
-      QGroupBox* settings_group(new QGroupBox ("Settings", this));
-      auto settings_layout (new QVBoxLayout (settings_group));
-      // The theme already pads the inside of every QGroupBox (12px top / 14px bottom, on top of
-      // the 20px margin that clears the title). The 0,12,0,12 that used to be here added a
-      // second inset inside the first, so each of this tool's group boxes spent ~24px of the
-      // panel on nothing. Zero it and let the sheet own the gutter; that keeps every tool's
-      // group boxes consistent with each other instead of only this one being roomier.
-      settings_layout->setContentsMargins(0, 0, 0, 0);
-      // Each ExtendedSlider is now a tight two-line block (value row, then a 20px track), so the
-      // gap BETWEEN blocks is what tells the eye where one setting ends and the next begins.
-      // The style default of 6px was less than the 2px+track inside a row plus the row's own
-      // ascender, which is why three stacked sliders read as one undifferentiated column of
-      // controls. 8px is larger than any gap inside a row and smaller than the group rule above.
-      settings_layout->setSpacing(8);
+      // Zero margins and an S3 gap, from the dock's one shell rather than stated here. Both
+      // figures are the same ones this file used to spell out, and the reasoning has moved with
+      // them: the theme already pads the inside of every QGroupBox, so a layout margin on top of
+      // that is a second inset inside the first; and each ExtendedSlider is a tight two-line
+      // block (value row, then a 20px track), so the gap BETWEEN blocks is what tells the eye
+      // where one setting ends and the next begins. The style default of 6px was less than the
+      // 2px plus track inside a single row, which is why three stacked sliders read as one
+      // undifferentiated column.
+      QGroupBox* settings_group
+        (Tools::ToolPanelStyle::toolSection (layout, tr ("Settings")));
+      auto settings_layout (Tools::ToolPanelStyle::sectionColumn (settings_group));
 
       _speed_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider(this);
       _speed_slider->setPrefix("Speed:");
@@ -214,8 +191,6 @@ namespace Noggit
       settings_layout->addWidget(_speed_slider);
       settings_layout->addWidget(_snap_m2_objects_chkbox);
       settings_layout->addWidget(_snap_wmo_objects_chkbox);
-
-      layout->addWidget(settings_group);
 
       _image_mask_group = new Noggit::Ui::Tools::ImageMaskSelector(map_view, this);
       _mask_image = _image_mask_group->getPixmap()->toImage();
@@ -339,12 +314,39 @@ namespace Noggit
 
     }
 
+    // Rebuilds the rotated mask, but only when the mask or the rotation actually changed.
+    //
+    // This is a slot on the RADIUS slider's valueChanged as well as on the mask and rotation
+    // signals (see the connects above), and the radius is not an input to it -- so an alt-drag
+    // over the viewport, which calls changeRadius once per mouse-move event rather than once per
+    // frame, used to re-run the whole transform at mouse-report rate. For a 1024x1024 mask at a
+    // rotation of 45 degrees the transform's destination is ceil(1024 * (cos45 + sin45)) = 1449
+    // per side, i.e. an 8,398,404-byte allocation and a smooth resample of 2,099,601 pixels, per
+    // event, to produce a byte-for-byte identical image every time.
+    //
+    // The emit is deliberately NOT guarded, only the rebuild. StampTool's handler
+    // (StampTool.cpp:47-55) uses the sender to decide whose mask owns the GL brush texture, and
+    // the tool's own onSelected calls this function for exactly that reason
+    // (RaiseLowerTool.cpp:116) -- so skipping the emit would leave the previous tool's mask on the
+    // cursor after a tool switch. Only the CPU-side rebuild is redundant here.
     void TerrainTool::updateMaskImage()
     {
       QPixmap* pixmap = _image_mask_group->getPixmap();
-      QTransform matrix;
-      matrix.rotateRadians(_image_mask_group->getRotation() / 360.0f * 2.0f * M_PI);
-      _mask_image = pixmap->toImage().transformed(matrix, Qt::SmoothTransformation);
+      int const rotation = _image_mask_group->getRotation();
+
+      if ( !_mask_image_built
+        || _mask_source_key != pixmap->cacheKey()
+        || _mask_rotation != rotation
+         )
+      {
+        QTransform matrix;
+        matrix.rotateRadians(rotation / 360.0f * 2.0f * M_PI);
+        _mask_image = pixmap->toImage().transformed(matrix, Qt::SmoothTransformation);
+
+        _mask_source_key = pixmap->cacheKey();
+        _mask_rotation = rotation;
+        _mask_image_built = true;
+      }
 
       emit _map_view->trySetBrushTexture(&_mask_image, this);
     }

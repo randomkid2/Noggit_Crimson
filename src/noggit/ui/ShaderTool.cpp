@@ -1,7 +1,9 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
 #include <noggit/MapView.h>
+#include <noggit/ui/DesignTokens.hpp>
 #include <noggit/ui/ShaderTool.hpp>
+#include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 #include <noggit/ui/tools/UiCommon/expanderwidget.h>
 #include <noggit/ui/tools/UiCommon/ExtendedSlider.hpp>
 #include <noggit/ui/tools/UiCommon/ImageMaskSelector.hpp>
@@ -16,8 +18,10 @@
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QDial>
 #include <QtWidgets/QFormLayout>
+#include <QtWidgets/QGroupBox>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QSpinBox>
+#include <QtWidgets/QVBoxLayout>
 
 #define _USE_MATH_DEFINES
 #include <math.h>
@@ -31,8 +35,21 @@ namespace Noggit
       , _map_view(map_view)
       , _color(1.f, 1.f, 1.f, 1.f)
     {
+      // THE DOCK'S SHARED SHELL, and the two sections this tool never had.
+      //
+      // Every other tool in the panel puts its controls inside titled sections; this one and
+      // hole_tool were the two that put a bare QFormLayout straight on the tool widget, so
+      // switching to the vertex painter replaced a panel of framed sections with an unframed
+      // list and read as an unfinished version of the tool it replaced. Radius and Speed are
+      // the brush; everything from the picker to the palette is one colour section.
+      //
+      // The old layout also set no margins, so it took QStyle::PM_LayoutLeftMargin (13px on
+      // windowsvista here) on top of ToolPanel's own 12px and sat 4px further in than the
+      // terrain tool it swaps with.
+      auto layout (Tools::ToolPanelStyle::toolColumn (this));
 
-      auto layout (new QFormLayout(this));
+      auto* const brush_section (Tools::ToolPanelStyle::toolSection (layout, tr ("Brush")));
+      auto* const brush_layout (Tools::ToolPanelStyle::sectionColumn (brush_section));
 
       _radius_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider (this);
       _radius_slider->setPrefix("Radius:");
@@ -40,7 +57,7 @@ namespace Noggit
       _radius_slider->setDecimals(2);
       _radius_slider->setValue (15.0f);
 
-      layout->addRow (_radius_slider);
+      brush_layout->addWidget (_radius_slider);
 
       _speed_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider (this);
       _speed_slider->setPrefix("Speed:");
@@ -49,56 +66,88 @@ namespace Noggit
       _speed_slider->setDecimals(2);
       _speed_slider->setValue (1.0f);
 
-      layout->addRow(_speed_slider);
+      brush_layout->addWidget(_speed_slider);
+
+      auto* const color_section (Tools::ToolPanelStyle::toolSection (layout, tr ("Color")));
+      auto* const color_layout (Tools::ToolPanelStyle::sectionForm (color_section));
 
       color_picker = new color_widgets::ColorSelector (this);
       color_picker->setDisplayMode (color_widgets::ColorSelector::NoAlpha);
       color_picker->setColor (QColor::fromRgbF (_color.x, _color.y, _color.z, _color.w));
       color_picker->setMinimumHeight(25);
 
-      layout->addRow("Color:", color_picker);
+      color_layout->addRow("Color:", color_picker);
 
       color_wheel = new color_widgets::ColorWheel(this);
       color_wheel->setColor (QColor::fromRgbF (_color.x, _color.y, _color.z, _color.w));
       color_wheel->setMinimumSize(QSize(200, 200));
-      layout->addRow(color_wheel);
+      color_layout->addRow(color_wheel);
 
       _spin_hue = new QSpinBox(this);
       _spin_hue->setRange(0, 359);
-      layout->addRow("Hue:", _spin_hue);
+      color_layout->addRow("Hue:", _spin_hue);
 
       _slide_hue = new color_widgets::HueSlider(this);
-      layout->addRow(_slide_hue);
+
+      // THE BAND FOR THE THREE VENDORED COLOUR SLIDERS, and it is a FALLBACK, not the mechanism.
+      // The earlier note here claimed these three were "the only sliders in the editor whose
+      // groove the theme cannot draw" and that this call is what gives them their band. Both
+      // halves were wrong and the correction is worth keeping, because the mistake is the easy
+      // one to make in this codebase.
+      //
+      // What is true: color_widgets paints its own sunken frame and gradient, so no
+      // QSlider::groove rule reaches them -- but gradient_slider.cpp hands the HANDLE back to
+      // the style, so the theme's QSlider::handle rules DO dress the grip, and the grip's box is
+      // 6px groove + 7px + 7px of negative margin = Design::SLIDER_BAND. Below the band the grip
+      // is clipped top and bottom and stops being the circle every other slider draws.
+      //
+      // What is NOT true: that a style sheet cannot reach these widgets. CrimsonSlate reaches
+      // them by Qt type selector -- theme.qss "color_widgets--GradientSlider,
+      // color_widgets--HueSlider { min-height: 20px; }" -- and QStyleSheetStyle::setGeometry()
+      // ASSIGNS the minimum rather than raising it, so under the shipped theme the sheet's 20
+      // REPLACES whatever these three calls set and the calls have no effect whatsoever. They
+      // are kept because CrimsonSlate is not the only selectable sheet: Dark and McNet ship
+      // beside it and declare no widget-level QSlider geometry, and "System" applies no sheet at
+      // all, so under three of the four options this call is the only floor these sliders have.
+      // Both numbers are 20; see the SLIDER_BAND block in DesignTokens.hpp for why they have to
+      // be changed together.
+      //
+      // Recorded and NOT fixable from here: gradient_slider.cpp clears State_HasFocus before
+      // it calls the style, so a :focus handle rule can never fire on these three.
+      _slide_hue->setMinimumHeight (Design::SLIDER_BAND);
+      color_layout->addRow(_slide_hue);
 
       _spin_saturation = new QSpinBox(this);
       _spin_saturation->setRange(0, 255);
-      layout->addRow("Saturation:", _spin_saturation);
+      color_layout->addRow("Saturation:", _spin_saturation);
 
       _slide_saturation = new color_widgets::GradientSlider(this);
       _slide_saturation->setRange(0, 255);
-      layout->addRow(_slide_saturation);
+      _slide_saturation->setMinimumHeight (Design::SLIDER_BAND);
+      color_layout->addRow(_slide_saturation);
 
 
       _spin_value = new QSpinBox(this);
       _spin_value->setRange(0, 255);
-      layout->addRow("Value:", _spin_value);
+      color_layout->addRow("Value:", _spin_value);
 
       _slide_value = new color_widgets::GradientSlider(this);
       _slide_value->setRange(0, 255);
-      layout->addRow(_slide_value);
+      _slide_value->setMinimumHeight (Design::SLIDER_BAND);
+      color_layout->addRow(_slide_value);
 
       _use_image_colors = new QCheckBox(this);
       _use_image_colors->setChecked(true);
-      layout->addRow("Use image colors", _use_image_colors);
+      color_layout->addRow("Use image colors", _use_image_colors);
 
       _color_palette = new color_widgets::ColorListWidget(this);
       _color_palette->setSizePolicy(QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred));
-      layout->addRow(_color_palette);
+      color_layout->addRow(_color_palette);
 
       auto info_label (new QLabel("Drag&Drop colors to select.", this));
       info_label->setAlignment(Qt::AlignCenter | Qt::AlignTop);
 
-      layout->addRow(info_label);
+      color_layout->addRow(info_label);
 
       _image_mask_group = new Noggit::Ui::Tools::ImageMaskSelector(map_view, this);
       _image_mask_group->setContinuousActionName("Paint");
@@ -111,7 +160,7 @@ namespace Noggit
       customBrushBox->setExpanderTitle("Custom Brush");
       customBrushBox->addPage(_image_mask_group);
       customBrushBox->setExpanded(false);
-      layout->addRow(customBrushBox);
+      layout->addWidget(customBrushBox);
 
       QObject::connect(_slide_saturation, &color_widgets::GradientSlider::valueChanged, this, &ShaderTool::set_hsv);
       QObject::connect(_slide_value, &color_widgets::GradientSlider::valueChanged, this, &ShaderTool::set_hsv);
@@ -161,8 +210,10 @@ namespace Noggit
       connect (_radius_slider, &Noggit::Ui::Tools::UiCommon::ExtendedSlider::valueChanged, this, &ShaderTool::updateMaskImage);
       connect(_image_mask_group, &Noggit::Ui::Tools::ImageMaskSelector::pixmapUpdated, this, &ShaderTool::updateMaskImage);
 
-      setMinimumWidth(250);
-      setMaximumWidth(250);
+      // The 250px floor comes from toolColumn at the top of this constructor. The ceiling that
+      // used to be here is gone: this tool was one of only two in the dock that pinned a
+      // maximum width, so widening the right-hand dock grew the other eleven tools and left
+      // this one 250px wide with dead panel beside it.
     }
 
     void ShaderTool::changeShader
@@ -277,13 +328,28 @@ namespace Noggit
       return &_mask_image;
     }
 
+    // Rebuilds the rotated mask, but only when the mask or the rotation actually changed. The
+    // long-form reasoning -- why the radius slider reaches this at all, what the transform costs
+    // per mouse-move event, and why the emit stays unguarded -- is on TerrainTool::updateMaskImage,
+    // which this is a copy of.
     void ShaderTool::updateMaskImage()
     {
-
       QPixmap* pixmap = _image_mask_group->getPixmap();
-      QTransform matrix;
-      matrix.rotateRadians(_image_mask_group->getRotation() / 360.0f * 2.0f * M_PI);
-      _mask_image = pixmap->toImage().transformed(matrix, Qt::SmoothTransformation);
+      int const rotation = _image_mask_group->getRotation();
+
+      if ( !_mask_image_built
+        || _mask_source_key != pixmap->cacheKey()
+        || _mask_rotation != rotation
+         )
+      {
+        QTransform matrix;
+        matrix.rotateRadians(rotation / 360.0f * 2.0f * M_PI);
+        _mask_image = pixmap->toImage().transformed(matrix, Qt::SmoothTransformation);
+
+        _mask_source_key = pixmap->cacheKey();
+        _mask_rotation = rotation;
+        _mask_image_built = true;
+      }
 
       emit _map_view->trySetBrushTexture(&_mask_image, this);
     }

@@ -4,6 +4,7 @@
 #include <noggit/MapHeaders.h>
 #include <noggit/ui/Checkbox.hpp>
 #include <noggit/ui/pushbutton.hpp>
+#include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 #include <noggit/ui/Water.h>
 #include <noggit/unsigned_int_property.hpp>
 #include <noggit/World.h>
@@ -39,13 +40,14 @@ namespace Noggit
       , _lock_pos(glm::vec3(0.0f, 0.0f, 0.0f))
       , tile(0, 0)
     {
-      setMinimumWidth(250);
-      // setMaximumWidth(250);
-
-      auto layout (new QFormLayout (this));
+      // The dock's shared shell -- zero margins, S3 down the column, 250px floor. This layout
+      // set no margins, so it took QStyle::PM_LayoutLeftMargin (13px on windowsvista here) on
+      // top of ToolPanel's own 12px, and the six group boxes below each added a second inset
+      // inside the padding the theme already gives a QGroupBox. See ToolWidgetStyle.hpp.
+      auto layout (Tools::ToolPanelStyle::toolForm (this));
 
       auto brush_group(new QGroupBox("Brush", this));
-      auto brush_layout (new QFormLayout (brush_group));
+      auto brush_layout (Tools::ToolPanelStyle::sectionForm (brush_group));
 
       _radius_spin = new QDoubleSpinBox (this);
       _radius_spin->setRange (0.f, 1000.f);
@@ -112,7 +114,7 @@ namespace Noggit
       connect ( angle_group, &QGroupBox::toggled
               , &_angled_mode, &BoolToggleProperty::set
               );
-      auto angle_layout (new QFormLayout (angle_group));
+      auto angle_layout (Tools::ToolPanelStyle::sectionForm (angle_group));
 
       _angle_spin = new QDoubleSpinBox (this);
       _angle_spin->setRange (0.00001f, 89.f);
@@ -139,7 +141,7 @@ namespace Noggit
       auto lock_group (new QGroupBox ("Lock", this));
       lock_group->setCheckable (true);
       lock_group->setChecked (_locked.get());
-      auto lock_layout (new QFormLayout (lock_group));
+      auto lock_layout (Tools::ToolPanelStyle::sectionForm (lock_group));
 
       lock_layout->addRow("X:", _x_spin = new QDoubleSpinBox (this));
       lock_layout->addRow("Z:", _z_spin = new QDoubleSpinBox (this));
@@ -172,7 +174,7 @@ namespace Noggit
       layout->addRow(lock_group);
 
       auto override_group (new QGroupBox ("Override", this));
-      auto override_layout (new QFormLayout (override_group));
+      auto override_layout (Tools::ToolPanelStyle::sectionForm (override_group));
 
       override_layout->addWidget (new CheckBox ("Liquid ID", &_override_liquid_id, this));
       override_layout->addWidget (new CheckBox ("Height", &_override_height, this));
@@ -180,7 +182,7 @@ namespace Noggit
       layout->addRow(override_group);
 
       auto opacity_group (new QGroupBox ("Auto opacity", this));
-      auto opacity_layout (new QFormLayout (opacity_group));
+      auto opacity_layout (Tools::ToolPanelStyle::sectionForm (opacity_group));
 
       auto auto_button(new QRadioButton("Auto", this));
       auto_button->setToolTip("Automatically uses river or ocean opacity based on liquid type.");
@@ -238,7 +240,7 @@ namespace Noggit
                         );
 
       auto layer_group (new QGroupBox ("Layers", this));
-      auto layer_layout (new QFormLayout (layer_group));
+      auto layer_layout (Tools::ToolPanelStyle::sectionForm (layer_group));
 
       layer_layout->addRow (new CheckBox("Show all layers", display_all_layers));
       layer_layout->addRow (new QLabel("Current layer:", this));

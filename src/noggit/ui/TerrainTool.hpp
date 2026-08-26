@@ -117,6 +117,12 @@ namespace Noggit
       MapView* _map_view;
 
       QImage _mask_image;
+
+      //! What _mask_image was last built from, so updateMaskImage can tell whether it has to
+      //! build it again. See the comment on TerrainTool::updateMaskImage.
+      qint64 _mask_source_key = 0;
+      int _mask_rotation = 0;
+      bool _mask_image_built = false;
     };
   }
 }

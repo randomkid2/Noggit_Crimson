@@ -1,14 +1,17 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
-#pragma once
+#ifndef NOGGIT_UI_HOLE_TOOL_HPP
+#define NOGGIT_UI_HOLE_TOOL_HPP
 
 #include <QtWidgets/QWidget>
 
-class QDoubleSpinBox;
-class QSlider;
-
 namespace Noggit
 {
+  namespace Ui::Tools::UiCommon
+  {
+    class ExtendedSlider;
+  }
+
   namespace Ui
   {
     class hole_tool : public QWidget
@@ -26,8 +29,7 @@ namespace Noggit
 
     private:
 
-      QSlider* _radius_slider;
-      QDoubleSpinBox* _radius_spin;
+      Noggit::Ui::Tools::UiCommon::ExtendedSlider* _radius_slider;
 
       float _radius = 15.0f;
 
@@ -35,3 +37,4 @@ namespace Noggit
   }
 }
 
+#endif // NOGGIT_UI_HOLE_TOOL_HPP

@@ -31,8 +31,9 @@ PANEL      = (0x29, 0x26, 0x21)   # bg.panel
 RAISED     = (0x3C, 0x37, 0x32)   # bg.raised
 HOVERBG    = (0x4A, 0x46, 0x40)   # bg.overlay
 HAIRLINE   = (0x40, 0x3B, 0x35)   # stroke.soft
-CONTROL    = (0x56, 0x50, 0x49)   # stroke
-CONTROL_HI = (0x74, 0x6D, 0x64)   # stroke.hi, hover outline
+CONTROL    = (0x56, 0x50, 0x49)   # stroke -- disabled and sub-threshold only
+CONTROL_HI = (0x74, 0x6D, 0x64)   # stroke.hi, separators on bg.overlay
+EDGE       = (0x8A, 0x83, 0x78)   # edge, the visible edge of a control
 ACCENT     = (0xDF, 0xA5, 0x2E)   # accent
 ACCENT_HOV = (0xF0, 0xBA, 0x4A)   # accent.hi, hover on a filled accent
 ACCENT_DIM = (0xB8, 0x80, 0x1F)   # accent.press
@@ -53,6 +54,14 @@ INPUT      = SUNKEN
 # HALF a screen pixel per unit: RING 4.0 is the 2px ring the component spec
 # asks for, and RADIUS 8.0 is its 4px corner. The previous values (1.6 and 5.0)
 # drew a 0.8px ring with a 2.5px corner.
+#
+# RADIUS STAYS 8.0 (4px) EVEN THOUGH THE SHEET MOVED ITS CONTROL TIER FROM 5px
+# TO 6px, and the arithmetic is why. inset 2.5 makes the drawn box 27 units,
+# i.e. 13.5px on screen. The control tier is 6px on a 28px control, a ratio of
+# 0.214, and 0.214 x 13.5 = 2.9px -- so the 4px already here is the GENEROUS
+# end of that proportion and 5px would be 0.37 of the side, a squircle rather
+# than a rounded square. Radius follows proportion at this size, not the tier
+# number.
 RING       = 4.0
 RADIUS     = 8.0
 
@@ -216,9 +225,32 @@ def build(outdir):
     CHECK = [(10.5, 16.5), (14.2, 20.4), (21.8, 11.8)]
 
     # ---- check boxes -------------------------------------------------------
+    # THE UNCHECKED RING IS edge AND ITS HOVER IS text.dim, matching the border
+    # the sheet now draws on every other enabled control. It was stroke on rest
+    # and stroke.hi on hover. A ring here has TWO neighbours and has to clear
+    # 3:1 against both -- the bg.void fill it encloses and the bg.panel the
+    # indicator sits on -- and the old pair cleared that on neither surface it
+    # needed to:
+    #     stroke    #565049   2.422:1 on the fill   1.894:1 on the panel
+    #     stroke.hi #746D64   3.775:1 on the fill   2.952:1 on the panel
+    # THE PREVIOUS REVISION OF THIS COMMENT PUT stroke.hi AT 2.952:1 ON THE
+    # FILL AND CONCLUDED "all four under the 3:1 floor". Both are wrong: 2.952
+    # is stroke.hi's PANEL figure duplicated into the fill slot, the fill
+    # figure is 3.775, and three of the four were under the floor, not four.
+    # The change still stands and for the stated reason -- the hover ring was
+    # the one that had to carry the state and it failed on the panel, so the
+    # indicator was sub-threshold on the nine-radio brush grid that is the most
+    # prominent control in the editor. What is no longer claimed is that every
+    # figure failed.
+    # edge is 5.138:1 on the fill and 4.018:1 on the panel; text.dim is 9.699:1
+    # and 7.585:1, and sits 1.888:1 above edge, so the hover is a step in the
+    # same direction the sheet's button hover moves. Both clear 3:1 on both
+    # surfaces, which is the whole point. Change one of these and re-run this
+    # script, or the PNG rings and the CSS-drawn borders beside them drift
+    # apart.
     specs = [
-        ('icon_checkbox_unchecked.png',          INPUT,   CONTROL,    None),
-        ('icon_checkbox_unchecked_hover.png',    INPUT,   CONTROL_HI, None),
+        ('icon_checkbox_unchecked.png',          INPUT,   EDGE,       None),
+        ('icon_checkbox_unchecked_hover.png',    INPUT,   TEXT_DIM,   None),
         ('icon_checkbox_unchecked_disabled.png', PANEL,   HAIRLINE,   None),
         ('icon_checkbox_checked.png',            ACCENT,  ACCENT,     INK),
         ('icon_checkbox_checked_hover.png',      ACCENT_HOV, ACCENT_HOV, INK),
@@ -241,8 +273,8 @@ def build(outdir):
 
     # ---- radio buttons -----------------------------------------------------
     radios = [
-        ('icon_radiobutton_unchecked.png',          INPUT,      CONTROL,    None),
-        ('icon_radiobutton_unchecked_hover.png',    INPUT,      CONTROL_HI, None),
+        ('icon_radiobutton_unchecked.png',          INPUT,      EDGE,       None),
+        ('icon_radiobutton_unchecked_hover.png',    INPUT,      TEXT_DIM,   None),
         ('icon_radiobutton_unchecked_disabled.png', PANEL,      HAIRLINE,   None),
         ('icon_radiobutton_checked.png',            ACCENT,     ACCENT,     INK),
         ('icon_radiobutton_checked_hover.png',      ACCENT_HOV, ACCENT_HOV, INK),

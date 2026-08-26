@@ -2,6 +2,7 @@
 
 #include <noggit/ui/FlattenTool.hpp>
 #include <noggit/ui/FontNoggit.hpp>
+#include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 #include <noggit/ui/tools/UiCommon/ExtendedSlider.hpp>
 #include <noggit/World.h>
 
@@ -16,7 +17,7 @@
 #include <QtWidgets/QGridLayout>
 #include <QtWidgets/QGroupBox>
 #include <QtWidgets/QLabel>
-#include <QtWidgets/QRadioButton>
+#include <QtWidgets/QPushButton>
 #include <QtWidgets/QSlider>
 
 namespace Noggit
@@ -30,64 +31,52 @@ namespace Noggit
       , _flatten_type(eFlattenType_Linear)
       , _flatten_mode(true, true)
     {
-      setMinimumWidth(250);
-      // setMaximumWidth(250);
-      auto layout (new QVBoxLayout (this));
+      // The dock's shared shell -- zero margins, S3 between sections, 250px floor. This layout
+      // set no margins, so it took QStyle::PM_LayoutLeftMargin (13px on windowsvista here) on
+      // top of ToolPanel's own 12px. See ToolWidgetStyle.hpp.
+      auto layout (Tools::ToolPanelStyle::toolColumn (this));
 
-      // flatten keybind
-      auto keybinds_row1_layout = new QHBoxLayout(this);
-      keybinds_row1_layout->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-      keybinds_row1_layout->setContentsMargins(0, 0, 0, 0);
-      keybinds_row1_layout->setSpacing(2);
+      // THE KEYBIND LEGEND, and the three layout-parent defects it used to carry.
+      //
+      // Both rows were built as `new QHBoxLayout(this)` on a widget that ALREADY owned the
+      // column above, so Qt logged "Attempting to add QLayout to QWidget which already has a
+      // layout" into log.txt twice on every flatten tool constructed, and neither row was
+      // installed where the code meant. Row 1 was then rescued by setLayout on a container, and
+      // ALSO handed to layout->addLayout, which QLayout::addChildLayout refuses outright
+      // because the layout already has a parent -- a third warning, and a dead call. Each row
+      // is now built by one function that constructs the layout directly on a fresh container
+      // widget, so nothing is ever handed a widget that already owns a layout.
+      //
+      // ErosionToolSettings already carried the corrected shape of this block and says in its
+      // own comment that it copies this file. This is the file that was never updated.
+      layout->addWidget
+        ( Tools::ToolPanelStyle::keybindRow
+            (this, FontNoggit::shift, FontNoggit::lmb, tr ("Flatten Terrain"))
+        );
 
-      auto label_row1_icon1 = new QLabel(this);
-      label_row1_icon1->setPixmap(QIcon(FontNoggitIcon(FontNoggit::shift)).pixmap(20, 20));
-      keybinds_row1_layout->addWidget(label_row1_icon1);
+      layout->addWidget
+        ( Tools::ToolPanelStyle::keybindRow
+            (this, FontNoggit::ctrl, FontNoggit::lmb, tr ("Blur Terrain"))
+        );
 
-      keybinds_row1_layout->addWidget(new QLabel("+"));
-
-      auto label_row1_icon2 = new QLabel(this);
-      label_row1_icon2->setPixmap(QIcon(FontNoggitIcon(FontNoggit::lmb)).pixmap(20, 20));
-      keybinds_row1_layout->addWidget(label_row1_icon2);
-
-      keybinds_row1_layout->addWidget(new QLabel("Flatten Terrain"));
-
-      // layout->addLayout(keybinds_row1_layout, Qt::AlignLeft | Qt::AlignTop);
-      // 
-      QWidget* containerWidget = new QWidget;
-      containerWidget->setLayout(keybinds_row1_layout);
-      containerWidget->setFixedHeight(25);
-      layout->addWidget(containerWidget);
-
-      // blur keybind
-      auto keybinds_row2_layout = new QHBoxLayout(this);
-      keybinds_row2_layout->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-      keybinds_row2_layout->setContentsMargins(0, 0, 0, 0);
-      keybinds_row2_layout->setSpacing(2);
-
-      auto label_row2_icon1 = new QLabel(this);
-      label_row2_icon1->setPixmap(QIcon(FontNoggitIcon(FontNoggit::ctrl)).pixmap(20, 20));
-      keybinds_row2_layout->addWidget(label_row2_icon1);
-
-      keybinds_row2_layout->addWidget(new QLabel("+"));
-
-      auto label_row2_icon2 = new QLabel(this);
-      label_row2_icon2->setPixmap(QIcon(FontNoggitIcon(FontNoggit::lmb)).pixmap(20, 20));
-      keybinds_row2_layout->addWidget(label_row2_icon2);
-
-      keybinds_row2_layout->addWidget(new QLabel("Blur Terrain"));
-
-      layout->addLayout(keybinds_row1_layout, Qt::AlignLeft | Qt::AlignTop);
-      QWidget* containerWidget2 = new QWidget;
-      containerWidget2->setLayout(keybinds_row2_layout);
-      containerWidget2->setFixedHeight(25);
-      layout->addWidget(containerWidget2);
-
+      // THE TYPE PICKER, now the same segmented control TerrainTool uses.
+      //
+      // These two tools occupy the same dock slot and swap on a keypress, and they built the
+      // same concept -- the brush's falloff type -- two different ways: a 3x3 grid of checkable
+      // chips in one, a 2x2 block of QRadioButtons in the other. The user watched one idiom
+      // turn into the other.
+      //
+      // Nothing about the group changed. Same QButtonGroup, same four eFlattenType_* ids, same
+      // exclusivity, same idClicked connection below, and the id -> button lookup other code
+      // uses is QAbstractButton API that does not care about the concrete class. An exclusive
+      // QButtonGroup refuses to uncheck its checked member on a second click for push buttons
+      // exactly as it does for radios.
       _type_button_box = new QButtonGroup (this);
-      QRadioButton* radio_flat = new QRadioButton ("Flat");
-      QRadioButton* radio_linear = new QRadioButton ("Linear");
-      QRadioButton* radio_smooth = new QRadioButton ("Smooth");
-      QRadioButton* radio_origin = new QRadioButton ("Origin");
+
+      QPushButton* radio_flat (Tools::ToolPanelStyle::segmentButton (this, tr ("Flat")));
+      QPushButton* radio_linear (Tools::ToolPanelStyle::segmentButton (this, tr ("Linear")));
+      QPushButton* radio_smooth (Tools::ToolPanelStyle::segmentButton (this, tr ("Smooth")));
+      QPushButton* radio_origin (Tools::ToolPanelStyle::segmentButton (this, tr ("Origin")));
 
       _type_button_box->addButton (radio_flat, (int)eFlattenType_Flat);
       _type_button_box->addButton (radio_linear, (int)eFlattenType_Linear);
@@ -96,19 +85,20 @@ namespace Noggit
 
       radio_linear->toggle();
 
-      QGroupBox* flatten_type_group (new QGroupBox ("Type", this));
-      QGridLayout* flatten_type_layout (new QGridLayout (flatten_type_group));
+      auto* const flatten_type_group
+        (Tools::ToolPanelStyle::segmentedSection (layout, tr ("Type")));
+      auto* const flatten_type_layout
+        (Tools::ToolPanelStyle::segmentGrid (flatten_type_group));
       flatten_type_layout->addWidget (radio_flat, 0, 0);
       flatten_type_layout->addWidget (radio_linear, 0, 1);
       flatten_type_layout->addWidget (radio_smooth, 1, 0);
       flatten_type_layout->addWidget (radio_origin, 1, 1);
+      flatten_type_layout->setColumnStretch (0, 1);
+      flatten_type_layout->setColumnStretch (1, 1);
 
-      flatten_type_group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-      layout->addWidget (flatten_type_group);
-
-      QGroupBox* settings_group(new QGroupBox("Settings"));
-      settings_group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-      auto settings_layout = new QVBoxLayout(settings_group);
+      auto* const settings_group
+        (Tools::ToolPanelStyle::toolSection (layout, tr ("Settings")));
+      auto settings_layout (Tools::ToolPanelStyle::sectionColumn (settings_group));
 
 
       _radius_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider(this);
@@ -134,11 +124,10 @@ namespace Noggit
       settings_layout->addWidget(_snap_m2_objects_chkbox);
       settings_layout->addWidget(_snap_wmo_objects_chkbox);
 
-      layout->addWidget(settings_group);
-
-      QGroupBox* flatten_blur_group = new QGroupBox("Flatten/Blur", this);
-      flatten_blur_group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-      auto flatten_blur_layout = new QGridLayout(flatten_blur_group);
+      auto* const flatten_blur_group
+        (Tools::ToolPanelStyle::toolSection (layout, tr ("Flatten/Blur")));
+      auto flatten_blur_layout (new QGridLayout (flatten_blur_group));
+      Tools::ToolPanelStyle::dressSectionLayout (flatten_blur_layout);
 
       flatten_blur_layout->addWidget(_lock_up_checkbox = new QCheckBox(this), 0, 0);
       flatten_blur_layout->addWidget(_lock_down_checkbox = new QCheckBox(this), 0, 1);
@@ -157,10 +146,9 @@ namespace Noggit
       else
           flatten_blur_group->hide();
 
-      layout->addWidget(flatten_blur_group);
-
-      QGroupBox* flatten_only_group = new QGroupBox("Flatten only", this);
-      auto flatten_only_layout = new QVBoxLayout(flatten_only_group);
+      auto* const flatten_only_group
+        (Tools::ToolPanelStyle::toolSection (layout, tr ("Flatten only")));
+      auto flatten_only_layout (Tools::ToolPanelStyle::sectionColumn (flatten_only_group));
 
       _angle_group = new QGroupBox("Angled mode", this);
       _angle_group->setCheckable(true);
@@ -214,7 +202,6 @@ namespace Noggit
       _lock_h->setMinimumWidth(30);
 
       flatten_only_layout->addWidget(_lock_group);
-      layout->addWidget(flatten_only_group);
 
       connect ( _type_button_box, qOverload<int> (&QButtonGroup::idClicked)
               , [&] (int id)
