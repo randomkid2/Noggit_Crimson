@@ -33,8 +33,11 @@
 !COPYING
 !Doxyfile
 !README.md
-!todo_1.4.md
-!uid_fix_concept.md
+# todo_1.4.md and uid_fix_concept.md used to be un-ignored here. They are upstream working notes,
+# neither referenced by any build file or document, and they now live under docs/upstream/, which
+# !/docs/** already covers. Root-level un-ignores are kept to the files a visitor is expected to
+# open first, because every extra one is a place a stray file can hide in a repository that
+# ignores everything by default.
 
 # --- TrinityCore DB editing (feature/tc335-db-editing) ---
 # Line 1 is /** -- this repo ignores everything and whitelists explicitly. Anything not

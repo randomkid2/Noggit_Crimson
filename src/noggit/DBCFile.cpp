@@ -9,6 +9,7 @@
 #include <QDir>
 
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <string>
 
@@ -76,19 +77,74 @@ void DBCFile::save()
   if (!dir.exists())
     dir.mkpath(".");
 
-  std::ofstream stream(filename_proj, std::ios_base::out | std::ios_base::trunc | std::ios_base::binary);
+  // WRITE TO A SIBLING, THEN RENAME. The previous revision opened the real file with
+  // ios_base::trunc, which destroys it before a single byte of the replacement is written -- so a
+  // full disk, an antivirus lock, or a crash mid-write left the project holding a truncated DBC
+  // and no way back. That is not hypothetical here: the ground effect editor writes TWO DBCs in
+  // succession, and a failure on the second used to leave the first already replaced.
+  //
+  // This function stays void and non-throwing, because most of its ten callers -- Sky.cpp,
+  // MapCreationWizard, AreaTriggerTool, MapView -- do not catch anything, and turning a silent
+  // partial write into an uncaught exception would trade one failure for a worse one. What
+  // changes is that a failure now leaves the ORIGINAL FILE INTACT rather than destroyed.
+  std::filesystem::path const target (filename_proj);
+  std::filesystem::path const temporary (target.string() + ".tmp");
+  std::filesystem::path const backup (target.string() + ".bak");
 
-  stream << 'W' << 'D' << 'B' << 'C';
+  {
+    std::ofstream stream(temporary.string(), std::ios_base::out | std::ios_base::trunc | std::ios_base::binary);
 
+    stream << 'W' << 'D' << 'B' << 'C';
 
-  write(stream, recordCount);
-  write(stream, fieldCount);
-  write(stream, recordSize);
-  write(stream, stringSize);
+    write(stream, recordCount);
+    write(stream, fieldCount);
+    write(stream, recordSize);
+    write(stream, stringSize);
 
-  stream.write(reinterpret_cast<char*>(data.data()), data.size());
-  stream.write(stringTable.data(), stringSize);
-  stream.close();
+    stream.write(reinterpret_cast<char*>(data.data()), data.size());
+    stream.write(stringTable.data(), stringSize);
+    stream.close();
+
+    // Checked AFTER close(), because the failure this is guarding against -- a full disk -- is
+    // usually reported when the final buffer is flushed rather than at any individual write.
+    if (!stream)
+    {
+      std::error_code ignored;
+      std::filesystem::remove (temporary, ignored);
+      LogError << "DBC save failed while writing '" << temporary.string()
+               << "'. The existing file was left untouched." << std::endl;
+      return;
+    }
+  }
+
+  std::error_code error;
+
+  // Best effort, and deliberately not fatal: keeping the previous version is worth having, but
+  // failing to keep it is not a reason to refuse a write that has already succeeded. Copy rather
+  // than rename, so that a failure in the swap below still leaves the original in place.
+  if (std::filesystem::exists (target, error))
+  {
+    std::error_code backup_error;
+    std::filesystem::copy_file
+      (target, backup, std::filesystem::copy_options::overwrite_existing, backup_error);
+
+    if (backup_error)
+    {
+      LogError << "Could not write the DBC backup '" << backup.string() << "': "
+               << backup_error.message() << ". Continuing; the new file is still written."
+               << std::endl;
+    }
+  }
+
+  std::filesystem::rename (temporary, target, error);
+
+  if (error)
+  {
+    std::error_code ignored;
+    std::filesystem::remove (temporary, ignored);
+    LogError << "DBC save could not replace '" << target.string() << "': " << error.message()
+             << ". The existing file was left untouched." << std::endl;
+  }
 }
 
 void DBCFile::overwriteWith(DBCFile const& file)
@@ -251,7 +307,17 @@ void DBCFile::removeRecord(size_t id, size_t id_field)
 
       size_t row_position = row_counter * recordSize; // position of the record to remove
 
-      size_t datasizeafterRow = recordSize * (recordCount - row_counter); // size of the data after the row that needs to be moved at the old row's position
+      // The bytes that follow the row being dropped, and therefore have to move down one slot.
+      // The count is (recordCount - row_counter - 1), NOT (recordCount - row_counter): `data`
+      // holds records and nothing else -- the string table is a separate vector, filled at line 60
+      // -- so the source range of the memmove below starts at recordSize * (row_counter + 1) and
+      // the longer length would end at recordSize * (recordCount + 1), exactly one record past
+      // data.end(). That was a heap over-read on every call, hidden because the resize two lines
+      // later truncates the garbage it copied in, and because the guard immediately below cannot
+      // catch it: with the old length row_position + datasizeafterRow is identically
+      // recordSize * recordCount == initial_size, so the `>` never fires.
+      // Reachable today from AreaTriggerEditor.cpp:677 and MapCreationWizard.cpp:1118.
+      size_t datasizeafterRow = recordSize * (recordCount - row_counter - 1); // size of the data after the row that needs to be moved at the old row's position
 
       // assert(initial_size >= (datasizeafterRow + row_position));
       if ((row_position + datasizeafterRow) > initial_size)

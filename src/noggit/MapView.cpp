@@ -4145,6 +4145,24 @@ void MapView::setupHotkeys()
   addHotkey(Qt::Key_F, MOD_none, "setAreaId"_hash);
 
   addHotkey(Qt::Key_Delete, MOD_none, "deleteSelection"_hash);
+
+  // THE CHUNK MANIPULATOR'S KEYS.
+  //
+  // Registered LAST on purpose. hotkeys is a std::forward_list and addHotkey emplaces at the
+  // FRONT (MapView.cpp:6371), while the dispatch loop returns on the first entry whose key,
+  // modifiers and condition all match (:5646-5656). So a key registered here is tested before
+  // the earlier claim on the same key, and reaches it only when ChunkTool's condition -- chunk
+  // editing mode, no action open -- is false. That is what lets C keep clearing the vertex
+  // selection, F keep setting an area id and locking the cursor, and R keep setting the brush
+  // level everywhere except in this one mode.
+  //
+  // V, X and Alt+F were unclaimed before this; C, F and R were not.
+  addHotkey(Qt::Key_C, MOD_none, "chunkCopy"_hash);
+  addHotkey(Qt::Key_V, MOD_none, "chunkPaste"_hash);
+  addHotkey(Qt::Key_X, MOD_none, "chunkClearSelection"_hash);
+  addHotkey(Qt::Key_R, MOD_none, "chunkRotate90"_hash);
+  addHotkey(Qt::Key_F, MOD_none, "chunkMirrorHorizontal"_hash);
+  addHotkey(Qt::Key_F, MOD_alt, "chunkMirrorVertical"_hash);
 }
 
 void MapView::setupMinimap()
