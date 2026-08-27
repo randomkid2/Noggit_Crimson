@@ -19,6 +19,21 @@
     <qresource prefix="/">
         <file alias="icon">../media/noggit_icon.png</file>
         <file alias="splash">../media/splash.png</file>
+        <!-- The banner artwork behind the wordmark on the launcher and on the map-selection
+             window. 2880x480, so it lands 1:1 on a 1440-logical banner at device pixel ratio 2
+             and no resampling happens at all in the common case; LauncherArt::bannerTexture
+             cover-fits it for every other width. JPEG rather than PNG because it is a
+             photographic ember field, and re-encoding it as an optimised PNG measured
+             986,952 bytes against the 131,777 here: 7.49x for a picture that is then veiled
+             at 58% alpha before anything is drawn on top of it, which leaves any JPEG artefact
+             at 0.42 of its original amplitude by the time it reaches the screen.
+
+             Loading it needs Qt's qjpeg image-format plugin, which windeployqt copies into
+             imageformats/ as a matter of course. bannerTexture treats a null decode as a
+             legitimate state and falls back to the band gradient, so a stripped deployment
+             loses the artwork and keeps a legible banner. -->
+
+        <file alias="banner-backdrop">../media/banner_backdrop.jpg</file>
         <file alias="icon-classic">../media/project-icon-classic.png</file>
         <file alias="icon-burning">../media/project-icon-burning.png</file>
         <file alias="icon-wrath">../media/project-icon-wrath.png</file>

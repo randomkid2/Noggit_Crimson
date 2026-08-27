@@ -1,6 +1,7 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
 #include "LightEditor.hpp"
+#include "LightBrowser.hpp"
 #include <noggit/application/Configuration/NoggitApplicationConfiguration.hpp>
 #include <noggit/application/NoggitApplication.hpp>
 #include <noggit/DBC.h>
@@ -31,19 +32,52 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QStandardItemModel>
+#include <QStyle>
 #include <QStringList>
+#include <QSlider>
 #include <QTabWidget>
 #include <QTextStream>
 #include <QTreeWidget>
+#include <QVBoxLayout>
 
 
 using namespace Noggit::Ui::Tools;
+
+std::unordered_map<int, std::string>& Noggit::Ui::Tools::lightNameDefinitions()
+{
+  static std::unordered_map<int, std::string> definitions;
+  return definitions;
+}
+
+std::string Noggit::Ui::Tools::lightDisplayName(int light_id, bool global, bool light_zone)
+{
+	auto const& definitions = lightNameDefinitions();
+	auto const named = definitions.find(light_id);
+
+	if (named != definitions.end() && !named->second.empty())
+	{
+		return named->second;
+	}
+
+	if (global)
+		return "Global Light";
+
+	if (light_zone)
+		return "Unnamed Zone Light";
+
+	return "Unnamed Light";
+}
 
 LightEditor::LightEditor(MapView* map_view, QWidget* parent)
 : QWidget(parent)
 , _map_view(map_view)
 , _world(map_view->getWorld())
 {
+	// Registered here rather than handed over by LightTool, because ToolPanel::registerTool
+	// reparents this widget into the panel's scroll area straight after construction -- a
+	// findChild<LightEditor*> from MapView would then miss it. Cleared again by ~LightEditor.
+	map_view->setLightEditor(this);
+
 	// The dock's shared shell -- zero margins, S3 between sections, 250px floor. This layout set
 	// no margins, so it took QStyle::PM_LayoutLeftMargin (13px on windowsvista here) on top of
 	// ToolPanel's own 12px. See ToolWidgetStyle.hpp.
@@ -224,59 +258,85 @@ LightEditor::LightEditor(MapView* map_view, QWidget* parent)
 			if (map_name.empty())
 				continue;
 
-			light_names_map[id] = map_name;
+			lightNameDefinitions()[id] = map_name;
 		}
 		file.close();
 	}
 
-	// Load Tree from dbc. Could potentially be done from _world->renderer()->skies()->skies but it needs to be loaded first
-	for (DBCFile::Iterator i = gLightDB.begin(); i != gLightDB.end(); ++i)
-	{
-		if (i->getInt(LightDB::Map) == _world->getMapID())
-		{
-			QListWidgetItem* item = new QListWidgetItem();
-
-			std::stringstream ss;
-			unsigned int light_id = i->getUInt(LightDB::ID);
-			item->setData(Qt::UserRole + 1, QVariant(light_id) );
-
-			bool global = (i->getFloat(LightDB::PositionX) == 0.0f && i->getFloat(LightDB::PositionY) == 0.0f
-							&& i->getFloat(LightDB::PositionZ) == 0.0f);
-
-			std::string light_name = getLightName(light_id, global); // TODO light zone arg
-
-			if (global)
-			{
-				item->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::sun));
-			}
-
-			ss << light_id << "-" << light_name;
-			item->setText(QString(ss.str().c_str()));
-			// if (global)
-			_light_tree->addItem(item);
-
-			if (global)
-			{
-				_light_tree->setCurrentItem(item);
-			}
-		}
-	}
+	// The list is filled from Skies and not from Light.dbc directly.
+	//
+	// The old fill iterated gLightDB and filtered on the map id, which meant a light created by
+	// Duplicate -- which now writes nothing until Save -- would have been absent from its own list
+	// until the DBC was written. Skies holds exactly the same set plus the unsaved ones, and it is
+	// the set the viewport and the gizmo already work from, so there is one source of truth.
+	rebuildLightList();
 
 	QPushButton* GetSelectedSkyButton = new QPushButton("Edit selected light", this);
 	GetSelectedSkyButton->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::cog));
 	light_selection_layout->addWidget(GetSelectedSkyButton);
 
-	QPushButton* addNewSkyButton = new QPushButton("(IN DEV) Duplicate selected(create new)", this);
+	QPushButton* addNewSkyButton = new QPushButton("Duplicate selected light", this);
 	addNewSkyButton->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::plus));
+	addNewSkyButton->setToolTip("Creates a copy of the selected light at the camera, as an UNSAVED "
+														 "light. Nothing is written to any DBC until you press "
+														 "\"Save Light\" on the Edit Light tab.");
 	light_selection_layout->addWidget(addNewSkyButton);
 
-	QPushButton* deleteSkyButton = new QPushButton("(IN DEV) delete light", this);
-	deleteSkyButton->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::times));
-	light_selection_layout->addWidget(deleteSkyButton);
+	QHBoxLayout* clipboard_layout = new QHBoxLayout();
 
-	QPushButton* portToSkyButton = new QPushButton("(IN DEV) port to light", this);
+	_copy_light_button = new QPushButton("Copy", this);
+	_copy_light_button->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::copy));
+	_copy_light_button->setToolTip("Copies the selected light to the light clipboard. The clipboard "
+																"survives loading another map, which is how a light is moved "
+																"between continents.");
+	clipboard_layout->addWidget(_copy_light_button);
+
+	_paste_light_button = new QPushButton("Paste", this);
+	_paste_light_button->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::paste));
+	_paste_light_button->setToolTip("Pastes the light clipboard into THIS map at the camera, as an "
+																 "unsaved light.");
+	_paste_light_button->setEnabled(Noggit::lightClipboard().valid);
+	clipboard_layout->addWidget(_paste_light_button);
+
+	light_selection_layout->addLayout(clipboard_layout);
+
+	_deep_copy_params_chk = new QCheckBox("Paste with independent colours", this);
+	_deep_copy_params_chk->setChecked(true);
+	// Default ON, because the alternative is the trap. A LightParams id is shared between every
+	// light that references it -- the Edit Light tab already reports "this param is used N times"
+	// -- so pasting Stormwind's light and then adjusting its sky colour would adjust Stormwind's
+	// too, on the original map, with nothing on screen saying so. Unticking it costs 1 + 18 + 6
+	// fewer new DBC rows per weather slot and is the right choice only when the copy is meant to
+	// track the original.
+	_deep_copy_params_chk->setToolTip("On: the pasted light gets its own LightParams, LightIntBand "
+																	 "and LightFloatBand rows, so editing its colours affects "
+																	 "nothing else.\nOff: it shares the source's parameter rows, so "
+																	 "editing its colours also edits every other light using them "
+																	 "-- including on the map it came from.");
+	light_selection_layout->addWidget(_deep_copy_params_chk);
+
+	QPushButton* browseLightsButton = new QPushButton("Browse lights from all maps...", this);
+	browseLightsButton->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::search));
+	light_selection_layout->addWidget(browseLightsButton);
+
+	_delete_light_button = new QPushButton("Delete light", this);
+	_delete_light_button->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::times));
+	light_selection_layout->addWidget(_delete_light_button);
+
+	QPushButton* portToSkyButton = new QPushButton("Fly to light", this);
 	portToSkyButton->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::running));
 	light_selection_layout->addWidget(portToSkyButton);
+
+	// Only useful on a map with no global light of its own, and disabled until updateActiveLights
+	// can ask Skies -- which does not exist yet at construction time.
+	_make_global_light_button = new QPushButton("Give this map its own global light", this);
+	_make_global_light_button->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::sun));
+	_make_global_light_button->setEnabled(false);
+	_make_global_light_button->setToolTip
+		("This map has no global light of its own, so Noggit is showing it Azeroth's (Light.dbc row "
+		 "1) as a stand-in.\nSaving that stand-in would rewrite Azeroth's lighting, so the editor "
+		 "refuses.\nThis button copies it into a new light belonging to this map instead.");
+	light_selection_layout->addWidget(_make_global_light_button);
 
 	light_selection_layout->addStretch();
 
@@ -286,9 +346,18 @@ LightEditor::LightEditor(MapView* map_view, QWidget* parent)
 	lightid_label = new QLabel("No light selected", this);
 	light_editing_layout->addWidget(lightid_label);
 
-	save_current_sky_button = new QPushButton("Save Light(Write DBCs)", this);
+	save_current_sky_button = new QPushButton("Save Light (write DBCs)", this);
 	save_current_sky_button->setEnabled(false);
+	save_current_sky_button->setToolTip("Writes LightSkybox.dbc, LightIntBand.dbc, "
+																		 "LightFloatBand.dbc, LightParams.dbc and Light.dbc, in that "
+																		 "order, into the project's DBFilesClient folder.\nThe whole set "
+																		 "is validated first; if anything is wrong nothing is written.");
 	light_editing_layout->addWidget(save_current_sky_button);
+
+	_save_state_label = new QLabel(this);
+	_save_state_label->setWordWrap(true);
+	_save_state_label->hide();
+	light_editing_layout->addWidget(_save_state_label);
 
 	QGroupBox* global_values_group = new QGroupBox("Global settings", this);
 	// alpha_values_group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
@@ -357,6 +426,15 @@ LightEditor::LightEditor(MapView* map_view, QWidget* parent)
 	pos_z_spin->setEnabled(false);
 	global_values_layout->addRow("Position Z:", pos_z_spin);
 	
+	link_radii_chk = new QCheckBox("Keep the inner/outer ratio when resizing", this);
+	link_radii_chk->setChecked(true);
+	// On by default because it is what "make this light bigger" means. The band between r1 and r2
+	// is the falloff -- the client blends the light with the global one as
+	// (r2 - distance) / (r2 - r1) -- so changing r2 alone does not scale a light, it reshapes its
+	// edge. With this ticked, editing either radius scales the other by the same factor and the
+	// falloff keeps its proportions.
+	global_values_layout->addRow(link_radii_chk);
+
 	inner_radius_spin = new QDoubleSpinBox(this);
 	inner_radius_spin->setRange(0, 100000); // max seen in dbc is 3871 (139363 �E36 )
 	inner_radius_spin->setValue(0);
@@ -560,26 +638,9 @@ LightEditor::LightEditor(MapView* map_view, QWidget* parent)
 	// 	}
 	// 	});
 
-	connect(_light_tree_filter, &QLineEdit::textChanged, [=](const QString& text)
+	connect(_light_tree_filter, &QLineEdit::textChanged, this, [this](QString const&)
 		{
-			if (text.isEmpty())
-			{
-				// Unhide all items when search text is empty
-				for (int i = 0; i < _light_tree->count(); ++i)
-				{
-					_light_tree->item(i)->setHidden(false);
-				}
-			}
-			else
-			{
-				for (int i = 0; i < _light_tree->count(); ++i)
-				{
-					QListWidgetItem* item = _light_tree->item(i);
-
-					bool match = item->text().contains(text, Qt::CaseInsensitive);
-					item->setHidden(!match);
-				}
-			}
+			applyLightListFilter();
 		});
 
 	connect(GetSelectedSkyButton, &QPushButton::clicked, [=]() 
@@ -597,126 +658,266 @@ LightEditor::LightEditor(MapView* map_view, QWidget* parent)
 
 	connect(_light_tree, &QListWidget::itemDoubleClicked, this, [=](QListWidgetItem* item)
 		{
-			unsigned int selected_light_id = item->data(Qt::UserRole + 1).toUInt();
+			int const selected_light_id = item->data(Qt::UserRole + 1).toInt();
 
-			Sky* sky = _map_view->getWorld()->renderer()->skies()->findSkyById(selected_light_id);
-			if (sky)
-				loadSelectSky(sky);
+			if (auto& skies = _map_view->getWorld()->renderer()->skies())
+			{
+				if (Sky* const sky = skies->findSkyById(selected_light_id))
+				{
+					loadSelectSky(sky);
+				}
+			}
 		});
 
 
 	connect(addNewSkyButton, &QPushButton::clicked, [=]() {
 
-		// get selected sky to duplicate
-		Sky* old_sky = nullptr;
+		Sky* const old_sky = get_selected_sky();
 
-		std::string old_name = "";
-
-		// if there is only one light and it is global, we have nothing to duplicate from so allow user to duplicate anything
-		// this is REALLY scuffed
-		if (!_light_tree->count() || _light_tree->count() == 1)
+		if (!old_sky)
 		{
-			if (_light_tree->count() == 1)
-			{
-				unsigned int old_light_id = _light_tree->item(0)->data(Qt::UserRole + 1).toUInt();
-
-				for (Sky& sky : _map_view->getWorld()->renderer()->skies()->skies)
-				{
-					if (sky.Id == old_light_id)
-					{
-						auto test_old_sky = &sky;
-						if (test_old_sky != nullptr)
-						{
-							if (!test_old_sky->global)
-							{
-								// light isn't global, we have a valid light to duplicate
-								old_sky = &sky;
-								old_name = _light_tree->item(0)->text().toStdString();
-							}
-						}
-						break;
-					}
-				}
-			}
-			if (old_sky == nullptr)
-			{
-				// TODO input popup, allow copying a light from a dbc row id
-			}
-		}
-		else if (_light_tree->selectedItems().size())
-		{
-			auto const selected_items = _light_tree->selectedItems();
-
-			old_name = selected_items.back()->text().toStdString();
-			unsigned int selected_light_id = selected_items.back()->data(Qt::UserRole + 1).toUInt();
-
-			for (Sky& sky : _map_view->getWorld()->renderer()->skies()->skies)
-			{
-				if (sky.Id == selected_light_id)
-				{
-					old_sky = &sky;
-					break;
-				}
-			}
-		}
-
-		if (old_sky == nullptr)
+			QMessageBox::information(this, "Duplicate light"
+				, "Select a light in the list first."
+				, QMessageBox::Ok);
 			return;
+		}
 
+		// The missing `return` here is the defect that let a map end up with two global lights: the
+		// old code raised this warning and then fell straight through into the create call below it.
 		if (old_sky->global)
 		{
-			QMessageBox::warning
-			(nullptr
-				, "Error"
-				, "You cannot duplicate a Global light. "
-				"There can only be one global light per map."
-				, QMessageBox::Ok
-			);
+			QMessageBox::warning(this, "Duplicate light"
+				, "A global light cannot be duplicated: it is global precisely because it sits at "
+				  "0, 0, 0, and a map can have exactly one light there."
+				, QMessageBox::Ok);
+			return;
 		}
 
-		unsigned int new_light_id = gLightDB.getEmptyRecordID(LightDB::ID);
+		// Not copyLightFromDbc: Duplicate has no business replacing whatever the user has on the
+		// clipboard, and the two operations only ever shared an implementation by accident.
+		Noggit::LightSnapshot snapshot;
 
-		// create new sky entry (duplicate)
-		Sky* new_sky = _map_view->getWorld()->renderer()->skies()->createNewSky(old_sky, new_light_id, _map_view->getCamera()->position);
-
-		// add new item to tree
+		if (!snapshotForLight(old_sky->getId(), snapshot))
 		{
-			QListWidgetItem* item = new QListWidgetItem();
-
-			std::stringstream ss;
-			item->setData(Qt::UserRole + 1, QVariant(new_light_id));
-
-			item->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::sun));
-
-			std::string new_light_name = "Noggit Copy of " + old_name;
-
-			ss << new_light_id << "-" << new_light_name;
-			item->setText(QString(ss.str().c_str()));
-
-			_light_tree->addItem(item);
-
-			_light_tree->setCurrentItem(item);
-			_light_tree->scrollToItem(item);
+			return;
 		}
 
-		// loadSelectSky(new_sky);
-
+		pasteLightSnapshot(snapshot, _deep_copy_params_chk->isChecked());
 		});
 
-	connect(deleteSkyButton, &QPushButton::clicked, [=]() {
+	connect(_copy_light_button, &QPushButton::clicked, [=]() {
 
+		Sky* const sky = get_selected_sky();
+
+		if (!sky)
+		{
+			QMessageBox::information(this, "Copy light", "Select a light first.", QMessageBox::Ok);
+			return;
+		}
+
+		if (copyLightFromDbc(sky->getId()))
+		{
+			_paste_light_button->setEnabled(true);
+		}
+		});
+
+	connect(_paste_light_button, &QPushButton::clicked, [=]() {
+
+		pasteLightFromClipboard(_deep_copy_params_chk->isChecked());
+		});
+
+	connect(browseLightsButton, &QPushButton::clicked, [=]() {
+
+		// Built once and kept, because it walks all of Light.dbc and both name tables to fill its
+		// tree. Reopening it should not pay for that again.
+		if (!_light_browser)
+		{
+			_light_browser = new LightBrowser(this, this);
+
+			connect(_light_browser, &LightBrowser::copyLightRequested, this, [this] (int light_id)
+				{
+					if (copyLightFromDbc(light_id))
+					{
+						_paste_light_button->setEnabled(true);
+					}
+				});
+
+			connect(_light_browser, &LightBrowser::pasteLightRequested, this
+				, [this] (int light_id, bool deep_copy)
+				{
+					Noggit::LightSnapshot snapshot;
+
+					if (snapshotForLight(light_id, snapshot))
+					{
+						pasteLightSnapshot(snapshot, deep_copy);
+					}
+				});
+		}
+
+		_light_browser->show();
+		_light_browser->raise();
+		_light_browser->activateWindow();
+		});
+
+	connect(_delete_light_button, &QPushButton::clicked, [=]() {
+
+		Sky* const sky = get_selected_sky();
+
+		if (!sky)
+		{
+			QMessageBox::information(this, "Delete light", "Select a light first.", QMessageBox::Ok);
+			return;
+		}
+
+		int const light_id = sky->getId();
+		bool const on_disk = !sky->is_new_record;
+
+		QString question
+			(QString("Delete light %1 (%2)?")
+				.arg(light_id)
+				.arg(QString::fromStdString(lightDisplayName(light_id, sky->global, sky->zone_light))));
+
+		// Two genuinely different consequences, so two genuinely different questions. An unsaved
+		// light has never touched a file; a saved one is about to have its row removed from a DBC
+		// the client reads.
+		question += on_disk
+			? "\n\nThis removes row " + QString::number(light_id) + " from Light.dbc and writes the "
+				"file immediately.\n\nIts LightParams / LightIntBand / LightFloatBand rows are left "
+				"alone on purpose: parameter rows are shared between lights, and deleting them would "
+				"recolour unrelated zones."
+			: "\n\nThis light has never been saved, so nothing on disk changes.";
+
+		if (QMessageBox::question(this, "Delete light", question
+			, QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+		{
+			return;
+		}
+
+		auto& skies = _map_view->getWorld()->renderer()->skies();
+
+		if (!skies)
+		{
+			return;
+		}
+
+		std::string error;
+
+		if (!skies->deleteSky(light_id, error))
+		{
+			QMessageBox::warning(this, "Delete light"
+				, "Nothing was deleted.\n\n" + QString::fromStdString(error), QMessageBox::Ok);
+			return;
+		}
+
+		if (_selected_sky_id == light_id)
+		{
+			_selected_sky_id = 0;
+			_light_editing_widget->setEnabled(false);
+			save_current_sky_button->setEnabled(false);
+			lightid_label->setText("No light selected");
+		}
+
+		rebuildLightList();
+		updateLightning();
+		});
+
+	connect(_make_global_light_button, &QPushButton::clicked, [=]() {
+
+		auto& skies = _map_view->getWorld()->renderer()->skies();
+
+		if (!skies || !skies->using_fallback_global)
+		{
+			QMessageBox::information(this, "Global light"
+				, "This map already has a global light of its own.", QMessageBox::Ok);
+			return;
+		}
+
+		Sky const* fallback = nullptr;
+
+		for (Sky const& sky : skies->skies)
+		{
+			if (sky.is_fallback_global)
+			{
+				fallback = &sky;
+				break;
+			}
+		}
+
+		if (!fallback)
+		{
+			return;
+		}
+
+		// Read straight out of Light.dbc rather than through copyLightFromDbc, so this does not
+		// quietly replace whatever the user has on the clipboard.
+		Noggit::LightSnapshot snapshot;
+
+		if (!Noggit::lightSnapshotFromDbc(fallback->getId(), snapshot))
+		{
+			QMessageBox::warning(this, "Global light"
+				, "Could not read the fallback light out of Light.dbc.", QMessageBox::Ok);
+			return;
+		}
+
+		// 0,0,0 with no radii IS a global light. Copied from the borrowed one so the new light
+		// starts from the lighting already on screen rather than from black.
+		snapshot.pos = glm::vec3(0.0f, 0.0f, 0.0f);
+		snapshot.r1 = 0.0f;
+		snapshot.r2 = 0.0f;
+
+		std::string error;
+
+		// Always a deep copy. A map's global light is the one light every zone on it falls back to,
+		// and having it share Azeroth's parameter rows means every colour change made here also
+		// changes Azeroth -- which is the exact failure this button exists to prevent.
+		Sky* const created = skies->pasteLight(snapshot, true, error);
+
+		if (!created)
+		{
+			QMessageBox::warning(this, "Global light"
+				, "Nothing was created.\n\n" + QString::fromStdString(error), QMessageBox::Ok);
+			return;
+		}
+
+		lightNameDefinitions()[created->getId()] = "Global Light";
+
+		_make_global_light_button->setEnabled(false);
+
+		rebuildLightList();
+		loadSelectSky(created);
+		selectLightListRow(created->getId());
+		updateLightning();
+
+		QMessageBox::information(this, "Global light"
+			, QString("Light %1 is now this map's global light, with its own LightParams rows. It "
+								"exists only in memory -- press Save Light to write it.")
+				.arg(created->getId())
+			, QMessageBox::Ok);
 		});
 
 	connect(portToSkyButton, &QPushButton::clicked, [=]() {
-					// 
-					// _map_view->_camera.position = _curr_sky->pos;
-					// _map_view->_camera.position.z += 100;
-					// get terrain's height for Z axis.
-					// auto chunk = _world->getChunkAt(glm::vec3(_curr_sky->pos.x, _curr_sky->pos.y, _curr_sky->pos.z)); // need to load tile first
-					// if (chunk != nullptr)
-					// _map_view->_camera.position.z = chunk->getMaxHeight() + 20.0f; 
-					// TODO : initialize
 
+		Sky* const sky = get_selected_sky();
+
+		if (!sky)
+		{
+			return;
+		}
+
+		if (sky->global)
+		{
+			QMessageBox::information(this, "Fly to light"
+				, "The global light has no position -- it is global because it sits at 0, 0, 0 and "
+				  "applies to the whole map."
+				, QMessageBox::Ok);
+			return;
+		}
+
+		// Framed from the outer radius rather than a fixed distance, so a 40 yard light and a 3000
+		// yard one both end up filling roughly the same amount of screen. focusOnPoint force-loads
+		// the ADT the point sits in, which matters here: a light routinely sits over a tile the
+		// world has streamed out.
+		_map_view->focusOnPoint(sky->pos, std::max(50.0f, sky->r2 * 1.2f), true);
 		});
 
 	connect(param_combobox, qOverload<int>(&QComboBox::currentIndexChanged), [this](int index) {
@@ -742,95 +943,218 @@ LightEditor::LightEditor(MapView* map_view, QWidget* parent)
 
 	connect(save_current_sky_button, &QPushButton::clicked, [=]() {
 		Sky* curr_sky = get_selected_sky();
+
 		if (!curr_sky)
 		{
-			assert(false);
 			return;
 		}
-		curr_sky->save_to_dbc();
+
+		std::string reason;
+
+		// Asked before the write, so the message names the problem rather than the symptom. The
+		// same check runs again as save_to_dbc's first statement, so a caller that skips this
+		// cannot get past it either.
+		if (!curr_sky->validateForSave(reason))
+		{
+			reportSaveRefusal(reason);
+			return;
+		}
+
+		if (!curr_sky->save_to_dbc())
+		{
+			reportSaveRefusal("The write was refused after validation had passed, which means a DBC "
+												"changed underneath it. The log names the exact record.");
+			return;
+		}
+
+		_save_state_label->setProperty("state", "ok");
+
+		// A dynamic property set after the widget has been polished does nothing until the style is
+		// told to look again. Without this the label keeps whatever colour the previous message
+		// gave it -- a red "nothing was written" staying red under a successful save.
+		_save_state_label->style()->unpolish(_save_state_label);
+		_save_state_label->style()->polish(_save_state_label);
+
+		_save_state_label->setText(QString("Saved light %1. LightSkybox.dbc, LightIntBand.dbc, "
+																			 "LightFloatBand.dbc, LightParams.dbc and Light.dbc were "
+																			 "written to the project, in that order.")
+																			 .arg(curr_sky->getId()));
+		_save_state_label->show();
+
+		// The row loses its unsaved marker, and a duplicated light stops being new.
+		rebuildLightList();
 		});
 
-	connect(pos_x_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [&](double v) {
-		get_selected_sky()->pos.x = v;
-		updateLightning();
-
+	// The five geometry spin boxes write straight into the selected Sky.
+	//
+	// get_selected_sky() can return nullptr -- a light can be deleted while its values are still in
+	// these boxes -- and the previous versions dereferenced it unconditionally. loadSelectSky blocks
+	// these signals while it fills the boxes, so a null here means the selection really did go away
+	// rather than that the panel is mid-refresh.
+	connect(pos_x_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+		if (Sky* const sky = get_selected_sky())
+		{
+			sky->pos.x = static_cast<float>(v);
+			updateLightning();
+		}
 		});
 
-	connect(pos_y_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [&](double v) {
-		get_selected_sky()->pos.z = v;
+	connect(pos_y_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+		if (Sky* const sky = get_selected_sky())
+		{
+			// The panel's Y box is Noggit's Z. A display convention only, applied symmetrically here
+			// and in refreshSelectedLightFields; nothing between the Sky and the DBC swaps them.
+			sky->pos.z = static_cast<float>(v);
+			updateLightning();
+		}
+		});
+
+	connect(pos_z_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+		if (Sky* const sky = get_selected_sky())
+		{
+			sky->pos.y = static_cast<float>(v);
+			updateLightning();
+		}
+		});
+
+	connect(inner_radius_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+		Sky* const sky = get_selected_sky();
+
+		if (!sky)
+		{
+			return;
+		}
+
+		float const previous = sky->r1;
+		sky->r1 = static_cast<float>(v);
+
+		// The partner scales by the same FACTOR, not by the same offset: the falloff is a ratio, so
+		// a light doubled in size should keep the same proportion of hard centre to soft edge.
+		if (link_radii_chk->isChecked() && previous > 0.0f && sky->r1 > 0.0f)
+		{
+			QSignalBlocker const blocker(outer_radius_spin);
+			sky->r2 = sky->r2 * (sky->r1 / previous);
+			outer_radius_spin->setValue(sky->r2);
+		}
+
 		updateLightning();
 		});
 
-	connect(pos_z_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [&](double v) {
-		get_selected_sky()->pos.y = v;
+	connect(outer_radius_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+		Sky* const sky = get_selected_sky();
+
+		if (!sky)
+		{
+			return;
+		}
+
+		float const previous = sky->r2;
+		sky->r2 = static_cast<float>(v);
+
+		if (link_radii_chk->isChecked() && previous > 0.0f && sky->r2 > 0.0f)
+		{
+			QSignalBlocker const blocker(inner_radius_spin);
+			sky->r1 = sky->r1 * (sky->r2 / previous);
+			inner_radius_spin->setValue(sky->r1);
+		}
+
 		updateLightning();
 		});
 
-	connect(inner_radius_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [&](double v) {
-		get_selected_sky()->r1 = v;
-		updateLightning();
+	// The six controls below all divided an int by 100, which is integer division: every slider
+	// value from 0 to 99 became 0.0 and 100 became 1.0. Glow, both water alphas and both ocean
+	// alphas were therefore not adjustable at all -- they snapped between fully off and fully on --
+	// and that same 0 or 1 is what went into LightParams.dbc on the next save.
+	connect(glow_slider, &QSlider::valueChanged, this, [this](int v) {
+		if (SkyParam* const param = selectedParam())
+		{
+			param->set_glow(v / 100.0f);
+			updateLightning();
+		}
 		});
 
-	connect(outer_radius_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [&](double v) {
-		get_selected_sky()->r2 = v;
-		updateLightning();
+	connect(highlight_sky_checkbox, &QCheckBox::stateChanged, this, [this](int state) {
+		if (SkyParam* const param = selectedParam())
+		{
+			param->set_highlight_sky(state != Qt::Unchecked);
+			updateLightning();
+		}
 		});
 
-	connect(glow_slider, &QSlider::valueChanged, [&](int v) {
-		get_selected_sky()->getParam(param_combobox->currentIndex()).value()->set_glow(v / 100);
-		updateLightning();
-		});
-	
-	connect(highlight_sky_checkbox, &QCheckBox::stateChanged, [&](int state) {
-		get_selected_sky()->getParam(param_combobox->currentIndex()).value()->set_highlight_sky(state);
-		updateLightning();
+	connect(shallow_water_alpha_slider, &QSlider::valueChanged, this, [this](int v) {
+		if (SkyParam* const param = selectedParam())
+		{
+			param->set_river_shallow_alpha(v / 100.0f);
+			updateLightning();
+		}
 		});
 
-	connect(shallow_water_alpha_slider, &QSlider::valueChanged, [&](int v) {
-		get_selected_sky()->getParam(param_combobox->currentIndex()).value()->set_river_shallow_alpha(v / 100);
-		updateLightning();
+	connect(deep_water_alpha_slider, &QSlider::valueChanged, this, [this](int v) {
+		if (SkyParam* const param = selectedParam())
+		{
+			param->set_river_deep_alpha(v / 100.0f);
+			updateLightning();
+		}
 		});
 
-	connect(deep_water_alpha_slider, &QSlider::valueChanged, [&](int v) {
-		get_selected_sky()->getParam(param_combobox->currentIndex()).value()->set_river_deep_alpha(v / 100);
-		updateLightning();
+	connect(shallow_ocean_alpha_slider, &QSlider::valueChanged, this, [this](int v) {
+		if (SkyParam* const param = selectedParam())
+		{
+			param->set_ocean_shallow_alpha(v / 100.0f);
+			updateLightning();
+		}
 		});
 
-	connect(shallow_ocean_alpha_slider, &QSlider::valueChanged, [&](int v) {
-		get_selected_sky()->getParam(param_combobox->currentIndex()).value()->set_ocean_shallow_alpha(v / 100);
-		updateLightning();
-		});
-
-	connect(deep_ocean_alpha_slider, &QSlider::valueChanged, [&](int v) {
-		get_selected_sky()->getParam(param_combobox->currentIndex()).value()->set_ocean_deep_alpha(v / 100);
-		updateLightning();
+	connect(deep_ocean_alpha_slider, &QSlider::valueChanged, this, [this](int v) {
+		if (SkyParam* const param = selectedParam())
+		{
+			param->set_ocean_deep_alpha(v / 100.0f);
+			updateLightning();
+		}
 		});
 
 	// connect(skybox_model_lineedit, &QLineEdit::textChanged, [&](std::string v) {
-	QLineEdit::connect(skybox_model_lineedit, &QLineEdit::textChanged
-	, [=]
+	// All four skybox handlers used to write through getParam(index).value(), an unchecked
+	// std::optional dereference on a slot the combo box can legitimately be sitting on while it
+	// holds no param -- loadSelectSky greys those entries out, and greying an item out does not
+	// stop currentIndex() naming it.
+	QLineEdit::connect(skybox_model_lineedit, &QLineEdit::textChanged, this, [this]
 	{
-	auto text = skybox_model_lineedit->text().toStdString();
-	if (text.empty())
-		get_selected_sky()->getParam(param_combobox->currentIndex()).value()->skybox.reset();
-	else
-		get_selected_sky()->getParam(param_combobox->currentIndex()).value()->skybox.emplace(text.c_str(), _world->getRenderContext());
-	
-	updateLightning();
+		SkyParam* const param = selectedParam();
+
+		if (!param)
+		{
+			return;
+		}
+
+		auto const text = skybox_model_lineedit->text().toStdString();
+
+		if (text.empty())
+			param->skybox.reset();
+		else
+			param->skybox.emplace(text.c_str(), _world->getRenderContext());
+
+		updateLightning();
 	});
 
-	connect(skybox_flag_1, &QCheckBox::stateChanged, [&](int state) {
-	if (state) // set bit
-		get_selected_sky()->getParam(param_combobox->currentIndex()).value()->skyboxFlags |= (1 << (0));
-	else // remove bit
-		get_selected_sky()->getParam(param_combobox->currentIndex()).value()->skyboxFlags &= ~(1 << (0));
+	connect(skybox_flag_1, &QCheckBox::stateChanged, this, [this](int state) {
+		if (SkyParam* const param = selectedParam())
+		{
+			if (state)
+				param->skyboxFlags |= (1 << 0);
+			else
+				param->skyboxFlags &= ~(1 << 0);
+		}
 	});
 
-	connect(skybox_flag_2, &QCheckBox::stateChanged, [&](int state) {
-	if (state) // set bit
-		get_selected_sky()->getParam(param_combobox->currentIndex()).value()->skyboxFlags |= (1 << (1));
-	else // remove bit
-		get_selected_sky()->getParam(param_combobox->currentIndex()).value()->skyboxFlags &= ~(1 << (1));
+	connect(skybox_flag_2, &QCheckBox::stateChanged, this, [this](int state) {
+		if (SkyParam* const param = selectedParam())
+		{
+			if (state)
+				param->skyboxFlags |= (1 << 1);
+			else
+				param->skyboxFlags &= ~(1 << 1);
+		}
 	});
 
 	// connect(floats_editor_button, &QPushButton::clicked, [=]() {
@@ -848,7 +1172,23 @@ void LightEditor::loadSelectSky(Sky* _curr_sky)
 		return;
 
 	_selected_sky_id = _curr_sky->getId();
-	// Sky* curr_sky = get_selected_sky();
+
+	// The one choke point. Every path that selects a light -- the list, the "Edit selected light"
+	// button, a viewport pick, a paste -- ends up here, so writing the selection into Skies here is
+	// what keeps the panel and the viewport gizmo from disagreeing about which light is selected.
+	// Sky::_selected was declared, initialised and read by Sky::selected() and written by nothing
+	// at all before this line existed.
+	if (auto& skies = _map_view->getWorld()->renderer()->skies())
+	{
+		skies->setSelectedLight(_selected_sky_id);
+	}
+
+	// The viewport has to repaint: the gizmo appears at the newly selected light and nothing else
+	// in this call path is an input event.
+	_map_view->markSpawnOverlayDirty();
+
+	// Whatever the last save or paste said was about a different light.
+	_save_state_label->hide();
 
 	QSignalBlocker const _1(pos_x_spin);
 	QSignalBlocker const _2(pos_y_spin);
@@ -881,7 +1221,7 @@ void LightEditor::loadSelectSky(Sky* _curr_sky)
 	save_current_sky_button->setEnabled(true);
 	// maybe move the inits to a separate function
 	// global values
-	std::string light_name = getLightName(_curr_sky->Id, _curr_sky->global, _curr_sky->zone_light);
+	std::string light_name = lightDisplayName(_curr_sky->Id, _curr_sky->global, _curr_sky->zone_light);
 
 	std::stringstream ss;
 	ss << _curr_sky->Id << "-" << light_name;
@@ -917,6 +1257,334 @@ void LightEditor::loadSelectSky(Sky* _curr_sky)
 	load_light_param(param_combobox->currentIndex());
 }
 
+int LightEditor::selectedLightId() const
+{
+	return _selected_sky_id;
+}
+
+SkyParam* LightEditor::selectedParam() const
+{
+	Sky* const sky = get_selected_sky();
+
+	if (!sky)
+	{
+		return nullptr;
+	}
+
+	int const index = param_combobox->currentIndex();
+
+	if (index < 0 || index >= NUM_SkyParamsNames)
+	{
+		return nullptr;
+	}
+
+	auto const param = sky->getParam(index);
+
+	return param.has_value() ? param.value() : nullptr;
+}
+
+void LightEditor::applyLightListFilter()
+{
+	QString const text = _light_tree_filter->text();
+
+	for (int i = 0; i < _light_tree->count(); ++i)
+	{
+		QListWidgetItem* const item = _light_tree->item(i);
+
+		item->setHidden(!text.isEmpty() && !item->text().contains(text, Qt::CaseInsensitive));
+	}
+}
+
+void LightEditor::selectLightListRow(int light_id)
+{
+	for (int i = 0; i < _light_tree->count(); ++i)
+	{
+		QListWidgetItem* const item = _light_tree->item(i);
+
+		if (item->data(Qt::UserRole + 1).toInt() != light_id)
+		{
+			continue;
+		}
+
+		// Blocked, because setCurrentItem emits currentItemChanged and this function is reached
+		// from inside loadSelectSky -- which is what a row change would call straight back into.
+		QSignalBlocker const blocker(_light_tree);
+
+		// A row hidden by the filter cannot be made current in a way the user can see, so the
+		// filter is lifted for it. Selecting a light in the viewport and having the panel appear to
+		// select nothing is worse than a filter that quietly stops applying to one row.
+		item->setHidden(false);
+
+		_light_tree->setCurrentItem(item);
+		_light_tree->scrollToItem(item);
+		return;
+	}
+}
+
+void LightEditor::rebuildLightList()
+{
+	int const previously_selected = _selected_sky_id;
+
+	struct Row
+	{
+		int id;
+		bool global;
+		bool zone_light;
+		bool unsaved;
+	};
+
+	std::vector<Row> rows;
+
+	auto& skies = _map_view->getWorld()->renderer()->skies();
+
+	if (skies)
+	{
+		_light_list_from_skies = true;
+
+		for (Sky const& sky : skies->skies)
+		{
+			rows.push_back({sky.getId(), sky.global, sky.zone_light, sky.is_new_record});
+		}
+	}
+	else
+	{
+		for (DBCFile::Iterator i = gLightDB.begin(); i != gLightDB.end(); ++i)
+		{
+			if (i->getInt(LightDB::Map) != static_cast<int>(_world->getMapID()))
+			{
+				continue;
+			}
+
+			bool const global = (i->getFloat(LightDB::PositionX) == 0.0f
+													 && i->getFloat(LightDB::PositionY) == 0.0f
+													 && i->getFloat(LightDB::PositionZ) == 0.0f);
+
+			rows.push_back({static_cast<int>(i->getUInt(LightDB::ID)), global, false, false});
+		}
+	}
+
+	// By id, because Skies keeps its vector sorted by outer radius with the global last (see
+	// Sky::operator<) and a list that reorders itself every time a radius changes is unusable.
+	std::sort(rows.begin(), rows.end()
+		, [] (Row const& a, Row const& b) { return a.id < b.id; });
+
+	QSignalBlocker const blocker(_light_tree);
+
+	_light_tree->clear();
+
+	for (Row const& row : rows)
+	{
+		QListWidgetItem* const item = new QListWidgetItem();
+		item->setData(Qt::UserRole + 1, QVariant(row.id));
+
+		std::stringstream ss;
+
+		// A leading asterisk for a light that exists only in memory, so "Duplicate, then close
+		// Noggit" cannot look like it saved something. Duplicate deliberately no longer writes.
+		if (row.unsaved)
+		{
+			ss << "* ";
+		}
+
+		ss << row.id << "-" << lightDisplayName(row.id, row.global, row.zone_light);
+
+		item->setText(QString::fromStdString(ss.str()));
+
+		if (row.global)
+		{
+			item->setIcon(Noggit::Ui::FontAwesomeIcon(Noggit::Ui::FontAwesome::sun));
+		}
+
+		_light_tree->addItem(item);
+	}
+
+	applyLightListFilter();
+
+	if (previously_selected)
+	{
+		selectLightListRow(previously_selected);
+	}
+}
+
+void LightEditor::onLightSelectedInViewport(int light_id)
+{
+	auto& skies = _map_view->getWorld()->renderer()->skies();
+
+	if (!skies)
+	{
+		return;
+	}
+
+	Sky* const sky = skies->findSkyById(light_id);
+
+	if (!sky)
+	{
+		return;
+	}
+
+	// MapView::selectLight has already written the selection into Skies -- which is what the
+	// viewport gizmo reads -- so this only has to catch the panel up.
+	loadSelectSky(sky);
+	selectLightListRow(light_id);
+}
+
+void LightEditor::refreshSelectedLightFields()
+{
+	Sky* const sky = get_selected_sky();
+
+	if (!sky)
+	{
+		return;
+	}
+
+	QSignalBlocker const _1(pos_x_spin);
+	QSignalBlocker const _2(pos_y_spin);
+	QSignalBlocker const _3(pos_z_spin);
+	QSignalBlocker const _4(inner_radius_spin);
+	QSignalBlocker const _5(outer_radius_spin);
+
+	pos_x_spin->setValue(sky->pos.x);
+	pos_y_spin->setValue(sky->pos.z); // the panel's Y is Noggit's Z; see the spin box handlers
+	pos_z_spin->setValue(sky->pos.y);
+	inner_radius_spin->setValue(sky->r1);
+	outer_radius_spin->setValue(sky->r2);
+}
+
+void LightEditor::reportSaveRefusal(std::string const& reason)
+{
+	_save_state_label->setProperty("state", "error");
+
+	// The property is changed after the widget has been polished, so the style has to be told; a
+	// bare setProperty leaves the label looking exactly as it did before. QLabel[state="error"] and
+	// [state="ok"] are both already in the theme -- this adds no styling of its own.
+	_save_state_label->style()->unpolish(_save_state_label);
+	_save_state_label->style()->polish(_save_state_label);
+
+	_save_state_label->setText("Nothing was written.\n" + QString::fromStdString(reason));
+	_save_state_label->show();
+
+	QMessageBox::warning(this, "Light not saved"
+		, "Nothing was written to any DBC.\n\n" + QString::fromStdString(reason)
+		, QMessageBox::Ok);
+}
+
+bool LightEditor::snapshotForLight(int light_id, Noggit::LightSnapshot& out)
+{
+	auto& skies = _map_view->getWorld()->renderer()->skies();
+
+	// A light of the LOADED map is captured from Skies, not from the DBC, because Skies is where
+	// the user's unsaved position, radius and parameter changes live. For every other map -- which
+	// is the whole point of the browser -- only the DBC row exists.
+	if (skies)
+	{
+		Sky const* const sky = skies->findSkyById(light_id);
+
+		if (sky && skies->snapshotLight
+			(light_id, lightDisplayName(light_id, sky->global, sky->zone_light), out))
+		{
+			return true;
+		}
+	}
+
+	if (!Noggit::lightSnapshotFromDbc(light_id, out))
+	{
+		QMessageBox::warning(this, "Light browser"
+			, QString("Light.dbc has no readable row %1.").arg(light_id), QMessageBox::Ok);
+		return false;
+	}
+
+	out.name = lightDisplayName(light_id, out.pos == glm::vec3(0.f, 0.f, 0.f));
+
+	return true;
+}
+
+bool LightEditor::copyLightFromDbc(int light_id)
+{
+	Noggit::LightSnapshot snapshot;
+
+	if (!snapshotForLight(light_id, snapshot))
+	{
+		return false;
+	}
+
+	Noggit::setLightClipboard(snapshot);
+
+	return true;
+}
+
+void LightEditor::pasteLightFromClipboard(bool deep_copy_params)
+{
+	if (!Noggit::lightClipboard().valid)
+	{
+		QMessageBox::information(this, "Paste light", "The light clipboard is empty."
+			, QMessageBox::Ok);
+		return;
+	}
+
+	// A copy, not a reference: pasteLightSnapshot rewrites the position, and the clipboard is a
+	// singleton that the next paste has to find unchanged.
+	pasteLightSnapshot(Noggit::lightClipboard(), deep_copy_params);
+}
+
+void LightEditor::pasteLightSnapshot(Noggit::LightSnapshot snapshot, bool deep_copy_params)
+{
+	Noggit::LightSnapshot const& clipboard = snapshot;
+
+	auto& skies = _map_view->getWorld()->renderer()->skies();
+
+	if (!skies)
+	{
+		return;
+	}
+
+	Noggit::LightSnapshot placed = clipboard;
+
+	// Dropped at the camera rather than at the source coordinates. A light pasted from another
+	// continent at its original position would land somewhere the user is not -- often outside
+	// this map's grid entirely -- and the first thing they would have to do is go and find it.
+	//
+	// A global light is the exception, because its position IS 0,0,0 by definition; moving it to
+	// the camera would turn it into an ordinary light with a zero radius, which lights nothing.
+	if (!(clipboard.pos.x == 0.0f && clipboard.pos.y == 0.0f && clipboard.pos.z == 0.0f))
+	{
+		placed.pos = _map_view->getCamera()->position;
+	}
+
+	std::string error;
+
+	Sky* const pasted = skies->pasteLight(placed, deep_copy_params, error);
+
+	if (!pasted)
+	{
+		QMessageBox::warning(this, "Paste light"
+			, "Nothing was pasted.\n\n" + QString::fromStdString(error), QMessageBox::Ok);
+		return;
+	}
+
+	// Named after its source so the new row is recognisable before anyone renames it. The name
+	// table is this editor's own CSV, not a DBC, so this costs nothing on disk and is lost on
+	// restart -- which is honest, because the name was never saved anywhere.
+	std::string const source_name = clipboard.name.empty()
+		? lightDisplayName(clipboard.light_id, false)
+		: clipboard.name;
+
+	lightNameDefinitions()[pasted->getId()] = "Copy of " + source_name;
+
+	rebuildLightList();
+	loadSelectSky(pasted);
+	selectLightListRow(pasted->getId());
+	updateLightning();
+
+	_save_state_label->setProperty("state", "warn");
+	_save_state_label->style()->unpolish(_save_state_label);
+	_save_state_label->style()->polish(_save_state_label);
+	_save_state_label->setText
+		(QString("Light %1 was created from light %2 of map %3, and exists only in memory. "
+						 "Press Save Light to write it.")
+			.arg(pasted->getId()).arg(clipboard.light_id).arg(clipboard.map_id));
+	_save_state_label->show();
+}
+
 void LightEditor::UpdateToolTime()
 {
 	QSignalBlocker const blocker(_lightning_info_dialog->_time_dial);
@@ -938,6 +1606,22 @@ void LightEditor::UpdateToolTime()
 
 void LightEditor::updateActiveLights()
 {
+	// The list on the tab above was built from Light.dbc, because this panel is constructed at the
+	// end of MapView's constructor and Skies is not created until the first initializeGL. This is
+	// the first callback that runs with Skies guaranteed to exist -- LightTool::onSelected calls it
+	// -- so it is where the list is rebuilt from the real model. Once per map load, not per frame.
+	if (!_light_list_from_skies && _map_view->getWorld()->renderer()->skies())
+	{
+		rebuildLightList();
+	}
+
+	// Cheap enough to re-answer every call: it is one bool read, and the alternative is a flag that
+	// goes stale the moment the map gains a global light.
+	if (auto& skies = _map_view->getWorld()->renderer()->skies())
+	{
+		_make_global_light_button->setEnabled(skies->using_fallback_global);
+	}
+
 	_active_lights_tree->clear();
 	
 	Sky* global_sky = nullptr;
@@ -964,7 +1648,7 @@ void LightEditor::updateActiveLights()
 			unsigned int light_id = sky.getId();
 			item->setData(Qt::UserRole + 1, QVariant(light_id));
 
-			std::string const light_name = getLightName(light_id, false, sky.zone_light);
+			std::string const light_name = lightDisplayName(light_id, false, sky.zone_light);
 			// std::string const sky_percent = std::to_string(sky.weight * 100.0f) + "% :";
 
 			ss << "[" << std::fixed << std::setprecision(1) << (sky.weight * 100.0f);
@@ -983,7 +1667,7 @@ void LightEditor::updateActiveLights()
 		unsigned int light_id = global_sky->getId();
 		item->setData(Qt::UserRole + 1, QVariant(light_id));
 
-		std::string const light_name = getLightName(light_id, true);
+		std::string const light_name = lightDisplayName(light_id, true);
 
 		ss << "[Global] " << light_id << "-" << light_name;
 		item->setText(QString(ss.str().c_str()));
@@ -1000,7 +1684,7 @@ void Noggit::Ui::Tools::LightEditor::updateLightningInfo()
 
 	Sky* const highest_weight_sky = _map_view->getWorld()->renderer()->skies()->findClosestSkyByWeight();
 
-	std::string light_name = getLightName(highest_weight_sky->Id, highest_weight_sky->global, highest_weight_sky->zone_light);
+	std::string light_name = lightDisplayName(highest_weight_sky->Id, highest_weight_sky->global, highest_weight_sky->zone_light);
 	std::stringstream ss;
 	ss << highest_weight_sky->Id << "-" << light_name;
 	_lightning_info_dialog->_highest_weight_sky_label->setText(QString::fromStdString(ss.str().c_str()));
@@ -1078,24 +1762,15 @@ void LightEditor::updateLightning()
 
 }
 
-std::string LightEditor::getLightName(int light_id, bool global, bool light_zone)
+LightEditor::~LightEditor()
 {
-	std::string light_name = "Unnamed Light";
-	if (light_names_map.contains(light_id))
+	// MapView keeps a raw back-pointer to this panel so a viewport pick can reach it. MapView owns
+	// the tools, LightTool owns this widget, so MapView is still alive here -- but it must not be
+	// left holding a pointer to a destroyed panel if the tool is ever torn down first.
+	if (_map_view)
 	{
-		auto new_name = light_name = light_names_map.at(light_id);
-		if (!new_name.empty())
-		{
-			// can try to get from area in the future
-			light_name = new_name;
-		}
+		_map_view->setLightEditor(nullptr);
 	}
-	else if (global)
-		light_name = "Global Light";
-	else if (light_zone)
-		light_name = "Unnamed Zone Light";
-
-	return light_name;
 }
 
 void LightEditor::UpdateWorldTime()
@@ -1167,7 +1842,11 @@ void LightEditor::load_light_param(int param_id)
 	
 	glow_slider->setSliderPosition(sky_param->glow() * 100);
 	glow_slider->setEnabled(true);
-	highlight_sky_checkbox->setCheckState(Qt::CheckState(sky_param->highlight_sky()));
+	// Qt::CheckState(bool) is not Qt::Checked. The enum is Unchecked = 0, PartiallyChecked = 1,
+	// Checked = 2 -- so a highlighted sky was shown as a tri-state "partially checked" box, never
+	// as a tick, on every light that had the flag set.
+	highlight_sky_checkbox->setCheckState
+		(sky_param->highlight_sky() ? Qt::Checked : Qt::Unchecked);
 	highlight_sky_checkbox->setEnabled(true);
 		// alpha values
 	shallow_water_alpha_slider->setSliderPosition(sky_param->river_shallow_alpha() * 100);
@@ -1200,7 +1879,7 @@ void LightEditor::load_light_param(int param_id)
 	  skybox_flag_1->setChecked(true);
 
 	if (sky_param->skyboxFlags & (1 << 1))
-	  skybox_flag_1->setChecked(true);
+	  skybox_flag_2->setChecked(true); // was skybox_flag_1, so bit 1 was invisible and bit 0 lied
 
 	skybox_flag_1->setEnabled(true);
 	skybox_flag_2->setEnabled(true);

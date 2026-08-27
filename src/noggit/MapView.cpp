@@ -55,6 +55,7 @@
 #include <noggit/ui/MinimapCreator.hpp>
 #include <noggit/project/CurrentProject.hpp>
 #include <opengl/scoped.hpp>
+#include <noggit/ui/tools/LightEditor/LightEditor.hpp>
 #include <noggit/ui/tools/ViewToolbar/Ui/ViewToolbar.hpp>
 #include <noggit/ui/tools/AssetBrowser/Ui/AssetBrowser.hpp>
 #include <noggit/ui/tools/PresetEditor/Ui/PresetEditor.hpp>
@@ -1646,10 +1647,16 @@ bool MapView::gizmoIsDrawn() const
     return false;
   }
 
-  // The two branches of the gizmo block in paintGL, in the same order and on the same conditions.
-  // spawnGizmoTarget() already yields to objectGizmoHasTarget(), so this is not "either could
-  // draw" -- it is "one of them does".
-  return objectGizmoHasTarget() || spawnGizmoTarget().valid();
+  // The three branches of the gizmo block in paintGL, in the same order and on the same
+  // conditions. Each one already yields to the ones above it -- spawnGizmoTarget() returns nothing
+  // while the object gizmo has a target, lightGizmoTarget() returns 0 while either of the other
+  // two does -- so this is not "any of them could draw", it is "exactly one of them does".
+  //
+  // The light term matters as much as the others: without it, every "the gizmo gets this click"
+  // guard would let a click on a light's translate arrow fall through to the light pick underneath
+  // it, which re-picks whatever sphere is behind the handle and moves a different light than the
+  // one that was grabbed.
+  return objectGizmoHasTarget() || spawnGizmoTarget().valid() || lightGizmoTarget() != 0;
 }
 
 Noggit::Database::SpawnRef MapView::spawnGizmoTarget() const
@@ -1750,6 +1757,324 @@ void MapView::handleSpawnGizmo(Noggit::Database::SpawnRef const& spawn)
     // of a drag churns the selection. It happens once, on release, in mouseReleaseEvent.
     _needs_redraw = true;
   }
+}
+
+void MapView::setLightEditor(Noggit::Ui::Tools::LightEditor* editor)
+{
+  _light_editor = editor;
+}
+
+int MapView::pickLight() const
+{
+  auto& skies = _world->renderer()->skies();
+
+  if (!skies)
+  {
+    return 0;
+  }
+
+  math::ray const ray (intersect_ray());
+
+  // math::ray keeps its origin and direction private and exposes no accessor, so both are
+  // recovered from the one thing it does offer. position(t) is defined as origin + direction * t,
+  // which makes position(0) the origin exactly and position(1) - position(0) the direction
+  // exactly. Recovered rather than rebuilt from _camera.position, because intersect_ray is also
+  // what the 2D display mode uses and there the ray does not start at the camera at all.
+  glm::vec3 const origin (ray.position(0.0f));
+  glm::vec3 const raw_direction (ray.position(1.0f) - origin);
+  float const direction_length (glm::length(raw_direction));
+
+  if (direction_length < 1e-6f)
+  {
+    return 0;
+  }
+
+  glm::vec3 const direction (raw_direction / direction_length);
+
+  // math::ray::intersects_sphere is deliberately not used here, for two independent reasons.
+  // It assumes a unit direction -- intersect_ray builds `far_plane_point - camera`, a vector as
+  // long as the view distance -- and it returns NO HIT whenever the origin is inside the sphere
+  // (math/ray.cpp: `if (p_d > 0 || dot(p, p) < rSquared) return {..., false};`). Outer light radii
+  // in 3.3.5 run past 3000 yards and the camera is inside several of them at once, so that early
+  // return alone would make most lights unclickable.
+
+  // A clickable handle around the light's centre, sized to a constant number of PIXELS.
+  //
+  // A sphere of radius R at distance d has a screen diameter of
+  // (2R / d) / (2 * tan(fov / 2)) * viewport_height pixels. Solving for R at a target diameter
+  // gives R = d * tan(fov / 2) * target / height. With this project's default 54 degree vertical
+  // FOV (Camera.cpp) and a 1080 pixel viewport that is R = d * tan(27 deg) * 18 / 1080
+  // = d * 0.008492, i.e. 8.5 yards at a kilometre -- and 18 pixels on screen wherever the light
+  // sits. Without it a light with a 40 yard outer radius is a sub-pixel target from any distance.
+  float constexpr HANDLE_DIAMETER_PIXELS = 18.0f;
+  float constexpr MIN_HANDLE_RADIUS = 2.0f;
+
+  float handle_scale = 0.0f;
+
+  if (_display_mode == display_mode::in_3D)
+  {
+    handle_scale = std::tan(_camera.fov()._ * 0.5f) * HANDLE_DIAMETER_PIXELS
+                 / std::max(1.0f, static_cast<float>(height()));
+  }
+
+  struct Candidate
+  {
+    float radius;
+    float centre_distance;
+    int id;
+  };
+
+  std::vector<Candidate> candidates;
+
+  for (Sky const& sky : skies->skies)
+  {
+    // The global light is defined by sitting at 0,0,0 and WorldRender draws no sphere for it
+    // (rendering/WorldRender.cpp skips sky.global in both sphere passes), so there is nothing on
+    // screen to have clicked.
+    if (sky.global)
+    {
+      continue;
+    }
+
+    glm::vec3 const to_centre (sky.pos - origin);
+    float const centre_distance (glm::length(to_centre));
+    float const handle_radius (std::max(MIN_HANDLE_RADIUS, centre_distance * handle_scale));
+    float const pick_radius (std::max(sky.r2, handle_radius));
+    float const pick_radius_squared (pick_radius * pick_radius);
+
+    // Ray/sphere by closest approach.
+    float const along (glm::dot(to_centre, direction));
+    float const perpendicular_squared (glm::dot(to_centre, to_centre) - along * along);
+
+    if (perpendicular_squared > pick_radius_squared)
+    {
+      continue;
+    }
+
+    float const half_chord (std::sqrt(std::max(0.0f, pick_radius_squared - perpendicular_squared)));
+
+    // The FAR intersection, not the near one. `along + half_chord >= 0` accepts a sphere the
+    // camera is standing inside, which for a light is the ordinary case rather than the exception.
+    if (along + half_chord < 0.0f)
+    {
+      continue;
+    }
+
+    candidates.push_back({sky.r2, centre_distance, sky.getId()});
+  }
+
+  if (candidates.empty())
+  {
+    return 0;
+  }
+
+  // THE OVERLAP RULE: smallest outer radius first, then nearest centre, then lowest id -- and a
+  // repeat click on the same spot steps to the next candidate, wrapping.
+  //
+  // Smallest-first because that is the engine's own precedence, not a guess. Sky::operator< sorts
+  // the light vector by ascending r2 with the global last, with the comment "smaller skies will
+  // have precedence", and Skies::findSkyWeights gives a light weight 1.0 anywhere inside its inner
+  // radius. So of two nested lights the smaller one is the one actually colouring the sky at the
+  // point clicked, and selecting it is what "I clicked that light" means. Nearest-surface would
+  // instead select whichever enormous zone light happened to have its shell closer to the eye.
+  //
+  // The cycle is what keeps the enclosing lights reachable at all: click once for the light that
+  // governs the spot, click again without moving the cursor to walk outward through the ones
+  // containing it, and wrap round. Moving the cursor changes the candidate set, the current
+  // selection is then usually not in it, and the rule resets to "smallest".
+  std::sort(candidates.begin(), candidates.end()
+    , [] (Candidate const& a, Candidate const& b)
+      {
+        if (a.radius != b.radius)
+        {
+          return a.radius < b.radius;
+        }
+
+        if (a.centre_distance != b.centre_distance)
+        {
+          return a.centre_distance < b.centre_distance;
+        }
+
+        return a.id < b.id;
+      });
+
+  int const currently_selected (skies->selectedLight());
+
+  for (std::size_t i = 0; i < candidates.size(); ++i)
+  {
+    if (candidates[i].id == currently_selected)
+    {
+      return candidates[(i + 1) % candidates.size()].id;
+    }
+  }
+
+  return candidates.front().id;
+}
+
+void MapView::selectLight(int light_id)
+{
+  auto& skies = _world->renderer()->skies();
+
+  if (!skies)
+  {
+    return;
+  }
+
+  skies->setSelectedLight(light_id);
+
+  if (_light_editor)
+  {
+    _light_editor->onLightSelectedInViewport(light_id);
+  }
+
+  _needs_redraw = true;
+}
+
+bool MapView::scaleSelectedLightRadii(float factor)
+{
+  auto& skies = _world->renderer()->skies();
+
+  if (!skies || !std::isfinite(factor) || factor <= 0.0f)
+  {
+    return false;
+  }
+
+  Sky* const sky = skies->findSkyById(skies->selectedLight());
+
+  if (!sky || sky->global)
+  {
+    return false;
+  }
+
+  // Clamped to the same 0..100000 range the panel's radius spin boxes accept, so a long scroll
+  // cannot leave the light holding a number the panel would silently refuse to show.
+  float constexpr MAX_LIGHT_RADIUS = 100000.0f;
+
+  sky->r1 = std::min(MAX_LIGHT_RADIUS, std::max(0.0f, sky->r1 * factor));
+  sky->r2 = std::min(MAX_LIGHT_RADIUS, std::max(0.0f, sky->r2 * factor));
+
+  // Weights are cached until something invalidates them, so without this the sphere changes size
+  // and the sky colour keeps blending as though it had not.
+  skies->force_update();
+
+  if (_light_editor)
+  {
+    _light_editor->refreshSelectedLightFields();
+  }
+
+  _needs_redraw = true;
+
+  return true;
+}
+
+int MapView::lightGizmoTarget() const
+{
+  // Light mode only. Otherwise the gizmo would sit over the terrain brushes in every other mode,
+  // claiming clicks for a light the user is not editing.
+  if (terrainMode != editing_mode::light)
+  {
+    return 0;
+  }
+
+  auto& skies = _world->renderer()->skies();
+
+  if (!skies)
+  {
+    return 0;
+  }
+
+  // Same precedence chain spawnGizmoTarget joined, one step further down: object editor first,
+  // then database spawn, then light. All three share one ImGuizmo context and IsUsing() ignores
+  // the gizmo id, so two drawn in a frame would both respond to the same drag.
+  //
+  // Not has_selection() for the reason spawnGizmoTarget spells out: draw_map auto-selects the
+  // chunk under the cursor on every frame the selection is empty, so has_selection() is
+  // permanently true after one mouse movement over terrain.
+  if (objectGizmoHasTarget() || spawnGizmoTarget().valid())
+  {
+    return 0;
+  }
+
+  int const selected (skies->selectedLight());
+
+  if (!selected)
+  {
+    return 0;
+  }
+
+  // Re-resolved rather than trusted: setSelectedLight accepts any id, a map load rebuilds Skies
+  // from scratch, and deleteSky can remove the row underneath it. findSkyById is also the exact
+  // question handleLightGizmo is about to ask for the position.
+  Sky const* const sky = skies->findSkyById(selected);
+
+  // A global light is global because it sits at 0,0,0. Dragging one would stop it being global.
+  return (sky && !sky->global) ? selected : 0;
+}
+
+void MapView::handleLightGizmo(int light_id)
+{
+  auto& skies = _world->renderer()->skies();
+
+  if (!skies)
+  {
+    return;
+  }
+
+  Sky* const sky = skies->findSkyById(light_id);
+
+  if (!sky)
+  {
+    return;
+  }
+
+  glm::vec3 const position (sky->pos);
+
+  // TRANSLATE regardless of what the shared toolbar is set to, restored immediately afterwards.
+  //
+  // A light is a point with two radii and no orientation of any kind, so a rotate ring would turn
+  // and change nothing: handleDetachedGizmo would hand back a yaw delta with nowhere to put it.
+  // It already substitutes TRANSLATE for SCALE and BOUNDS for exactly this reason, and ROTATE is
+  // the one case it cannot substitute on its own, because a database spawn genuinely does have a
+  // facing. Radii are edited in the panel and with ctrl+wheel -- see scaleSelectedLightRadii.
+  _transform_gizmo.setCurrentGizmoOperation(ImGuizmo::TRANSLATE);
+  _transform_gizmo.setCurrentGizmoMode(ImGuizmo::MODE::WORLD);
+
+  auto const delta (_transform_gizmo.handleDetachedGizmo(position, _model_view, _projection));
+
+  // Put back, because the object and spawn paths read the operation and mode off the shared gizmo
+  // object rather than setting them unconditionally every frame.
+  _transform_gizmo.setCurrentGizmoOperation(_gizmo_operation);
+  _transform_gizmo.setCurrentGizmoMode(_gizmo_mode);
+
+  if (!delta.active)
+  {
+    return;
+  }
+
+  _light_gizmo_dragging = true;
+
+  if (delta.translation.x == 0.0f && delta.translation.y == 0.0f && delta.translation.z == 0.0f)
+  {
+    return;
+  }
+
+  // Added to the position read back this frame rather than to a running total kept here, so
+  // nothing accumulates rounding across a drag. Same rule as handleSpawnGizmo.
+  sky->pos = position + delta.translation;
+
+  // 0,0,0 is how a map's single global light is spelled -- Sky's constructor derives `global` from
+  // exactly that comparison. Dragging a light onto the origin would silently promote it and demote
+  // the real global light in the same frame, so the origin is stepped over rather than accepted.
+  if (sky->pos.x == 0.0f && sky->pos.y == 0.0f && sky->pos.z == 0.0f)
+  {
+    sky->pos.x = 0.01f;
+  }
+
+  // Weights are cached until invalidated; without this the light moves and the sky colour does not
+  // follow until the camera happens to move too.
+  skies->force_update();
+
+  _needs_redraw = true;
 }
 
 std::map<std::string, std::size_t> MapView::terrainTexturesInScope(bool all_loaded_tiles) const
@@ -4700,11 +5025,14 @@ void MapView::paintGL()
   // handleTransformGizmo would have drawn on -- objectGizmoHasTarget() is that function's own
   // early-return condition, not a second opinion about it.
   Noggit::Database::SpawnRef const gizmo_spawn (spawnGizmoTarget());
+  int const gizmo_light (lightGizmoTarget());
 
   bool const object_gizmo_frame = _gizmo_on.get() && objectGizmoHasTarget();
   bool const spawn_gizmo_frame = _gizmo_on.get() && !object_gizmo_frame && gizmo_spawn.valid();
+  bool const light_gizmo_frame
+    = _gizmo_on.get() && !object_gizmo_frame && !spawn_gizmo_frame && gizmo_light != 0;
 
-  if (object_gizmo_frame || spawn_gizmo_frame)
+  if (object_gizmo_frame || spawn_gizmo_frame || light_gizmo_frame)
   {
     ImGui::SetCurrentContext(_imgui_context);
     QtImGui::newFrame();
@@ -4737,9 +5065,17 @@ void MapView::paintGL()
     // them run on a spawn-only frame would put a second gizmo in it.
     activeTool()->renderImGui(_gizmo_mode, _gizmo_operation);
     }
-    else
+    else if (spawn_gizmo_frame)
     {
       handleSpawnGizmo(gizmo_spawn);
+    }
+    else
+    {
+      // A light is not in _world->current_selection() either -- it is not a SceneObject and Sky
+      // is not in selection_type at all -- so it needs its own branch for exactly the reason the
+      // spawn branch above needs one: under the original condition no ImGui frame was begun on a
+      // light-only frame, and anything drawn would have gone nowhere.
+      handleLightGizmo(gizmo_light);
     }
 
     ImGui::End();
@@ -5984,6 +6320,26 @@ void MapView::mousePressEvent(QMouseEvent* event)
   bool const gizmo_has_the_click
     (gizmoIsDrawn() && (_transform_gizmo.isUsing() || _transform_gizmo.isOver()));
 
+  // Clicking a light sphere selects it, ahead of the active tool, in light mode only.
+  //
+  // A plain left click and not the spawn overlay's shift-click: LightTool overrides no mouse hook
+  // at all, so in this mode the left button is otherwise unused, and demanding a modifier to
+  // select the only thing the mode edits would be gratuitous. Shift is deliberately excluded here
+  // so the database spawn pick below keeps it, and ctrl and alt are excluded because they are
+  // already the camera and drag-select modifiers -- three modes cannot share one button unless
+  // each says which modifier state it wants.
+  if (event->button() == Qt::LeftButton && terrainMode == editing_mode::light
+   && !_mod_shift_down && !_mod_ctrl_down && !_mod_alt_down && !gizmo_has_the_click)
+  {
+    int const picked (pickLight());
+
+    if (picked)
+    {
+      selectLight(picked);
+      return;
+    }
+  }
+
   if (event->button() == Qt::LeftButton && _mod_shift_down && _db_spawn_scene
    && _db_spawn_panel && _draw_db_spawns.get() && !gizmo_has_the_click)
   {
@@ -6098,6 +6454,24 @@ void MapView::wheelEvent (QWheelEvent* event)
       }
     );
 
+  // Ctrl + wheel resizes the selected light, both radii together.
+  //
+  // Ahead of the active tool and returning, because in light mode there is no competing consumer:
+  // LightTool overrides no wheel hook, and the only other reader of the wheel here is the
+  // delta_for_range lambda above, which nothing calls. One notch is 120 units of angleDelta, so
+  // this is 5% per notch -- a light goes from 200 to 400 yards in about fifteen notches, which is
+  // roughly a second of scrolling.
+  if (terrainMode == editing_mode::light && _mod_ctrl_down && !_mod_shift_down && !_mod_alt_down)
+  {
+    float const notches (static_cast<float>(event->angleDelta().y()) / 120.0f);
+
+    if (notches != 0.0f && scaleSelectedLightRadii(std::pow(1.05f, notches)))
+    {
+      event->accept();
+      return;
+    }
+  }
+
   Noggit::MouseWheelParameters params
   {
       .event = *event,
@@ -6135,6 +6509,21 @@ void MapView::mouseReleaseEvent (QMouseEvent* event)
     if (_db_spawn_panel)
     {
       _db_spawn_panel->refresh();
+    }
+
+    _needs_redraw = true;
+  }
+
+  // End of a light gizmo drag, for the same reason and with the same timing: writing the new
+  // position back into the panel's three spin boxes on every frame of a drag would fight the user
+  // for the caret and re-enter their valueChanged handlers sixty times a second.
+  if (event->button() == Qt::LeftButton && _light_gizmo_dragging)
+  {
+    _light_gizmo_dragging = false;
+
+    if (_light_editor)
+    {
+      _light_editor->refreshSelectedLightFields();
     }
 
     _needs_redraw = true;

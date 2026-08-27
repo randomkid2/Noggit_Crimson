@@ -28,6 +28,11 @@ namespace Noggit::Ui::Widget
         QLabel* _map_name = nullptr;
         QLabel* _map_id = nullptr;
         QLabel* _map_instance_type = nullptr;
+        // The chevron at the trailing edge. Painted rather than taken from the icon set: the
+        // set ships chevrondown and chevronup and no chevronright at all, and caretright is a
+        // filled triangle, which says "expand me" where this has to say "there is more this
+        // way". See MapSelectionArt.
+        QLabel* _map_chevron = nullptr;
         // Only built when the map is pinned. It was left uninitialised before, and the
         // constructor now walks the label list to make them transparent to the mouse.
         QLabel* _map_pinned_label = nullptr;
@@ -45,12 +50,18 @@ namespace Noggit::Ui::Widget
         bool wmo_map() const;;
 
     protected:
-        // Re-arms the height floor when the theme or the font changes underneath the row, so a
-        // theme switch cannot leave the floor stale at the old font's metrics.
+        // Re-arms the height floor when the theme or the font changes underneath the row, and
+        // re-bakes the two painted marks when the row moves to a screen with a different device
+        // pixel ratio. A theme switch must not leave the floor stale at the old font's metrics,
+        // and a monitor change must not leave a 2x emblem on a 1x screen or the reverse.
         void changeEvent(QEvent* event) override;
 
     private:
         QString toCamelCase(const QString& s);
+
+        // Re-draws the emblem and the chevron at the widget's CURRENT device pixel ratio. Both
+        // are QPainter output baked into a pixmap, so neither can follow the ratio on its own.
+        void rebuildPaintedMarks();
 
         // The height the row's own content needs, before any allowance for the view's item
         // chrome. Used both for the height floor and as the base of the size hint.

@@ -19,14 +19,19 @@ class QPainter;
 //
 // WHY THIS IS PAINTED RATHER THAN SHIPPED AS PNGs, decided per asset and not once for all:
 //
-//   * THE BANNER TEXTURE is painted because its WIDTH IS NOT FIXED. It spans the central widget,
-//     and the window is resizable, so a bitmap would have to tile or stretch. A contour field is
-//     a set of continuous closed curves and does not tile; stretching it stretches the 1px line
-//     weight along with everything else and the lines stop being hairlines. A painted field is
-//     regenerated at the exact width. It is also correct at any device pixel ratio by
-//     construction -- this matters, because QIcon::pixmap takes a LOGICAL size and hands back a
-//     ratio-1 bitmap, which is the trap the 28px product mark fell into before it was fixed, and
-//     a PNG banner would need an @2x twin plus the loader logic to choose it.
+//   * THE BANNER GROUND IS NOW ARTWORK, and the procedural contour field that used to fill it
+//     is gone from bannerTexture. The reasoning that put a painter there was sound for a
+//     PROCEDURAL field -- it does not tile and stretching it destroys the hairline weight -- and
+//     it does not apply to a photographic one. banner_backdrop.jpg is 2880x480, and a banner is
+//     a wide short strip, so the picture is COVER-fitted rather than stretched: the aspect ratio
+//     is preserved, the overflow is cropped, and the result is stamped with the device pixel
+//     ratio so drawPixmap places it at logical coordinates without a second scale. At 1440
+//     logical pixels wide on a ratio-2 display the device size is exactly 2880x288, the cover
+//     scale is exactly 1.0, and no resampling happens at all.
+//
+//     What is still painted here is everything the artwork cannot decide: the band gradient
+//     underneath it (which is also the fallback when the decode fails), the veil that holds the
+//     artwork's embers below the text floors, the scrim under the wordmark, and the rule.
 //
 //   * THE COLOURS COME FROM THE THEME. Every colour below arrives as an argument; BrandBanner
 //     takes its set from qproperty- declarations in theme.qss. Baked into a PNG they could not
@@ -82,16 +87,48 @@ namespace Noggit::Ui::Widget::LauncherArt
 
   // ------------------------------------------------------------------------- pixmaps --
 
-  //! The full banner ground: the left-to-right darkening band, the seeded glows, the contour
-  //! field faded out towards the dark end, and the closing rule. `logical` is in logical pixels
-  //! and `ratio` is the device pixel ratio the result is stamped with, so the caller can draw it
-  //! at 1:1 with drawPixmap.
+  //! The full banner ground: the left-to-right darkening band, the cover-fitted backdrop
+  //! artwork, the veil that tames it, the scrim that holds the wordmark legible, and the closing
+  //! rule. `logical` is in logical pixels and `ratio` is the device pixel ratio the result is
+  //! stamped with, so the caller can draw it at 1:1 with drawPixmap.
+  //!
+  //! THE VEIL AND THE SCRIM ARE NOT DECORATION, they are what makes the artwork usable. The
+  //! backdrop is an ember field and it is not uniformly dark: sampled over the rows a cover crop
+  //! of a 144-logical band presents at the width the launcher opens at, it runs #000000 to
+  //! #FE777E -- relative luminance 0.00000 to 0.35771 -- and its brightest pixel anywhere is
+  //! #FF9F7A at 0.474614, which a narrow window's crop can bring into view. text.hi #F3F0E9 on
+  //! that measures 1.759:1 and brand.crimson 2.010:1, so RAW ARTWORK CARRIES NO TEXT AT ALL. Two
+  //! layers fix it, and both alphas below were SOLVED for rather than chosen:
+  //!
+  //!   * THE VEIL is the same band gradient painted back over the artwork at 58% alpha, over the
+  //!     whole band. It is a TAMING layer, not a guarantee: it exists so an ember cannot read as
+  //!     a light source beside dark chrome. At the widths these two windows actually open at,
+  //!     where the crop is vertical only, the brightest surviving pixel measures #744142 and
+  //!     text.hi on it is 7.159:1. Squeezed to 800 logical, where the crop turns horizontal and
+  //!     more of the picture comes into view, the worst case is #784D3C and text.hi is 6.307:1 --
+  //!     under the 7:1 prose floor and over the 4.5 body floor. That is accepted BECAUSE NO TEXT
+  //!     IS DRAWN THERE: past scrim_fade the band carries decoration and, on the map-selection
+  //!     window, one opaque button that supplies its own fill.
+  //!
+  //!   * THE SCRIM is `scrim_ink` at 86% alpha, held solid to `scrim_hold` and ramped to nothing
+  //!     by `scrim_fade` (both LOGICAL pixels from the left edge). This one IS the guarantee, and
+  //!     the binding constraint is not the light half of the wordmark but the crimson half:
+  //!     brand.crimson needs its background under L = 0.007996 to hold 4.5:1. Veil and scrim
+  //!     compose to 1 - 0.42 x 0.14 = 0.9412 -- and because the scrim is at full strength from
+  //!     x = 0 to scrim_hold at EVERY width, that composite is the same wherever the window is
+  //!     sized to. Against the brightest pixel the artwork contains at all, #FF9F7A, it lands on
+  //!     #19120F: text.hi 16.260:1, brand.crimson 4.600:1. Against the darkest it lands on
+  //!     #0C0908: text.hi 17.437:1, brand.crimson 4.932:1. Both floors hold unconditionally.
+  //!
+  //! Pass scrim_fade <= scrim_hold to omit the scrim entirely.
   QPixmap bannerTexture ( QSize const& logical
                         , qreal ratio
                         , QColor const& band_left
                         , QColor const& band_right
-                        , QColor const& ink
+                        , QColor const& scrim_ink
                         , QColor const& rule_ink
+                        , qreal scrim_hold
+                        , qreal scrim_fade
                         );
 
   //! A circular crop of `icon` with a 1px ring.

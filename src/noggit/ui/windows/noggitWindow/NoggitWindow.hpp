@@ -22,6 +22,7 @@ class QEvent;
 class QLabel;
 class QListWidget;
 class QObject;
+class QStackedLayout;
 
 namespace BlizzardArchive
 {
@@ -58,6 +59,11 @@ namespace Noggit::Ui
     class minimap_widget;
     class settings;
     class about;
+
+    namespace Widget
+    {
+      class BrandBanner;
+    }
 
     namespace Tools::MapCreationWizard::Ui
     {
@@ -172,6 +178,21 @@ namespace Noggit::Ui::Windows
       QListWidget* _continents_table;
       QString _filter_name;
       QTabWidget* _right_side;
+
+      //! The compact brand strip across the head of this window: the product mark, the two-line
+      //! wordmark on its veiled backdrop, the settings gear and the rule that closes it. The
+      //! same class the launcher's full band is, at its Compact scale.
+      //!
+      //! Held so the gear can be parented into it and so a later revision can reach the band
+      //! without walking the child list. It is the only crimson on this window, and it is scoped
+      //! by object name so the editor's docks cannot inherit any of it.
+      Noggit::Ui::Widget::BrandBanner* _header_banner = nullptr;
+
+      //! The right pane's preview panel, which holds two pages: the empty state and the minimap.
+      //! updateMapDetail() is the only thing that moves it, and it moves it from the same test
+      //! that decides the header strings, so the panel and the heading can never disagree about
+      //! whether a map is selected.
+      QStackedLayout* _map_preview_stack = nullptr;
 
       //! The head of the right-hand pane: which map is selected, and what it is.
       QLabel* _map_detail_title = nullptr;

@@ -12,6 +12,53 @@ chevron and window glyph in one pass; nothing is hand-drawn.
 
 Pure stdlib: an SDF rasteriser at 4x supersample, box-downsampled, written
 out as 8-bit RGBA PNG via zlib. No Pillow, no ImageMagick, no network.
+
+EVERY ICON IS EMITTED TWICE, as `name.png` and `name@2x.png`. The second is
+not decoration: a QSS `url()` pixmap has no devicePixelRatio of its own, so
+Qt loads the file at 1x and the style scales whatever it got up to the device
+rect. On the 2.0-ratio display this theme is drawn for, twelve of the
+thirty-four assets were being magnified rather than reduced -- measured as
+source pixels against the device pixels each one actually covers:
+
+    sizegrip.png              16x16 src -> 14px box -> 28x28 dev   3.06x short
+    handle_vertical.png        8x24 src ->  8px wide -> 16 wide    4.00x short
+    handle_horizontal.png     24x8  src ->  8px tall -> 16 tall    4.00x short
+    icon_close.png            20x20 src -> 20x20 nat -> 40x40 dev  4.00x short
+    icon_close_hover.png      20x20 src -> 20x20 nat -> 40x40 dev  4.00x short
+    icon_branch_closed.png    20x20 src -> 20x20 nat -> 40x40 dev  4.00x short
+    icon_branch_open.png      20x20 src -> 20x20 nat -> 40x40 dev  4.00x short
+    icon_undock.png           20x20 src -> 14px icon -> 28x28 dev  1.96x short
+    icon_window_close.png     20x20 src -> 12px icon -> 24x24 dev  1.44x short
+    icon_window_minimize.png  20x20 src -> 12px icon -> 24x24 dev  1.44x short
+    icon_restore.png          20x20 src -> 11px icon -> 22x22 dev  1.21x short
+    icon_window_maximize.png  20x20 src -> 11px icon -> 22x22 dev  1.21x short
+
+(`nat` = the sub-control takes its size from the image because the sheet
+declares no width/height for that rule; the figure is a pixel-COUNT ratio.)
+
+The other twenty-two were already at or above their device size -- the 32px
+check box and radio rasters land exactly 1:1 on a 16px indicator, and the
+16x10 chevrons exactly 1:1 on an 8x5 arrow -- so this pass does not move a
+single visible edge on those, it only removes the ceiling.
+
+WHY THE @2x FILENAME AND NOT A BIGGER BASE FILE. Both were checked against
+the Qt sources rather than assumed. `image: url(x.png)` reaches
+QCss::Declaration::iconValue (qcssparser.cpp), which builds a plain
+`QIcon(uri)`; QIcon::addFile (qicon.cpp) then calls qt_findAtNxFile and adds
+`x@2x.png` as a second entry whenever qApp->devicePixelRatio() > 1. The @Nx
+probe is a QFile::exists on the SAME string the base file resolved through,
+so a relative theme path needs no sheet change to find it. Enlarging the base
+file instead would have been wrong: ValueExtractor::extractImage reads the
+sub-control's natural size straight out of the base file with a QImageReader,
+so a 40px icon_close.png would have made the tab close button 40 logical px.
+Adding a sidecar leaves that reader looking at an unchanged 20x20 file.
+
+The whole mechanism is gated on Qt::AA_UseHighDpiPixmaps -- qicon.cpp's
+qt_effective_device_pixel_ratio returns a flat 1.0 without it, and then
+neither the @2x entry nor the device-sized request ever happens. It is set in
+ApplicationEntry.cpp. On a 1.0-ratio display qt_findAtNxFile returns early
+and only the base files are ever opened, so nothing here costs a 1x user
+anything but disk.
 """
 import math
 import os
@@ -19,7 +66,15 @@ import struct
 import sys
 import zlib
 
-SS = 4  # supersample factor
+# Box-filter taps per output pixel, per axis. This is quality, not size.
+SUPERSAMPLE = 4
+
+# The logical-unit-to-raster scale, rebound once per output pass by build().
+# Every drawing helper multiplies its logical coordinates by SS and save()
+# divides by SUPERSAMPLE, so SS = SUPERSAMPLE * n emits an n-times-size PNG
+# from geometry that is not touched -- which is the point, because a hand-
+# written 2x variant would be a second drawing to keep in sync with the first.
+SS = SUPERSAMPLE
 
 # ---------------------------------------------------------------- palette ---
 # These are the tokens documented at the top of theme.qss, plus the three
@@ -179,7 +234,19 @@ def new(w, h):
 
 
 def save(c, name, outdir):
-    c.downsample(SS).to_png(os.path.join(outdir, name))
+    """Downsample and write, decorating the name on any pass above 1x.
+
+    The suffix has to go before the extension and nowhere else: qt_findAtNxFile
+    inserts "@2x" at the last dot of the base name, so `icon_close@2x.png` is
+    found and `icon_close.png@2x` is not.
+    """
+    scale = SS // SUPERSAMPLE
+
+    if scale > 1:
+        stem, ext = os.path.splitext(name)
+        name = '%s@%dx%s' % (stem, scale, ext)
+
+    c.downsample(SUPERSAMPLE).to_png(os.path.join(outdir, name))
     return name
 
 
@@ -218,7 +285,14 @@ def stroke_path(c, pts, colour, width):
 
 
 # ------------------------------------------------------------------ icons ---
-def build(outdir):
+def build(outdir, out_scale=1):
+    global SS
+
+    # Rebound rather than threaded through every helper because the helpers all
+    # read it as the one logical-to-raster factor, and a second parameter on
+    # each of them would be a second thing to forget at a call site.
+    SS = SUPERSAMPLE * out_scale
+
     os.makedirs(outdir, exist_ok=True)
     made = []
     SZ = 32           # checkbox / radio logical size (drawn at 2x of a 16px box)
@@ -399,7 +473,11 @@ def build(outdir):
 
 if __name__ == '__main__':
     out = sys.argv[1]
-    names = build(out)
+
+    # 1x first so the @2x pass cannot be the thing that defines the geometry:
+    # if the two ever disagree the base file is the one the sheet measures.
+    names = build(out, 1) + build(out, 2)
+
     print('wrote %d files to %s' % (len(names), out))
     for n in sorted(names):
         print('  ', n)

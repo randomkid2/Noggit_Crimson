@@ -453,7 +453,20 @@ def main(path, image_root, moc_root=None):
 
     img_dir = os.path.join(os.path.dirname(os.path.abspath(path)), 'images')
     on_disk = set(os.listdir(img_dir)) if os.path.isdir(img_dir) else set()
-    orphans = sorted(on_disk - referenced)
+
+    # A "name@2x.png" is reachable without ever being named in the sheet: Qt's
+    # qt_findAtNxFile (qicon.cpp) appends the suffix to whatever url() resolved
+    # to and loads the result as a second, higher-resolution entry on the same
+    # QIcon. So it is referenced exactly when its BASE file is, and treating it
+    # as an orphan would have reported all thirty-four of them as dead weight.
+    # The reverse case is still worth catching, which is why this maps back to
+    # the base name rather than just excusing anything with an @Nx in it: an
+    # @2x whose base nothing references is as dead as any other unused file.
+    def base_of(filename):
+        stem, ext = os.path.splitext(filename)
+        return re.sub(r'@\d+x$', '', stem) + ext
+
+    orphans = sorted(f for f in on_disk if base_of(f) not in referenced)
 
     print('=' * 74)
     print('QSS STATIC CHECK  --  %s' % path)

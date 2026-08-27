@@ -1,12 +1,15 @@
 #include <noggit/ui/FontAwesome.hpp>
 #include <noggit/ui/windows/noggitWindow/widgets/MapListItem.hpp>
+#include <noggit/ui/windows/noggitWindow/widgets/MapSelectionArt.hpp>
 
 #include <QColor>
 #include <QEvent>
 #include <QFont>
 #include <QGraphicsColorizeEffect>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
+#include <QPixmap>
 #include <QSizePolicy>
 #include <QVBoxLayout>
 
@@ -23,22 +26,45 @@ namespace Noggit::Ui::Widget
     // widget's layout pointer, so the row ended up with NO layout and every label was placed by
     // absolute setGeometry against the list view it was parented to rather than against the row.
     // Nothing reflowed and nothing scaled with the font.
-    constexpr int ICON_EXTENT = 32;
 
-    constexpr int ROW_MARGIN_LEFT = 10;
-    constexpr int ROW_MARGIN_TOP = 8;
-    constexpr int ROW_MARGIN_RIGHT = 12;
-    constexpr int ROW_MARGIN_BOTTOM = 8;
+    // THE ROW IS A CARD NOW, not a strip in a well. Everything below moved with that: the
+    // emblem is a baked disc rather than a square pixmap, the margins grew so the card has an
+    // inside, and a chevron closes the right edge. What did NOT move is the mechanism -- this is
+    // still a persistent editor installed with setItemWidget, and the height arithmetic further
+    // down is the same arithmetic it always was.
+    constexpr int ICON_EXTENT = 36;
 
-    constexpr int COLUMN_SPACING = 10;
+    // A card needs an inside. 14 all round against the old 8/10/12/8, which put the emblem four
+    // pixels from a border that did not exist yet; the same margin on every edge is what makes a
+    // rounded rectangle read as a container rather than as a row that happens to have an outline.
+    constexpr int ROW_MARGIN_LEFT = 14;
+    constexpr int ROW_MARGIN_TOP = 14;
+    constexpr int ROW_MARGIN_RIGHT = 14;
+    constexpr int ROW_MARGIN_BOTTOM = 14;
+
+    constexpr int COLUMN_SPACING = 12;
+
+    //! Inside the trailing group -- between the type badge and the chevron. SPACE_8 rather than
+    //! the root's SPACE_12, which is what makes the two read as one object at the card's right
+    //! edge instead of as two more columns.
+    constexpr int TRAILING_SPACING = 8;
+
+    //! The chevron at the right edge. 14 rather than 16 so it stays subordinate to the badge
+    //! beside it -- it is a direction, not a control.
+    constexpr int CHEVRON_EXTENT = 14;
+
+    //! The pin star, when a map is pinned. Same extent as the chevron so the two marks at the
+    //! two ends of the card carry the same weight.
+    constexpr int PIN_EXTENT = 14;
 
     // 3px, matching ProjectListItem, so the two windows separate a title from its metadata by
     // the same amount.
     constexpr int LINE_SPACING = 3;
 
     // BuildMapListComponent feeds minimumSizeHint() straight to QListWidgetItem::setSizeHint, so
-    // this is the list row height. The icon plus the vertical margins comes to 48; stating it as
-    // a floor keeps the row square even if a future font makes the text column shorter.
+    // this is the list row height. The emblem plus the vertical margins comes to
+    // 36 + 14 + 14 = 64; stating it as a floor keeps every card the same height even if a future
+    // font makes the text column shorter, which is what stops a list of cards looking ragged.
     constexpr int ROW_MIN_HEIGHT = ICON_EXTENT + ROW_MARGIN_TOP + ROW_MARGIN_BOTTOM;
 
     // WHY THE MAP NAMES LOST THEIR DESCENDERS.
@@ -84,6 +110,53 @@ namespace Noggit::Ui::Widget
     // bg.alt #1D1916 of an alternating row -- all far over the 3:1 floor for a graphical mark.
     constexpr QRgb ACCENT_GOLD = qRgb(0xDF, 0xA5, 0x2E);
 
+    // THE EMBLEM'S DISC AND RING AND THE CHEVRON'S INK, spelled out here for exactly the same
+    // reason the star's gold is: a QPainter is not reachable from a style sheet, so these three
+    // are hand-carried copies of theme tokens and have to be moved by hand when the theme moves.
+    //
+    //! bg.void #100E0B under the crest. The card's own fill is bg.panel #292621, so the disc is
+    //! a 1.279:1 step BELOW the card -- a well, not a plate. That is the right direction for
+    //! something a picture sits in, and it is the same step the sheet uses between every other
+    //! pair of adjacent surfaces.
+    constexpr QRgb EMBLEM_FILL = qRgb(0x10, 0x0E, 0x0B);
+
+    //! stroke.hi #746D64 for the ring. Measured against the two surfaces it separates: 3.775:1
+    //! on the bg.void disc and 2.952:1 on the bg.panel card. The first is the one that matters --
+    //! the ring's job is to close the disc, and it clears the 3:1 graphical floor against the
+    //! disc it closes. Against the card it is a seam between two surfaces that are already
+    //! 1.279:1 apart, and a seam carries no 3:1 duty. edge #8A8378 was the other candidate and
+    //! was rejected for the opposite reason: 5.138:1 on the disc makes the ring louder than the
+    //! crest it is meant to frame.
+    constexpr QRgb EMBLEM_RING = qRgb(0x74, 0x6D, 0x64);
+
+    //! text.off #7F786A for the chevron. It is the quietest mark on the card on purpose: it says
+    //! which way the card opens and must never compete with the map name. 3.443:1 on the
+    //! bg.panel card fill and 4.402:1 on the bg.void ground behind the list -- over the 3:1 floor
+    //! for a graphical object on both, and under the 4.5 body floor on the card, which is
+    //! correct: this is a mark, not text.
+    constexpr QRgb CHEVRON_INK = qRgb(0x7F, 0x78, 0x6A);
+
+    //! The expansion crest for one map, or a null icon for an expansion this build has no
+    //! artwork for. Lifted out of the constructor because rebuildPaintedMarks() needs the same
+    //! mapping when the window changes screen, and two copies of a nine-way switch is one copy
+    //! too many.
+    QIcon crestFor (int expansion_id)
+    {
+      switch (expansion_id)
+      {
+        case 0: return QIcon(":/icon-classic");
+        case 1: return QIcon(":/icon-burning");
+        case 2: return QIcon(":/icon-wrath");
+        case 3: return QIcon(":/icon-cata");
+        case 4: return QIcon(":/icon-panda");
+        case 5: return QIcon(":/icon-warlords");
+        case 6: return QIcon(":/icon-legion");
+        case 7: return QIcon(":/icon-battle");
+        case 8: return QIcon(":/icon-shadow");
+        default: return QIcon();
+      }
+    }
+
     // DEFAULTS, set through QFont rather than an inline style sheet -- a style sheet on the
     // widget itself outranks the application sheet, which is how the previous revision pinned
     // every row to 12px/10px no matter which theme was loaded. A theme's font-size still wins
@@ -114,44 +187,35 @@ namespace Noggit::Ui::Widget
     : QWidget(parent)
     , _map_data(data)
   {
-    // The hover plate and the transparent background that lets the view's own selection wash
-    // show through are both in the theme. A plain QWidget only paints a style sheet background
-    // when it is told to.
-    setObjectName ("project-list-item");
+    // The card's fill, border, radius, hover and selected states are all in the theme, under
+    // QWidget#map-card. This used to wear "project-list-item", which is the launcher's OLD strip
+    // rank -- a transparent row with a translucent hover and no edge at all -- and the launcher
+    // itself stopped using it when its rows became cards. A plain QWidget only paints a style
+    // sheet background when it is told to.
+    //
+    // THE CARD IS OPAQUE, so the view's own selection wash is invisible underneath it. That is
+    // why the sheet hands selection back to the card: QListWidget#map-list::item is transparent
+    // in every state and QWidget#map-card carries :hover and [state="selected"] itself. It is
+    // the same move the project cards on the launcher made, for the same reason.
+    setObjectName ("map-card");
     setAttribute (Qt::WA_StyledBackground, true);
 
     setContextMenuPolicy(Qt::CustomContextMenu);
 
-    QIcon icon;
-    switch (_map_data.expansion_id)
-    {
-      case 0: icon = QIcon(":/icon-classic"); break;
-      case 1: icon = QIcon(":/icon-burning"); break;
-      case 2: icon = QIcon(":/icon-wrath"); break;
-      case 3: icon = QIcon(":/icon-cata"); break;
-      case 4: icon = QIcon(":/icon-panda"); break;
-      case 5: icon = QIcon(":/icon-warlords"); break;
-      case 6: icon = QIcon(":/icon-legion"); break;
-      case 7: icon = QIcon(":/icon-battle"); break;
-      case 8: icon = QIcon(":/icon-shadow"); break;
-      default: break;
-    }
-
     _map_icon = new QLabel("", this);
-    _map_icon->setObjectName("project-icon-label");
-    _map_icon->setPixmap(icon.pixmap(QSize(ICON_EXTENT, ICON_EXTENT)));
+    _map_icon->setObjectName("map-card-emblem");
     _map_icon->setFixedSize(ICON_EXTENT, ICON_EXTENT);
 
     auto project_name = toCamelCase(QString(_map_data.map_name));
     _map_name = new QLabel(project_name, this);
-    _map_name->setObjectName("project-title-label");
+    _map_name->setObjectName("map-card-name");
     applyFont (_map_name, TITLE_PIXEL_SIZE, true);
     makeElastic (_map_name);
 
     // "530" on its own is a number with no noun. The row has the width for the word and the
     // detail header on the right-hand pane says the same thing the same way, so the two agree.
     _map_id = new QLabel(tr("Map %1").arg(_map_data.map_id), this);
-    _map_id->setObjectName("project-information");
+    _map_id->setObjectName("map-card-id");
     applyFont (_map_id, INFORMATION_PIXEL_SIZE, false);
     makeElastic (_map_id);
 
@@ -168,13 +232,25 @@ namespace Noggit::Ui::Widget
     }
 
     _map_instance_type = new QLabel(instance_type, this);
-    _map_instance_type->setObjectName("project-information");
+    _map_instance_type->setObjectName("map-card-badge");
     applyFont (_map_instance_type, INFORMATION_PIXEL_SIZE, false);
-    _map_instance_type->setAlignment(Qt::AlignRight | Qt::AlignTrailing | Qt::AlignVCenter);
+    // Centred, not trailing. The badge was a right-aligned caption filling whatever the meta
+    // row left over; it is a fixed-width chip now, and text pushed to one end of a pill looks
+    // like a layout fault.
+    _map_instance_type->setAlignment(Qt::AlignCenter);
 
     // The whole row is one hover surface and one context-menu target, so it also carries the
     // tooltip. Map id and instance type are the two facts the row cannot always show in full.
     setToolTip(tr("%1\nMap %2 -- %3").arg(project_name).arg(_map_data.map_id).arg(instance_type));
+
+    // The badge is a BADGE now -- a bordered chip, not a second caption -- so it leaves the meta
+    // row and joins the trailing group beside the chevron, which is where the mockup puts it.
+    // Its own sheet rule sizes the chip; this only stops the layout stretching it.
+    _map_instance_type->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+
+    _map_chevron = new QLabel("", this);
+    _map_chevron->setObjectName("map-card-chevron");
+    _map_chevron->setFixedSize(CHEVRON_EXTENT, CHEVRON_EXTENT);
 
     auto const title_row = new QHBoxLayout();
     title_row->setContentsMargins(0, 0, 0, 0);
@@ -185,8 +261,7 @@ namespace Noggit::Ui::Widget
     {
       _map_pinned_label = new QLabel("", this);
       _map_pinned_label->setObjectName("project-pinned");
-      _map_pinned_label->setPixmap(FontAwesomeIcon(FontAwesome::star).pixmap(QSize(14, 14)));
-      _map_pinned_label->setFixedSize(14, 14);
+      _map_pinned_label->setFixedSize(PIN_EXTENT, PIN_EXTENT);
       _map_pinned_label->setToolTip(tr("Pinned map"));
 
       // Font Awesome renders the glyph as a monochrome pixmap and the icon engine takes no
@@ -201,29 +276,47 @@ namespace Noggit::Ui::Widget
       title_row->addWidget(_map_pinned_label, 0, Qt::AlignRight | Qt::AlignVCenter);
     }
 
-    auto const meta_row = new QHBoxLayout();
-    meta_row->setContentsMargins(0, 0, 0, 0);
-    meta_row->setSpacing(6);
-    meta_row->addWidget(_map_id, 1);
-    meta_row->addWidget(_map_instance_type, 0, Qt::AlignRight | Qt::AlignVCenter);
+    // ALL THREE painted marks are baked here, in one call, after the last of them has been
+    // constructed -- the star only exists when the map is pinned. Each is drawn at the WIDGET's
+    // device pixel ratio rather than the primary screen's, and all three are re-baked together
+    // if that ratio changes underneath the card. See rebuildPaintedMarks() for the 4x pixel
+    // deficit this replaced.
+    rebuildPaintedMarks();
 
     auto const text_column = new QVBoxLayout();
     text_column->setContentsMargins(0, 0, 0, 0);
     text_column->setSpacing(LINE_SPACING);
     text_column->addStretch(1);
     text_column->addLayout(title_row);
-    text_column->addLayout(meta_row);
+    text_column->addWidget(_map_id);
     text_column->addStretch(1);
 
+    // FOUR COLUMNS, which is the mockup's card: the emblem, the two-line text block, the type
+    // badge and the chevron. The badge used to share a row with the map id INSIDE the text
+    // column, so a long map name and a long type name competed for one line and the badge's
+    // right edge moved from card to card. Out here it is a chip in a column of its own and every
+    // badge in the list lines up.
     auto const root = new QHBoxLayout(this);
     root->setContentsMargins(ROW_MARGIN_LEFT, ROW_MARGIN_TOP, ROW_MARGIN_RIGHT, ROW_MARGIN_BOTTOM);
     root->setSpacing(COLUMN_SPACING);
     root->addWidget(_map_icon, 0, Qt::AlignVCenter);
     root->addLayout(text_column, 1);
 
+    // The badge and the chevron are ONE group at SPACE_8, not two more columns at the root's
+    // SPACE_12. That is what the 22 in MAP_COLUMN_WIDTH's arithmetic counts: 14 for the chevron
+    // and 8 for the gap in front of it.
+    auto const trailing = new QHBoxLayout();
+    trailing->setContentsMargins(0, 0, 0, 0);
+    trailing->setSpacing(TRAILING_SPACING);
+    trailing->addWidget(_map_instance_type, 0, Qt::AlignVCenter);
+    trailing->addWidget(_map_chevron, 0, Qt::AlignVCenter);
+
+    root->addLayout(trailing, 0);
+
     // The labels are children of the row now, not of the list view, so without this they would
     // be the widget under the cursor and the row's custom context menu would never fire.
-    for (QLabel* label : {_map_icon, _map_name, _map_id, _map_instance_type, _map_pinned_label})
+    for (QLabel* label : {_map_icon, _map_name, _map_id, _map_instance_type, _map_chevron,
+                          _map_pinned_label})
     {
       if (label)
         label->setAttribute(Qt::WA_TransparentForMouseEvents, true);
@@ -257,6 +350,80 @@ namespace Noggit::Ui::Widget
       // holds on every unrelated style change is pure churn.
       if (minimumHeight() != floor)
         setMinimumHeight (floor);
+    }
+
+    // The two painted marks are baked at ONE device pixel ratio, so a window dragged to a screen
+    // with a different one would leave them at the old resolution -- soft on a denser screen,
+    // oversized in memory on a coarser one. ScreenChangeInternal is the event Qt delivers for
+    // exactly that, and rebuilding on it is what keeps the pair honest without redrawing them on
+    // every unrelated style change.
+    if (event->type() == QEvent::ScreenChangeInternal)
+      rebuildPaintedMarks();
+  }
+
+  void MapListItem::rebuildPaintedMarks()
+  {
+    // WHAT THE OLD CODE DID AND WHY IT WAS THE BLUR. The emblem used to be
+    // icon.pixmap(QSize(ICON_EXTENT, ICON_EXTENT)). QIcon::pixmap takes a LOGICAL size, and
+    // before Qt::AA_UseHighDpiPixmaps it handed back a ratio-1 bitmap -- so on this display,
+    // whose devicePixelRatio measures 2, a 32px request produced 32 device pixels stretched
+    // across 64 in each direction: a QUARTER of the pixels the slot could show. Asking for
+    // extent x ratio and stamping the ratio back on is the fix, and it is a fix that does not
+    // depend on that flag being set.
+    //
+    // The ratio comes from the WIDGET, not from the primary screen, so a window on a second
+    // monitor gets that monitor's answer.
+    qreal const ratio (devicePixelRatioF());
+
+    if (_map_icon)
+    {
+      _map_icon->setPixmap
+        ( MapSelectionArt::emblem ( crestFor (_map_data.expansion_id)
+                                  , ICON_EXTENT
+                                  , QColor (EMBLEM_FILL)
+                                  , QColor (EMBLEM_RING)
+                                  , ratio
+                                  )
+        );
+    }
+
+    if (_map_chevron)
+    {
+      _map_chevron->setPixmap
+        (MapSelectionArt::chevronGlyph (CHEVRON_EXTENT, QColor (CHEVRON_INK), ratio));
+    }
+
+    if (_map_pinned_label)
+    {
+      // ASK BIG, THEN STATE THE LOGICAL SIZE FROM WHAT CAME BACK.
+      //
+      // This used to request size * ratio and then setDevicePixelRatio(ratio), which was right
+      // when Qt::AA_UseHighDpiPixmaps was NOT set. It is set now (ApplicationEntry.cpp), and with
+      // it QIcon::pixmap(QSize) already multiplies the size it is given by the device ratio and
+      // stamps the ratio on the result -- so passing a device size AND re-stamping applied the
+      // ratio twice and the art came out proportionally oversized.
+      //
+      // Deriving the ratio from the returned pixmap instead is correct with the flag on or off,
+      // and correct whatever size the engine actually chose to hand back: logical width is
+      // width() / (width() / target) == target, exactly, by construction. The large request is
+      // kept deliberately -- it is what makes the engine rasterise at full device resolution
+      // rather than at the logical size, which is the whole point of the exercise.
+      //
+      // The comment that stood here claimed AA_UseHighDpiPixmaps "only reaches the QWindow
+      // overload and the style-drawn path". That is not so: the QSize overload forwards to
+      // pixmap(0, size), which applies the ratio like every other overload. The claim was the
+      // reason this site double-scaled, so it is corrected rather than deleted.
+      QPixmap star
+        ( FontAwesomeIcon (FontAwesome::star).pixmap
+            (QSize (qRound (PIN_EXTENT * ratio), qRound (PIN_EXTENT * ratio)))
+        );
+
+      if (!star.isNull() && star.width() > 0)
+      {
+        star.setDevicePixelRatio (qreal (star.width()) / qreal (PIN_EXTENT));
+      }
+
+      _map_pinned_label->setPixmap (star);
     }
   }
 

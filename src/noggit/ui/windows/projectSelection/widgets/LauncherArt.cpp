@@ -7,14 +7,15 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QIcon>
+#include <QImage>
 #include <QLine>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
 #include <QPoint>
-#include <QRadialGradient>
 #include <QRect>
+#include <QString>
 #include <QVector>
 
 #include <algorithm>
@@ -254,37 +255,43 @@ namespace Noggit::Ui::Widget::LauncherArt
                         , qreal ratio
                         , QColor const& band_left
                         , QColor const& band_right
-                        , QColor const& ink
+                        , QColor const& scrim_ink
                         , QColor const& rule_ink
+                        , qreal scrim_hold
+                        , qreal scrim_fade
                         )
   {
-    // The fixed seed. "NOGG" in ASCII, so the number is readable rather than magic.
-    constexpr std::uint32_t BANNER_SEED = 0x4E4F4747u;
+    //! The artwork behind the wordmark. 2880x480, registered in resources.qrc.
+    constexpr char const* BACKDROP = ":/banner-backdrop";
 
-    //! 4 logical pixels per marching-squares cell. At 1180 wide that is 295 columns and 36 rows,
-    //! i.e. 10,620 cells evaluated once and marched nine times. The pass is cached and only runs
-    //! again when the banner is resized or moves to a screen with a different pixel ratio.
-    constexpr int CONTOUR_STEP = 4;
+    //! THE VEIL, over the whole band. 0.5255 is the smallest alpha that puts text.hi #F3F0E9 at
+    //! 7:1 over the brightest pixel a 144-logical crop presents at the launcher's own width
+    //! (#FE777E, relative luminance 0.35771) when the veil colour is band.right, and 0.5608 when
+    //! it is band.left; the gradient uses both, and 0.58 clears the harder of the two.
+    //!
+    //! IT IS A TAMING LAYER AND NOT A GUARANTEE, which is worth stating plainly because the
+    //! obvious reading of the number above is that it guarantees 7:1 everywhere and it does not.
+    //! Squeezed to 800 logical the cover fit stops being width-driven, the crop turns
+    //! horizontal, more of the picture comes into view, and the worst surviving pixel measures
+    //! #784D3C -- text.hi 6.307:1. Under the prose floor, over the body floor, and accepted
+    //! because NO TEXT IS DRAWN PAST THE SCRIM: what sits out there is decoration and, on the
+    //! map-selection window, one opaque button that supplies its own fill. Every measurement in
+    //! this comment was taken by compositing this exact pipeline over the real asset, not by
+    //! hand.
+    constexpr qreal VEIL_ALPHA = 0.58;
 
-    //! The contour ink ramps from 4.5% to 9% alpha across the nine levels. At the top of that
-    //! range brand.crimson over band.left composites to #2A1616, 1.084:1 above the band; at the
-    //! bottom it is #201412, 1.036:1. Texture, and nowhere near a boundary anything could be
-    //! mistaken for -- the design system's own smallest deliberate surface step is 1.104:1.
-    constexpr qreal CONTOUR_ALPHA_LOW = 0.045;
-    constexpr qreal CONTOUR_ALPHA_HIGH = 0.09;
-
-    //! How much of the contour layer is masked away at the dark end. The band already darkens
-    //! left to right; fading the texture in the SAME direction is what stops the two gradients
-    //! reading as mud, and it is why the wordmark end of the banner is the busy end.
-    constexpr qreal CONTOUR_RIGHT_FADE = 0.72;
-
-    //! Six seeded radial glows, additive, peaking at 10% alpha. "Particles" in the mockup are
-    //! static here on purpose: a 60 Hz repaint on a launcher to animate decoration costs a core
-    //! for something nobody looks at twice.
-    constexpr int GLOW_COUNT = 6;
-    constexpr qreal GLOW_MIN_RADIUS = 40.0;
-    constexpr qreal GLOW_MAX_RADIUS = 120.0;
-    constexpr qreal GLOW_PEAK_ALPHA = 0.10;
+    //! THE SCRIM, under the wordmark only, and this one IS the guarantee. The binding constraint
+    //! is brand.crimson #E5405C, the colour of the second wordmark line: it needs its background
+    //! under relative luminance 0.007996 to hold 4.5:1, and the smallest single alpha that does
+    //! that is 0.9137. Composed with the veil this gives 1 - (1 - 0.58) x (1 - 0.86) = 0.9412 --
+    //! and because the scrim is at FULL strength from x = 0 to scrim_hold at every width, that
+    //! figure does not move when the window is resized.
+    //!
+    //! Against the brightest pixel the artwork contains anywhere, #FF9F7A at luminance 0.474614,
+    //! the pair land on #19120F: text.hi 16.260:1, brand.crimson 4.600:1. Against the darkest
+    //! they land on #0C0908: text.hi 17.437:1, brand.crimson 4.932:1. Both floors hold at every
+    //! width and every device pixel ratio.
+    constexpr qreal SCRIM_ALPHA = 0.86;
 
     //! The rule that closes the band, brightest under the mark and fading right.
     constexpr qreal RULE_HEIGHT = 2.0;
@@ -300,58 +307,81 @@ namespace Noggit::Ui::Widget::LauncherArt
 
     QPainter painter (&target);
     painter.setRenderHint (QPainter::Antialiasing, true);
+    painter.setRenderHint (QPainter::SmoothPixmapTransform, true);
 
+    // The band is drawn FIRST and unconditionally, so it is both the ground the artwork sits on
+    // and the whole banner when the artwork cannot be decoded. A backdrop that fails to load is
+    // a legitimate state -- the JPEG needs Qt's qjpeg plugin, which a hand-assembled deployment
+    // can be missing -- and it must cost the picture, never the legibility.
     QLinearGradient band (box.topLeft(), box.topRight());
     band.setColorAt (0.0, band_left);
     band.setColorAt (1.0, band_right);
     painter.fillRect (box, band);
 
-    Lcg glow_rng (BANNER_SEED ^ 0x9E3779B9u);
+    // DECODED ONCE for the life of the process. A QImage, not a QPixmap: a function-local static
+    // is destroyed after QApplication has gone and a QPixmap is a handle into the platform
+    // integration, which is the same trap the caches at the head of this file are leaked to
+    // avoid. A QImage owns nothing but memory and is safe to let run to static destruction.
+    static QImage const source (QString::fromLatin1 (BACKDROP));
 
-    painter.setCompositionMode (QPainter::CompositionMode_Plus);
-
-    for (int i (0); i < GLOW_COUNT; ++i)
+    if (!source.isNull())
     {
-      QPointF const centre (glow_rng.nextF() * box.width(), glow_rng.nextF() * box.height());
-      qreal const radius
-        (GLOW_MIN_RADIUS + glow_rng.nextF() * (GLOW_MAX_RADIUS - GLOW_MIN_RADIUS));
+      QSize const device ( std::max (1, qRound (logical.width() * ratio))
+                         , std::max (1, qRound (logical.height() * ratio))
+                         );
 
-      QRadialGradient glow (centre, radius);
-      glow.setColorAt (0.0, withAlpha (ink, GLOW_PEAK_ALPHA));
-      glow.setColorAt (1.0, withAlpha (ink, 0.0));
+      // COVER, not stretch. KeepAspectRatioByExpanding scales until BOTH dimensions are at least
+      // the target's, so the aspect ratio is never distorted, and the overflow is then cropped
+      // from the centre. At 1440 logical pixels wide on a ratio-2 display the target is 2880x288
+      // and the source is 2880x480: the expanding scale is exactly 1.0, Qt returns the image
+      // unchanged, and the only operation left is a 2880x288 crop out of the middle. That is the
+      // 1:1 case the asset was cut for. Every other width resamples once, with
+      // Qt::SmoothTransformation, into the device grid rather than into logical pixels -- which
+      // is the whole point of doing the fit at device resolution and stamping the ratio back on
+      // afterwards. Scaling at logical size and letting drawPixmap magnify would throw away
+      // three quarters of the pixels on this display.
+      QImage const covered
+        (source.scaled (device, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
 
-      painter.fillRect
-        ( QRectF (centre.x() - radius, centre.y() - radius, radius * 2.0, radius * 2.0)
-            .intersected (box)
-        , glow
+      QPixmap art
+        ( QPixmap::fromImage
+            ( covered.copy
+                ( QRect ( (covered.width() - device.width()) / 2
+                        , (covered.height() - device.height()) / 2
+                        , device.width()
+                        , device.height()
+                        )
+                )
+            )
         );
+      art.setDevicePixelRatio (ratio);
+
+      painter.drawPixmap (QPointF (0.0, 0.0), art);
+
+      // The veil is the band gradient again, at VEIL_ALPHA. Using the band's own two colours
+      // rather than a flat black keeps the left-to-right darkening the theme asks for reading
+      // through the picture instead of fighting it, and keeps the colour decision in the theme.
+      QLinearGradient veil (box.topLeft(), box.topRight());
+      veil.setColorAt (0.0, withAlpha (band_left, VEIL_ALPHA));
+      veil.setColorAt (1.0, withAlpha (band_right, VEIL_ALPHA));
+      painter.fillRect (box, veil);
+
+      if (scrim_fade > scrim_hold && scrim_fade > 0.0)
+      {
+        // Stated in LOGICAL PIXELS from the left edge and not as a fraction of the width, so the
+        // wordmark keeps exactly as much darkness as it needs whatever the window is resized to.
+        // A fraction would thin the scrim out from under the wordmark the moment the window was
+        // widened, which is precisely when the artwork gets busier.
+        QLinearGradient scrim (QPointF (0.0, 0.0), QPointF (scrim_fade, 0.0));
+        scrim.setColorAt (0.0, withAlpha (scrim_ink, SCRIM_ALPHA));
+        scrim.setColorAt (std::clamp (scrim_hold / scrim_fade, 0.0, 1.0),
+                          withAlpha (scrim_ink, SCRIM_ALPHA));
+        scrim.setColorAt (1.0, withAlpha (scrim_ink, 0.0));
+
+        painter.fillRect
+          (QRectF (0.0, 0.0, std::min (scrim_fade, box.width()), box.height()), scrim);
+      }
     }
-
-    painter.setCompositionMode (QPainter::CompositionMode_SourceOver);
-
-    // The contours go on their OWN layer so the left-to-right fade can be applied to the whole
-    // field in one DestinationIn pass. Fading them per line segment would mean a pen change per
-    // segment, and fading them by stepping the level alpha would fade them by HEIGHT instead of
-    // by position, which is not what the band does.
-    QPixmap contours (newLayer (logical, ratio));
-
-    {
-      QPainter layer (&contours);
-      layer.setRenderHint (QPainter::Antialiasing, true);
-
-      paintContourField ( layer, box.size(), BANNER_SEED, ink
-                        , CONTOUR_ALPHA_LOW, CONTOUR_ALPHA_HIGH, CONTOUR_STEP
-                        );
-
-      QLinearGradient fade (box.topLeft(), box.topRight());
-      fade.setColorAt (0.0, QColor (0, 0, 0, 255));
-      fade.setColorAt (1.0, QColor (0, 0, 0, qRound (255.0 * (1.0 - CONTOUR_RIGHT_FADE))));
-
-      layer.setCompositionMode (QPainter::CompositionMode_DestinationIn);
-      layer.fillRect (box, fade);
-    }
-
-    painter.drawPixmap (QPointF (0.0, 0.0), contours);
 
     QLinearGradient rule (box.bottomLeft(), box.bottomRight());
     rule.setColorAt (0.00, withAlpha (rule_ink, 1.00));

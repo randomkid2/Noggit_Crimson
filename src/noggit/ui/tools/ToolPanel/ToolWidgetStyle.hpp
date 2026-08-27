@@ -312,13 +312,23 @@ namespace Noggit::Ui::Tools::ToolPanelStyle
 
   //! One glyph.
   //!
-  //! WHY THE QWindow OVERLOAD. QIcon::pixmap(int, int) returns a pixmap whose
-  //! devicePixelRatio() is 1 whatever the screen is doing, so on a 150% display these glyphs
-  //! were rasterised at 20 device pixels and stretched into a 30-device-pixel box -- visibly
-  //! softer than every other mark on the panel, which Qt renders at the real ratio. The
-  //! QWindow overload asks for the ratio of the screen the widget is on; a null handle (the
-  //! widget is not shown yet when a tool builds itself) falls back to the application ratio,
-  //! which is still right on a uniform-DPI setup and never worse than the int overload.
+  //! WHY THE QWindow OVERLOAD -- AND WHY IT WAS NEVER THE THING THAT FIXED THIS. The symptom
+  //! recorded here is real: these glyphs were rasterised at 20 device pixels and stretched to
+  //! fill a box of 20 * ratio, softer than every other mark on the panel. The diagnosis was
+  //! wrong. It is not that QIcon::pixmap(int, int) hands back a ratio-1 pixmap and the QWindow
+  //! overload does not; BOTH overloads route through QIcon::pixmap(QWindow*, QSize), and the
+  //! first line of that function is qt_effective_device_pixel_ratio, which in qicon.cpp returns
+  //! a flat qreal(1.0) for everyone unless Qt::AA_UseHighDpiPixmaps is set. It was not set, so
+  //! passing a window changed nothing at all and this call was as soft as the one it replaced.
+  //!
+  //! The attribute is set now, in ApplicationEntry.cpp, and that is what made these crisp:
+  //! the ratio resolves to 2.0 here, the engine is asked for 40x40, and QIcon stamps ratio 2 on
+  //! the result so QLabel lays it out at 20x20 logical.
+  //!
+  //! Keep the overload anyway. It is the only form that can ask the ratio of the screen the
+  //! widget is actually on, which is the one that differs on a mixed-DPI desktop; a null handle
+  //! (the widget is not shown yet when a tool builds itself) falls back to the application
+  //! ratio, which is right on a uniform-DPI setup and never worse than the int overload.
   inline QLabel* keybindGlyph (QWidget* parent, FontNoggit::Icons icon)
   {
     auto* const label (new QLabel (parent));

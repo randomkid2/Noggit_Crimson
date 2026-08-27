@@ -862,7 +862,21 @@ this is determined by which has the highest opacity.");
                 list_item->setBackgroundColor(color);
                 _effect_sets_list->addItem(list_item);
 
-                QPixmap pixmap(_effect_sets_list->iconSize());
+                // Built at DEVICE resolution and told its ratio, like every other bitmap that
+                // feeds a widget in this tree. iconSize() is LOGICAL -- 20x20, set at line 214
+                // -- and QPixmapIconEngine never magnifies an entry it was handed: qicon.cpp
+                // rescales only when the stored entry is LARGER than the request, so a ratio-1
+                // 20x20 pixmap answered this view's 40x40 device request with 20x20 and left
+                // the painter to stretch it.
+                //
+                // A flat fill survives that stretch unharmed, so this one is the only find in
+                // the sweep with no visible symptom today -- it is fixed because it stops being
+                // harmless the moment the swatch gains a border or a glyph, and because leaving
+                // one ratio-1 pixmap behind invites the next one.
+                qreal const ratio(_effect_sets_list->devicePixelRatioF());
+
+                QPixmap pixmap(_effect_sets_list->iconSize() * ratio);
+                pixmap.setDevicePixelRatio(ratio);
                 pixmap.fill(color);
                 list_item->setIcon(QIcon(pixmap));
 

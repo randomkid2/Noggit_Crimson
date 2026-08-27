@@ -65,6 +65,7 @@ namespace Noggit
 
   namespace Ui::Tools
   {
+    class LightEditor;
     class ToolPanel;
 
     namespace MissingObjects
@@ -341,6 +342,9 @@ private:
   // Owned by its dock. Null until the dock is built, which is why every use is guarded.
   Noggit::Ui::DatabaseSpawnPanel* _db_spawn_panel = nullptr;
 
+  // Not owned. LightTool owns the widget and ToolPanel owns its place in the layout.
+  Noggit::Ui::Tools::LightEditor* _light_editor = nullptr;
+
   // The missing-placement report and its dock. Both null until setupViewMenu has run, and both
   // owned by the dock/main window rather than by MapView -- the dock is deleteLater'd from
   // MapView's destroyed signal, exactly as the spawn dock is.
@@ -387,6 +391,27 @@ private:
   // SpawnSceneEntry in it, so anything held across frames has to be a SpawnRef.
   [[nodiscard]]
   Noggit::Database::SpawnRef spawnGizmoTarget() const;
+
+  // The Light.dbc id the axis gizmo should be attached to this frame, or 0 for none.
+  //
+  // Third in the same precedence chain the spawn gizmo joined: the object editor wins, then the
+  // database spawn, then the light. Only one gizmo is ever drawn, because all three share a single
+  // ImGuizmo context and two live gizmos in one frame would both respond to the same drag.
+  //
+  // Returns an id and never a Sky*: Skies::findSkyWeights re-sorts the light vector by distance on
+  // every camera move, so a pointer taken in one frame names a different light in the next.
+  [[nodiscard]]
+  int lightGizmoTarget() const;
+
+  // Draws the light gizmo and applies one frame of drag to Sky::pos.
+  //
+  // Only valid inside a begun ImGui frame -- see paintGL, which is the only caller.
+  void handleLightGizmo(int light_id);
+
+  // Set while a light gizmo drag is in progress, for the same reason _spawn_gizmo_dragging is:
+  // the panel's position spin boxes are refreshed once on release rather than sixty times a
+  // second, so a drag does not fight the user for the caret.
+  bool _light_gizmo_dragging = false;
 
   // Draws the spawn gizmo and applies one frame of drag through SpawnSceneCache.
   //
@@ -518,6 +543,31 @@ public:
   // the user cannot see.
   [[nodiscard]]
   Noggit::Database::SpawnRef pickDatabaseSpawn();
+
+  // Light.dbc id of the light sphere under the cursor, or 0.
+  //
+  // See the implementation for the overlap rule -- lights nest inside each other constantly and
+  // "whichever was iterated first" is not an answer a user can predict.
+  [[nodiscard]]
+  int pickLight() const;
+
+  // Makes `light_id` the selected light in Skies AND in the editor panel, so the two cannot
+  // disagree about which light the gizmo is attached to. 0 clears the selection.
+  void selectLight(int light_id);
+
+  // Multiplies both radii of the selected light by `factor`. False when there is nothing to scale.
+  //
+  // Both together, and never one alone: r1 and r2 are the ends of the falloff the client
+  // evaluates as (r2 - distance) / (r2 - r1), so scaling only one changes the shape of the
+  // blend rather than the size of the light.
+  bool scaleSelectedLightRadii(float factor);
+
+  // The light editor panel, or nullptr when the tool has not been set up yet.
+  //
+  // Registered by LightEditor's own constructor rather than handed over by LightTool, because
+  // ToolPanel::registerTool reparents the widget into the panel's scroll area and findChild from
+  // here would then miss it. Cleared by ~LightEditor.
+  void setLightEditor(Noggit::Ui::Tools::LightEditor* editor);
 
   // Point the camera at a loaded spawn. False when that guid is not loaded.
   //

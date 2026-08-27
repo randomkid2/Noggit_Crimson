@@ -286,6 +286,26 @@ int main(int argc, char *argv[])
   QApplication::setStyle(QStyleFactory::create("Fusion"));
   QCoreApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
   QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+
+  // THIS IS WHY EVERY ICON IN THE APPLICATION LOOKED SOFT.
+  //
+  // AA_EnableHighDpiScaling above makes Qt report a devicePixelRatio -- measured as 2.0 on this
+  // machine with a runtime probe -- and lays widgets out in logical pixels, so text stays crisp
+  // because glyphs are rasterised straight to the device surface at the real ratio.
+  //
+  // Pixmaps are NOT covered by that. Without AA_UseHighDpiPixmaps, QIcon::pixmap(QSize) treats
+  // the size it is handed as DEVICE pixels, hands back a 1x pixmap, and the compositor then
+  // stretches it over an area twice as large in each direction. Every toolbar glyph, every
+  // window icon, every QIcon anywhere in this application was therefore drawn at half the
+  // resolution of the screen it was drawn on and scaled up -- a 4x deficit in pixel count, which
+  // is exactly the "blurry, not HD" the icons looked. Setting it makes QIcon request the pixmap
+  // at size * devicePixelRatio and stamp the ratio on it, so it lands 1:1 on the panel.
+  //
+  // It must be set BEFORE the QApplication is constructed; Qt reads these attributes during
+  // construction and ignores later changes to them. Hence its position on this line rather than
+  // beside the palette setup below.
+  QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+
   QApplication q_application (argc, argv);
   q_application.setApplicationName ("Noggit");
   q_application.setOrganizationName ("Noggit");

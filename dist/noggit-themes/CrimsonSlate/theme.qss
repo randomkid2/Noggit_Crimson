@@ -3360,12 +3360,6 @@ QSlider[accessibleName="texturing_brush_level_slider"]::sub-page:vertical {
 
 /* --- main menu / project list ------------------------------------------- */
 
-QWidget[accessibleName="main_menu_minimap_holder"] {
-	background-color: #100E0B;
-	border: 1px solid #8A8378;
-	border-radius: 12px;
-}
-
 /* The published column-heading rank, Style::NAME_SECTION_TITLE in UiStyle.hpp.
    17/600 text.hi, one rank above the 15px window title, for a heading that
    names a whole window column rather than a section inside a panel.
@@ -3422,11 +3416,13 @@ QListWidget[accessibleName="project_list"]::item:selected:!active {
 	border: none;
 }
 
-/* The map-list and bookmark row. THIS IS NO LONGER THE PROJECT ROW: the
-   project-selection window's rows became cards and moved to #project-card at
-   the foot of this file. MapListItem.cpp and MapBookmarkListItem.cpp are what
-   still wear this name, and they are still strips inside a well, so everything
-   below is unchanged and still correct for them.
+/* The bookmark row. THIS IS NO LONGER THE PROJECT ROW and it is no longer the
+   MAP row either: the project-selection window's rows became cards and moved
+   to #project-card at the foot of this file, and the map rows became cards in
+   the same way and moved to #map-card in the map-selection section below.
+   MapBookmarkListItem.cpp is the last file wearing this name, and a bookmark
+   IS still a strip inside a list, so everything below is unchanged and still
+   correct for it.
 
    It is a plain QWidget, so it only paints a style sheet background because
    the constructor sets WA_StyledBackground.
@@ -3756,16 +3752,43 @@ QWidget#project-selection-root {
 	background-color: #100E0B;
 }
 
-/* The band. It paints an opaque texture over its whole rect, so this rule is
-   about the colours rather than about the fill; `background: transparent` is
-   here so a future revision that leaves a gap does not show bg.panel through
-   it. qproperty- resolves ONCE, at polish, which is before the first paint --
-   the widget's setters only have to drop its cached pixmap. */
+/* The band, on BOTH brand windows -- this is a type selector, and the compact
+   strip at the head of the map-selection window is the same class at its
+   Compact scale. It paints an opaque backdrop over its whole rect, so this
+   rule is about the colours rather than about the fill; `background:
+   transparent` is here so a future revision that leaves a gap does not show
+   bg.panel through it. qproperty- resolves ONCE, at polish, which is before
+   the first paint -- the widget's setters only have to drop its cached pixmap.
+
+   THE BACKDROP IS ARTWORK NOW and the procedural contour field is gone, which
+   is why contourInk has become scrimInk: the colour that used to ink the
+   contours now colours the scrim that holds the wordmark legible over the
+   picture. banner_backdrop.jpg is cover-fitted to the band at device
+   resolution and then held down by two layers whose alphas were SOLVED rather
+   than chosen -- a 58% veil in these two band colours over the whole band, and
+   an 86% scrimInk scrim under the wordmark.
+
+   THE MEASUREMENTS, because a picture behind text is the one place a palette
+   cannot be trusted on its own. The artwork's brightest pixel anywhere is
+   #FF9F7A at relative luminance 0.474614, and text.hi on it is 1.759:1 RAW
+   with brand.crimson at 2.010:1.
+
+   UNDER THE WORDMARK the veil and the scrim compose to an effective 0.9412 --
+   the same figure at every window width, because the scrim is at full strength
+   from the left edge to scrim_hold -- and land that worst case on #19120F:
+   text.hi 16.260:1, brand.crimson 4.600:1. Over the darkest pixel they land on
+   #0C0908: 17.437:1 and 4.932:1. Both floors hold unconditionally.
+
+   PAST THE SCRIM the veil alone leaves text.hi at 7.159:1 over the worst pixel
+   a 1180-wide band presents and 6.307:1 at the 800 the launcher can be squeezed
+   to -- under the prose floor, over the body floor, and accepted because no
+   text is drawn out there. The full arithmetic is at
+   LauncherArt::bannerTexture. */
 Noggit--Ui--Widget--BrandBanner {
 	background: transparent;
 	qproperty-bandLeft: #17120F;
 	qproperty-bandRight: #0B0908;
-	qproperty-contourInk: #E5405C;
+	qproperty-scrimInk: #0B0908;
 	qproperty-ruleInk: #E5405C;
 	qproperty-wordmarkTop: #F3F0E9;
 	qproperty-wordmarkMid: #E4DFD7;
@@ -4061,6 +4084,485 @@ QLabel#project-card-icon,
 QLabel#project-card-art,
 QLabel#project-card-date-glyph,
 QWidget#project-card-date-row {
+	background: transparent;
+	border: none;
+	padding: 0px;
+}
+
+/* ============================================================================
+   THE MAP-SELECTION WINDOW -- THE BRAND RANK, SECOND WINDOW
+   ============================================================================
+   Everything below is scoped by OBJECT NAME, exactly as the launcher section
+   above is, and for the same reason: this is the second and last window that
+   wears crimson, and the moment a map is entered the stacked widget swaps this
+   page out for MapView. Not one selector here can be reached from a tool dock,
+   because not one of them matches without an id this window sets by hand.
+
+   THE SAME TEST APPLIES. brand.crimson is 16.0 degrees from bad #E86F62, and it
+   is safe here only while THERE IS NO DESTRUCTIVE CONTROL ON THIS WINDOW. What
+   is on it: two tab bars, a name filter, a type and an expansion combo, a
+   WMO check box, a list of maps, an add-map button, a settings gear and a
+   minimap. The map list's context menu pins and unpins. Nothing deletes. If a
+   [state="danger"] control is ever added here, this whole section goes back to
+   the accent, and that is one grep.
+
+   THE GROUND IS bg.void, not bg.panel. Every tab page below is turned back to
+   #100E0B, which is what lets the map cards reuse the launcher's project-card
+   arithmetic verbatim -- a bg.panel fill is a 1.279:1 step on this ground and
+   an edge border is 5.138:1 against it. On the sheet's default bg.panel pane
+   the cards would have been 1.000:1 against the page they sit on, which is the
+   exact failure the launcher's card section exists to describe.
+   ========================================================================= */
+
+/* The window ground and the body under the header strip. QMainWindow is
+   already bg.void, but a plain QWidget matches the global rule and paints
+   bg.panel, so both have to be told. */
+QWidget#map-selection-root,
+QWidget#map-selection-body {
+	background-color: #100E0B;
+}
+
+/* --- the header strip ---------------------------------------------------- */
+
+/* THE GEAR SITS ON ARTWORK, WHICH IS WHY IT IS NOT THE LAUNCHER'S GEAR.
+   That one sits on a flat bg.void ground, where the edge ramp's #8A8378 reads
+   5.138:1 and is the right resting weight. This one sits on the veiled
+   backdrop, and the worst it can be asked to sit on was found by compositing
+   the real pipeline over the real asset at every width from 600 to 3840 and
+   at device pixel ratios 1, 1.25, 1.5 and 2: the brightest pixel that survives
+   the veil anywhere on a 64-logical strip is #703638, relative luminance
+   0.063686. #8A8378 against that measures 2.462:1, under the 3:1 floor for a
+   border, so the edge ramp cannot be used here.
+
+   The button takes the next step up instead. text.dim is 4.648:1 against that
+   worst-case pixel and 7.585:1 against its own bg.panel fill, so the border
+   clears the floor on BOTH sides of itself no matter what the picture is doing
+   underneath. text.hi on the same worst case is 8.115:1, which is why the hover
+   state can go one step further still.
+
+       1 border + 7 padding + 18 content + 7 padding + 1 border = 34
+   in a 64px strip, which leaves 15 of air above and below.
+
+   border-left is restated in every state because the base QToolButton rule
+   declares `border-left: 3px solid transparent` as a reserve for the active
+   marker, and a bare `border:` shorthand in one state but not another reflows
+   the button by two pixels as the pointer crosses it. */
+QToolButton#map-header-gear {
+	background-color: #292621;
+	color: #BFB7AA;
+	border: 1px solid #BFB7AA;
+	border-left: 1px solid #BFB7AA;
+	border-radius: 9px;
+	padding: 7px;
+	min-width: 18px;
+	min-height: 18px;
+	max-width: 18px;
+	max-height: 18px;
+}
+
+/* Hover lifts the fill one step to bg.raised and the border to text.hi:
+   10.339:1 on that fill and 8.115:1 against the worst the strip can put behind
+   it at any width. */
+QToolButton#map-header-gear:hover {
+	background-color: #3C3732;
+	color: #F3F0E9;
+	border: 1px solid #F3F0E9;
+	border-left: 1px solid #F3F0E9;
+}
+
+QToolButton#map-header-gear:pressed {
+	background-color: #100E0B;
+	color: #F3F0E9;
+	border: 1px solid #BFB7AA;
+	border-left: 1px solid #BFB7AA;
+}
+
+/* Focus stays GOLD on this window too. Focus means "the thing you are acting
+   on" and that is the accent's one job application-wide. 6.860:1 on the
+   button's own bg.panel fill and 4.204:1 against the worst veiled pixel the
+   strip can put behind it, so the ring clears the 3:1 floor on both sides of
+   itself at every size this window has. */
+QToolButton#map-header-gear:focus {
+	border: 1px solid #DFA52E;
+	border-left: 1px solid #DFA52E;
+}
+
+/* --- the two tab bars ---------------------------------------------------- */
+
+/* THE SELECTED TAB IS AN UNDERLINE, NOT A FILLED TAB. The base QTabBar rule
+   already marks selection with a 2px bottom border -- in the accent, over a
+   bg.raised plate with rounded top corners. Here the plate goes and the border
+   turns crimson: on this window a tab is a place, and a filled tab that also
+   carries the brand colour would be two signals for one fact.
+
+   4.790:1 on the bg.void ground, over the 3:1 floor for a graphical mark.
+
+   The pane keeps ONE hairline so the underline has a rule to sit on.
+   stroke.soft at 1.739:1 on bg.void -- a seam, which carries no 3:1 duty
+   because it is not an object. */
+QTabWidget#map-entry-tabs::pane,
+QTabWidget#map-detail-tabs::pane {
+	background: transparent;
+	border: none;
+	border-top: 1px solid #403B35;
+	border-radius: 0px;
+	top: -1px;
+}
+
+QTabWidget#map-entry-tabs QTabBar::tab,
+QTabWidget#map-detail-tabs QTabBar::tab {
+	background: transparent;
+	color: #BFB7AA;
+	border: none;
+	border-bottom: 2px solid transparent;
+	border-radius: 0px;
+	padding: 10px 14px;
+	min-width: 0px;
+	font-size: 12px;
+	font-weight: 400;
+}
+
+/* :hover BEFORE :selected. The two selectors are structurally identical -- the
+   same ancestor, the same element, the same sub-control, one pseudo-state each
+   -- so whatever Qt computes for one it computes for the other, they tie, and a
+   tie is settled by document order. A selected tab that lost its underline the
+   moment the pointer crossed it would be worse than no state at all, so the
+   selected rule is the one written second. This is the same ordering the
+   project-card rules above depend on.
+
+   The hover mark is stroke.hi, 3.775:1 on bg.void: present, and unmistakably
+   not the crimson. */
+QTabWidget#map-entry-tabs QTabBar::tab:hover,
+QTabWidget#map-detail-tabs QTabBar::tab:hover {
+	background: transparent;
+	color: #F3F0E9;
+	border-bottom: 2px solid #746D64;
+}
+
+QTabWidget#map-entry-tabs QTabBar::tab:selected,
+QTabWidget#map-detail-tabs QTabBar::tab:selected {
+	background: transparent;
+	color: #F3F0E9;
+	border-bottom: 2px solid #E5405C;
+	font-weight: 600;
+}
+
+/* Two pseudo-states outrank one, so this needs no ordering argument. 5.887:1
+   on bg.void and 1.229:1 above the resting crimson, which is the same step the
+   launcher's brand border takes on hover. */
+QTabWidget#map-entry-tabs QTabBar::tab:selected:hover,
+QTabWidget#map-detail-tabs QTabBar::tab:selected:hover {
+	border-bottom: 2px solid #F05A73;
+}
+
+/* --- the pages ----------------------------------------------------------- */
+
+/* Back to the bg.void ground. See the note at the head of this section for why
+   the pages are not left on the pane's default bg.panel. */
+QWidget#map-maps-page,
+QWidget#map-bookmarks-page,
+QWidget#map-detail-page {
+	background-color: #100E0B;
+}
+
+/* --- the SEARCH section heading ------------------------------------------ */
+
+/* The capitals are in the string and the tracking is a QFont, because Qt style
+   sheets have neither text-transform nor letter-spacing -- see applyTracking()
+   in NoggitWindow.cpp for the mechanism that makes the tracking survive this
+   sheet's font resolution.
+
+   text.dim rather than text.hi: a heading that names a region is a label for
+   what is under it, and the fields below it are the objects. 9.699:1 on the
+   bg.void ground, well over the 7:1 prose floor this sheet sets for itself.
+
+   THIS REPLACED A QGroupBox. A group box draws a titled frame around its
+   contents, which put a second box inside a column that is already a panel
+   inside a tab. */
+QLabel#map-section-heading {
+	color: #BFB7AA;
+	background: transparent;
+	font-size: 11px;
+	font-weight: 700;
+	padding: 0px;
+}
+
+QFrame#map-section-rule {
+	background-color: #403B35;
+	border: none;
+	max-height: 1px;
+}
+
+QWidget#map-section-row,
+QLabel#map-section-glyph {
+	background: transparent;
+	border: none;
+	padding: 0px;
+}
+
+/* --- the map list -------------------------------------------------------- */
+
+/* THE WELL IS GONE, and for the same reason it went on the launcher: the rows
+   are CARDS now. A bg.void well on a bg.void page is a box drawn around
+   nothing -- 1.000:1 against the ground it sits on.
+
+   The 12px bottom margin on ::item is what separates one card from the next,
+   and it is the same number as MapListItem's ITEM_CHROME_HEADROOM, because the
+   delegate takes the margin back off the row it hands the card. */
+QListWidget#map-list,
+QListWidget#bookmark-list {
+	background: transparent;
+	border: none;
+	padding: 0px;
+}
+
+QListWidget#map-list::item {
+	background: transparent;
+	border: none;
+	padding: 0px;
+	margin: 0px 0px 12px 0px;
+}
+
+/* SELECTION MOVED TO THE CARD. A card is opaque, so any wash the view painted
+   underneath it would be invisible -- which is exactly why the old row widget
+   was transparent. The state is set from NoggitWindow's currentItemChanged
+   handler through Style::applyState. */
+QListWidget#map-list::item:hover,
+QListWidget#map-list::item:selected:active,
+QListWidget#map-list::item:selected:!active,
+QListWidget#map-list::item:selected:hover {
+	background: transparent;
+	border: none;
+}
+
+/* The bookmark rows are still STRIPS -- MapBookmarkListItem is transparent and
+   wears the old #project-list-item rank -- so that list keeps the view's own
+   hover and selection states from the base QAbstractItemView rules and only
+   loses its frame here.
+
+   4px, and the number is not free: the delegate subtracts the item's padding
+   AND its margin from the geometry it hands a persistent editor, the base
+   ::item rule already spends 4px of padding top and bottom, and
+   MapBookmarkListItem::ITEM_CHROME_HEADROOM is 12. 4 + 4 + 4 = 12 exactly, so
+   this is the last pixel of separation those rows can be given before their
+   descenders start to clip. */
+QListWidget#bookmark-list::item {
+	margin: 0px 0px 4px 0px;
+}
+
+/* A THIN CRIMSON THUMB. 8px wide with a 2px margin leaves a 4px bar, which is
+   a third of the 12px handle the rest of the application uses: this list is a
+   column of cards and a full-weight scroll bar beside them reads as a second
+   border. brand.crimson is 4.790:1 on the bg.void well. */
+QListWidget#map-list QScrollBar:vertical,
+QListWidget#bookmark-list QScrollBar:vertical {
+	background: transparent;
+	border: none;
+	width: 8px;
+	margin: 0px;
+}
+
+QListWidget#map-list QScrollBar::handle:vertical,
+QListWidget#bookmark-list QScrollBar::handle:vertical {
+	background-color: #E5405C;
+	border: none;
+	border-radius: 2px;
+	margin: 2px;
+	min-height: 32px;
+}
+
+QListWidget#map-list QScrollBar::handle:vertical:hover,
+QListWidget#bookmark-list QScrollBar::handle:vertical:hover {
+	background-color: #F05A73;
+}
+
+/* --- one map card -------------------------------------------------------- */
+
+/* bg.panel on the bg.void page is a 1.279:1 surface step and the edge border
+   is 4.018:1 against the fill and 5.138:1 against the page, so the card is an
+   object by both cues rather than by a fill difference alone.
+
+   12px radius: the CONTAINER tier. A card is a container, not a control. */
+QWidget#map-card {
+	background-color: #292621;
+	border: 1px solid #8A8378;
+	border-radius: 12px;
+}
+
+QWidget#map-card:hover {
+	background-color: #34312C;
+	border: 1px solid #BFB7AA;
+}
+
+/* SELECTED, and it has to come after :hover -- the two tie on Qt specificity
+   (an element name is +1 and an id and an attribute selector are +0x10 each,
+   so both are 1 + 0x10 + 0x10 = 33) and a tie is decided by document order.
+
+   card.select #3C2927 is brand.crimson at 10% over bg.panel: text.hi 11.992:1,
+   text.dim 6.869:1, and the crimson border on it 3.392:1. */
+QWidget#map-card[state="selected"] {
+	background-color: #3C2927;
+	border: 1px solid #E5405C;
+}
+
+QWidget#map-card[state="selected"]:hover {
+	background-color: #3C2927;
+	border: 1px solid #F05A73;
+}
+
+QLabel#map-card-name {
+	color: #F3F0E9;
+	background: transparent;
+	font-size: 14px;
+	font-weight: 600;
+	padding: 0px;
+}
+
+QLabel#map-card-id {
+	color: #BFB7AA;
+	background: transparent;
+	font-size: 11px;
+	padding: 0px;
+}
+
+/* THE TYPE BADGE IS A CHIP, not a second caption. bg.alt inside the card's
+   bg.panel is a 1.158:1 step DOWN -- recessed, which is what a label applied to
+   an object should be -- and text.dim on it is 8.787:1. The border is
+   stroke.soft at 1.575:1 on the chip: a seam that closes the shape, carrying no
+   3:1 duty because the chip is already told apart by its fill.
+
+   11px radius on a 22px box is a pill:
+       1 border + 3 padding + 14 line box + 3 padding + 1 border = 22 */
+QLabel#map-card-badge {
+	color: #BFB7AA;
+	background-color: #1D1916;
+	border: 1px solid #403B35;
+	border-radius: 11px;
+	padding: 3px 10px;
+	font-size: 11px;
+	font-weight: 600;
+}
+
+/* The emblem and the chevron are painted pixmaps; they only need to be told to
+   stay out of the card's way. Both are drawn at the widget's device pixel
+   ratio in MapSelectionArt -- the ring's stroke.hi is 3.775:1 on the bg.void
+   disc and the chevron's text.off is 3.443:1 on the card fill. */
+QLabel#map-card-emblem,
+QLabel#map-card-chevron {
+	background: transparent;
+	border: none;
+	padding: 0px;
+}
+
+/* --- the add-map button -------------------------------------------------- */
+
+/* THE ONE BRAND-FILLED CONTROL ON THIS WINDOW, and the same construction as
+   the launcher's primary action: the fill is brand.crimson pre-composited over
+   bg.void at 14%, the border is the brand colour at full strength, and the
+   label is text.hi at 14.940:1 on that fill. That is the whole point of
+   tinting rather than filling -- text.hi on SOLID crimson is 3.535:1 and would
+   fail the body floor.
+
+   The border reads 4.226:1 against its own fill and 4.790:1 against the
+   bg.void page, so the outline clears the 3:1 graphical floor twice over.
+
+       1 border + 10 padding + 18 content + 10 padding + 1 border = 40
+
+   The label is letterspaced capitals, and both halves are done in C++: the
+   capitals live in the translated string and the tracking is a QFont, because
+   this sheet has neither text-transform nor letter-spacing. */
+QPushButton#map-add-button {
+	background-color: #2E1516;
+	color: #F3F0E9;
+	border: 1px solid #E5405C;
+	border-radius: 10px;
+	padding: 10px 16px;
+	min-height: 18px;
+	max-height: 18px;
+	font-size: 12px;
+	font-weight: 600;
+	text-align: center;
+}
+
+QPushButton#map-add-button:hover {
+	background-color: #3F191D;
+	color: #F3F0E9;
+	border: 1px solid #F05A73;
+}
+
+/* THE PRESSED BORDER STAYS brand.crimson rather than dropping to a darker red:
+   on this fill brand.crimson is 3.387:1 and clears the floor, and the press is
+   felt through the fill instead -- 1.248:1 below the resting fill, a larger
+   step than the hover's 1.108:1. */
+QPushButton#map-add-button:pressed {
+	background-color: #501D23;
+	color: #F3F0E9;
+	border: 1px solid #E5405C;
+}
+
+/* text.hi as a border, matching the launcher's primary action: a gold focus
+   ring here would sit 50.5 degrees from a border it has to be told apart from,
+   where text.hi on the rest fill is 14.940:1 and is unmistakable. */
+QPushButton#map-add-button:focus {
+	border: 1px solid #F3F0E9;
+}
+
+/* --- the right pane's preview panel -------------------------------------- */
+
+/* THE PANEL IS THE FRAME NOW, and the minimap holder inside it is not. bg.alt
+   on the bg.void page is a 1.104:1 step and the edge border is 4.654:1 against
+   that fill and 5.138:1 against the page.
+
+   Both pages of the panel -- the empty state and the minimap -- live in one
+   QStackedLayout, which sizes itself to the larger of the two and keeps that
+   size whichever is current, so selecting a map cannot make the pane jump. */
+QWidget#map-preview-panel {
+	background-color: #1D1916;
+	border: 1px solid #8A8378;
+	border-radius: 12px;
+}
+
+/* The scroll area that holds the minimap, and its VIEWPORT, which is a
+   separate widget and would otherwise match the global QWidget rule and paint
+   a bg.panel rectangle inside this panel. This rule used to give the scroll
+   area its own bg.void fill and edge border -- it was the framed object on
+   this pane before the panel existed, and two frames around one picture is one
+   frame too many. */
+QWidget[accessibleName="main_menu_minimap_holder"],
+QWidget#map-preview-viewport,
+QWidget#map-preview-empty {
+	background: transparent;
+	border: none;
+	border-radius: 0px;
+}
+
+/* The empty state. text.dim on the panel is 8.787:1; the pin beside it is
+   painted in text.off at 3.988:1, which is over the 3:1 graphical floor and
+   deliberately UNDER the 4.5 body floor -- it is a decoration behind a
+   caption, not a second caption. */
+QLabel#map-preview-caption {
+	color: #BFB7AA;
+	background: transparent;
+	font-size: 13px;
+	font-weight: 600;
+	padding: 0px;
+}
+
+QLabel#map-preview-pin {
+	background: transparent;
+	border: none;
+	padding: 0px;
+}
+
+/* --- the detail head and the hint row ------------------------------------ */
+
+/* The title's SIZE comes from Style::applyRank as a font-only widget sheet and
+   its COLOUR from QLabel[state="value"], which is the sheet's published route
+   to text.hi: 16.933:1 on the bg.void page. This rule only stops the label
+   painting the global QWidget background behind itself. */
+QLabel#map-detail-title,
+QWidget#map-detail-hint-row,
+QLabel#map-detail-hint-glyph {
 	background: transparent;
 	border: none;
 	padding: 0px;

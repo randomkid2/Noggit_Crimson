@@ -1017,22 +1017,36 @@ namespace Noggit
     // here: the IconActions on the two secondary view bars, the map and bookmark rows on the
     // main menu, and the project-creation dialog.
     //
-    // Build a bitmap of exactly `size` and leave its device pixel ratio alone. It is tempting
-    // to render at qApp->devicePixelRatio() and tag the result, so that scaled displays get a
-    // sharp icon instead of an upscaled one -- that was tried here and it is WRONG. Measured
-    // against Qt 5.15.2 with this application's exact attributes (AA_EnableHighDpiScaling set,
-    // qApp->devicePixelRatio() == 2), driving a QIconEngine through QIcon::pixmap(QSize):
+    // Build a bitmap of exactly `size` and leave its device pixel ratio alone. THAT IS STILL THE
+    // RIGHT CODE, but the reasoning this comment used to give for it has been overtaken and the
+    // old text is preserved nowhere on purpose: it said the engine is handed the LOGICAL size
+    // and that any ratio stamped on the result is discarded, and it concluded that sharpening
+    // these icons "belongs at the call sites, not in the engine". Both observations were real
+    // measurements, and both were artefacts of Qt::AA_UseHighDpiPixmaps being unset. It is set
+    // now, in ApplicationEntry.cpp, and every one of them inverts. Traced through the Qt
+    // sources rather than inferred:
     //
-    //   * the engine is asked for the LOGICAL size. Requesting 22x22 from the QIcon calls this
-    //     function with 22x22 -- Qt does NOT pre-multiply by the ratio.
-    //   * whatever ratio the returned pixmap carries is DISCARDED. Returning a 22x22 bitmap
-    //     tagged devicePixelRatio 2 yields a pixmap reported back as 22x22 at ratio 1.
+    //   * qicon.cpp's qt_effective_device_pixel_ratio returns a flat qreal(1.0) when
+    //     AA_UseHighDpiPixmaps is off, whatever the screen is doing. That single early return
+    //     is what made the old behaviour look like a property of QIcon.
+    //   * with the attribute set it returns qApp->devicePixelRatio(), 2.0 here, so
+    //     QIcon::pixmap(QSize) takes its high-DPI branch and asks the engine for
+    //     size * ratio -- the DEVICE size. A 22x22 request now calls this function with 44x44.
+    //   * the result no longer has to carry its own ratio, because QIcon stamps one:
+    //     QIconPrivate::pixmapDevicePixelRatio(2.0, 22x22, 44x44) is 2.0, so the caller gets a
+    //     44x44 bitmap that reports 22x22 logical. Nothing is scaled and nothing is doubled.
     //
-    // So the returned bitmap is taken at face value, and rendering at 2x produced a 44x44
-    // ratio-1 pixmap -- every icon came out at exactly twice its intended size. QIcon::pixmap
-    // (QSize) has no path that can carry a high-DPI pixmap out of an engine; the ratio-aware
-    // overload is QIcon::pixmap(QWindow*, QSize), which only a call site has the window for.
-    // Sharpening these icons therefore belongs at the call sites, not in the engine.
+    // So a plain ratio-1 QPixmap of exactly `size` is correct, and it is correct precisely
+    // BECAUSE `size` is now the device size. Do not "fix" this by multiplying by the ratio
+    // here; that would reinstate the 44x44-at-ratio-1 doubling the old comment warned about,
+    // this time for real.
+    //
+    // The one thing to keep in mind when reading paint() below is that its `rect` therefore
+    // arrives in device pixels down this path and in logical pixels when a style paints an
+    // icon straight onto a widget. Both land at the same physical resolution: here because the
+    // rect is already doubled and the painter's device is this ratio-1 pixmap, there because
+    // the rect is logical and the painter's device reports ratio 2. paintArtwork multiplies the
+    // two together, so the product is 44 device pixels either way.
     QPixmap FontAwesomeIconEngine::pixmap ( QSize const& size
                                              , QIcon::Mode mode
                                              , QIcon::State state
