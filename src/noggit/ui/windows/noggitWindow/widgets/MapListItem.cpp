@@ -101,14 +101,17 @@ namespace Noggit::Ui::Widget
     // resizes the row to the viewport width. A map name can be long, so it must not be derived
     // from the text.
     constexpr int ROW_HINT_WIDTH = 125;
-
-    // The accent, spelled out here because a QGraphicsColorizeEffect is not reachable from a
-    // style sheet: this is one of the handful of colours in the application that a theme change
-    // cannot move, so it has to be moved by hand or the star stays on the old accent while
-    // everything around it goes gold. Measured against the surfaces a row can sit on:
-    // 8.77:1 on bg.void #100E0B (the list well), 6.86:1 on bg.panel #292621 and 7.95:1 on the
-    // bg.alt #1D1916 of an alternating row -- all far over the 3:1 floor for a graphical mark.
-    constexpr QRgb ACCENT_GOLD = qRgb(0xDF, 0xA5, 0x2E);
+    // ACCENT_HI #F3687F. A QGraphicsColorizeEffect is unreachable from theme.qss, so this pin
+    // colour has to be carried by hand whenever the accent moves -- and it was not: it sat at the
+    // retired gold #DFA52E through the crimson migration, and the comment that stood here still
+    // justified itself by saying the star must not be left behind "while everything around it goes
+    // gold". Nothing around it goes gold any more.
+    //
+    // The LIT step rather than plain accent, because a map row lightens under the pointer and the
+    // pin has to stay a legible mark on every fill a row presents. Measured against the row
+    // surfaces: 6.513:1 on the bg.void list well, 5.900:1 on an alternating bg.alt row and 5.093:1
+    // on a bg.panel card, all over the 3:1 floor a graphical mark has to clear.
+    constexpr QRgb ACCENT_STAR = qRgb (0xF3, 0x68, 0x7F);
 
     // THE EMBLEM'S DISC AND RING AND THE CHEVRON'S INK, spelled out here for exactly the same
     // reason the star's gold is: a QPainter is not reachable from a style sheet, so these three
@@ -267,9 +270,9 @@ namespace Noggit::Ui::Widget
       // Font Awesome renders the glyph as a monochrome pixmap and the icon engine takes no
       // colour, so the gold has to be applied to the rendered pixels. This is one of the few
       // colours in the application a style sheet cannot reach, which is exactly why it has to be
-      // carried forward by hand when the accent moves -- see ACCENT_GOLD above.
+      // carried forward by hand when the accent moves -- see ACCENT_STAR above.
       auto const colour = new QGraphicsColorizeEffect(_map_pinned_label);
-      colour->setColor(QColor(ACCENT_GOLD));
+      colour->setColor(QColor(ACCENT_STAR));
       colour->setStrength(1.0f);
       _map_pinned_label->setGraphicsEffect(colour);
 

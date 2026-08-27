@@ -123,39 +123,68 @@ namespace Noggit::Ui::Design
 
   // === ACCENT ===============================================================================
   //
-  // ONE meaning: "the thing you are acting on." The accent moved from crimson to gold because
-  // crimson could not be both that and "the thing that will destroy your data" -- the old
-  // accent #E8543F and the old error #E0574B measured 1.024:1 apart in luminance and 4.0
-  // degrees in hue, i.e. they were the same colour, and red therefore meant selected, focused,
-  // checked, active, pressed, danger, error and delete simultaneously. Gold against BAD is
-  // 1.389:1 and 34.5 degrees.
+  // ONE meaning: "the thing you are acting on." THE ACCENT IS CRIMSON, and it is the same
+  // crimson the project-selection window has always worn, so the painted half of the
+  // application, the styled half and the brand are one identity.
+  //
+  // THE COLLISION THAT ONCE PUT THIS ON GOLD IS SOLVED RATHER THAN IGNORED. The pre-gold
+  // palette had accent #E8543F and error #E0574B 1.024:1 apart in luminance and 4.0 degrees in
+  // hue -- the same colour -- so red meant selected, focused, checked, active, pressed, danger,
+  // error and delete at once. Returning the accent to crimson recreates that unless the status
+  // ramp moves, so it moved: see STATUS below, where BAD is a vermillion 32.3 degrees away.
+  //
+  // ONE CRIMSON CANNOT MARK EVERY SURFACE. Gold sat at relative luminance 0.427955 and cleared
+  // 3:1 as a mark on the whole ladder; crimson sits at 0.210975 and is 2.925:1 on BG_RAISED and
+  // 2.329:1 on BG_OVERLAY. THE RULE, which theme.qss states in full and this file mirrors: a
+  // mark takes plain ACCENT only where BOTH of its neighbours are BG_VOID, BG_ALT or BG_PANEL;
+  // otherwise ACCENT_HI. Every focus ring is ACCENT_HI without exception, because focus can
+  // coincide with hover and every hover face in the sheet is one surface lighter.
   //
   // INK is the text drawn ON any accent or status fill. It is BG_VOID by value, and is spelled
   // separately because the two mean different things at a call site.
-  constexpr char const* ACCENT       = "#DFA52E";  // ink on it 8.77:1
-  constexpr char const* ACCENT_HI    = "#F0BA4A";  // hover on a filled accent surface; ink 10.85:1
-  constexpr char const* ACCENT_PRESS = "#B8801F";  // pressed on a filled accent surface; ink 5.64:1
+  //
+  //                  void   alt    panel  raised overlay  ink-on-it
+  //   ACCENT         4.790  4.339  3.746  2.925  2.329    4.790
+  //   ACCENT_HI      6.513  5.900  5.093  3.977  3.167    6.513
+  //   ACCENT_PRESS   3.398  3.078  2.657  2.075  1.652    3.398  -- takes TEXT_HI, not ink
+  constexpr char const* ACCENT       = "#E5405C";  // ink on it 4.790:1; hue 349.8
+  constexpr char const* ACCENT_HI    = "#F3687F";  // marks on BG_RAISED/BG_OVERLAY, every focus
+                                                   // ring, hover on a filled accent; ink 6.513:1
+  constexpr char const* ACCENT_PRESS = "#C32842";  // pressed FILLS only. TEXT_HI on it 4.983:1;
+                                                   // ink is 3.398:1 and is barred here.
   constexpr char const* INK          = "#100E0B";
 
   // === STATUS -- meaning, never decoration ==================================================
   //
-  //          panel  raised  ink-on-it
-  //   OK     6.09   4.76    7.79
-  //   WARN   5.30   4.14    6.78
-  //   BAD    4.94   3.86    6.31
-  //   INFO   6.29   4.91    8.04
+  // THE TWO WARM RANKS MOVED WHEN THE ACCENT BECAME CRIMSON. WARN walked up into the amber the
+  // accent vacated and BAD walked out of red into vermillion, because a crimson accent beside a
+  // coral error is exactly the collision the ACCENT section above describes.
   //
-  // Status colours are TEXT only on BG_VOID and BG_PANEL. On BG_RAISED and BG_OVERLAY they may
-  // appear only as 1px borders and fills, where the floor is 3:1 and all four clear it.
+  //            hue    panel  raised overlay ink-on-it
+  //   OK      146.9   6.093  4.757  3.788   7.791    unchanged
+  //   WARN     45.9   7.003  5.468  4.354   8.955    was #E2803C at hue 24.6
+  //   BAD      22.1   5.206  4.065  3.237   6.657    was #E86F62 at hue  5.8
+  //   INFO    205.3   6.289  4.911  3.910   8.043    unchanged
   //
-  // HONEST LIMIT: ACCENT vs WARN is 15.8 degrees and WARN vs BAD is 18.8. Four warm signals
-  // cannot all sit 30 degrees apart. WARN and BAD are an escalation pair and adjacency is the
-  // traffic-light convention. ACCENT vs WARN is disambiguated by FORM and that is a hard rule:
-  // a warn or error input takes a coloured border AND a tinted fill; a focused input takes a
-  // 1px accent border and NEVER a tint. Never rely on the hue alone.
+  // Status colours are TEXT only on BG_VOID and BG_PANEL, where all four clear 4.5:1. On
+  // BG_RAISED and BG_OVERLAY they may appear only as 1px borders and fills, where the floor is
+  // 3:1 and all four clear it -- BAD is the tightest at 3.237:1 on BG_OVERLAY.
+  //
+  // SEPARATION FROM THE ACCENT, which is what this revision exists to guarantee:
+  //   ACCENT vs BAD    32.3 degrees / 1.390:1     it was 16.0 degrees with this accent
+  //   ACCENT vs WARN   56.1 degrees / 1.870:1
+  //   ACCENT vs OK    157.0 degrees
+  //   ACCENT vs INFO  144.5 degrees
+  // HONEST LIMIT: WARN vs BAD is 23.9 degrees, the tightest pair left. The gold sheet's tightest
+  // was 15.8 (ACCENT vs WARN) and its WARN vs BAD was 18.8, so every warm pair got further
+  // apart, not just the one that had to. WARN and BAD are an escalation pair and adjacency there
+  // is the traffic-light convention. FORM carries its share and that is a hard rule: a
+  // destructive button is an EDGE and not a fill until hovered; a warn or error input takes a
+  // coloured border AND a tinted fill; a focused input takes a 1px ACCENT_HI border and NEVER a
+  // tint. Never rely on hue alone.
   constexpr char const* OK   = "#4FB87E";
-  constexpr char const* WARN = "#E2803C";
-  constexpr char const* BAD  = "#E86F62";
+  constexpr char const* WARN = "#D8AB18";
+  constexpr char const* BAD  = "#EF752E";
   constexpr char const* INFO = "#6FAEDC";
 
   // Input fills for the two invalid states, pre-composited so a widget-level style sheet can
@@ -168,11 +197,12 @@ namespace Noggit::Ui::Design
   // that asserted the sheet wrote them. It did not; it wrote the pair below, at theme.qss
   // "Error and warning states on an input". The comment was the defect, not the sheet.
   //
-  // Measured on these values: TEXT_HI on the error tint 14.25:1, on the warn tint 14.13:1;
-  // each edge colour against its own tint, BAD 5.32:1 and WARN 5.66:1, so the border stays
-  // visible against the fill it encloses.
-  constexpr char const* FILL_ERROR = "#2E1C17";
-  constexpr char const* FILL_WARN  = "#2D1E12";
+  // RECOMPOSITED when WARN and BAD moved, at the same 0.14 alpha over BG_VOID. Measured on
+  // these values: TEXT_HI on the error tint 14.254:1, on the warn tint 13.515:1; each edge
+  // colour against its own tint, BAD 5.604:1 and WARN 7.147:1, so the border stays visible
+  // against the fill it encloses.
+  constexpr char const* FILL_ERROR = "#2F1C10";
+  constexpr char const* FILL_WARN  = "#2C240D";
 
   // === THE VALUE RAMP =======================================================================
   //

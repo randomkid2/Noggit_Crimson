@@ -2,6 +2,8 @@
 
 #include <noggit/rendering/PlaceholderCube.hpp>
 
+#include <noggit/ui/DesignTokens.hpp>
+
 #include <opengl/context.hpp>
 #include <opengl/scoped.hpp>
 #include <opengl/shader.hpp>
@@ -71,16 +73,45 @@ void main()
   // (TextureManager.cpp:520). A mapper should not have to learn a new convention here.
   const glm::vec3 MODEL_COLOR (1.0f, 0.0f, 1.0f);
 
-  // WARN #E2803C and INFO #6FAEDC from Noggit::Ui::Design.
-  const glm::vec3 WORLD_MODEL_COLOR (226.0f / 255.0f, 128.0f / 255.0f, 60.0f / 255.0f);
-  const glm::vec3 WORLD_MODEL_DOODAD_COLOR (111.0f / 255.0f, 174.0f / 255.0f, 220.0f / 255.0f);
+  // READ FROM THE TOKENS, not copied out of them, and that distinction is the whole point of this
+  // block. The previous revision wrote WARN and ACCENT as decimal literals -- 226.0f/255.0f and
+  // 223.0f/255.0f -- with a comment claiming they came from Noggit::Ui::Design while this file did
+  // not include it. When the accent moved from gold to crimson, every audit of that migration
+  // grepped for the hex strings DFA52E and E2803C and found nothing here, because a hex grep
+  // cannot see a decimal. The result would have shipped the 3D viewport drawing a SELECTED object
+  // in the retired gold while every other surface in the application had gone crimson -- and the
+  // selected mark is the single most accent-semantic thing the editor draws.
+  //
+  // Converting through QColor at first use costs one call per colour for the life of the process
+  // and makes the coupling real: change the token, this follows.
+  glm::vec3 fromToken (char const* token)
+  {
+    QColor const c (Noggit::Ui::Design::color (token));
+    return glm::vec3 (float (c.redF()), float (c.greenF()), float (c.blueF()));
+  }
 
-  // ACCENT #DFA52E, the one colour in the design system that means "the thing you are acting on".
-  const glm::vec3 SELECTED_COLOR (223.0f / 255.0f, 165.0f / 255.0f, 46.0f / 255.0f);
+  glm::vec3 const& worldModelColor()
+  {
+    static glm::vec3 const colour (fromToken (Noggit::Ui::Design::WARN));
+    return colour;
+  }
+
+  glm::vec3 const& worldModelDoodadColor()
+  {
+    static glm::vec3 const colour (fromToken (Noggit::Ui::Design::INFO));
+    return colour;
+  }
+
+  glm::vec3 const& selectedColor()
+  {
+    static glm::vec3 const colour (fromToken (Noggit::Ui::Design::ACCENT));
+    return colour;
+  }
 
   // Contrast of each mark against the dark cell, WCAG 2.1 sRGB relative luminance,
-  // (Lmax + 0.05) / (Lmin + 0.05), computed for these exact values: magenta 6.145, WARN 6.779,
-  // INFO 8.043. That is not a WCAG conformance claim -- this is a 3D viewport, not body text --
+  // (Lmax + 0.05) / (Lmin + 0.05), recomputed after the accent migration moved WARN from the
+  // retired #E2803C to #D8AB18: magenta 6.145, WARN 8.955, INFO 8.043, and the selected mark on
+  // ACCENT 4.790. That is not a WCAG conformance claim -- this is a 3D viewport, not body text --
   // it is the measurement that says the checker is still readable as a checker when the cube is
   // small on screen, which a pair of similar values would not be.
 
@@ -100,9 +131,9 @@ void main()
     switch (kind)
     {
       case Noggit::MissingPlacementKind::WorldModel:
-        return WORLD_MODEL_COLOR;
+        return worldModelColor();
       case Noggit::MissingPlacementKind::WorldModelDoodad:
-        return WORLD_MODEL_DOODAD_COLOR;
+        return worldModelDoodadColor();
       case Noggit::MissingPlacementKind::Model:
       default:
         return MODEL_COLOR;
@@ -171,7 +202,7 @@ namespace Noggit::Rendering::Primitives
       shader.uniform("centre", instance.centre);
       shader.uniform("half_extent", half);
       shader.uniform("cell_size", half * 2.0f / cellsPerEdgeFor(instance.kind));
-      shader.uniform("mark_color", instance.selected ? SELECTED_COLOR : markColorFor(instance.kind));
+      shader.uniform("mark_color", instance.selected ? selectedColor() : markColorFor(instance.kind));
       shader.uniform("flat_fill", instance.selected ? 1.0f : 0.0f);
 
       gl.drawElements(GL_TRIANGLES, _indices_vbo, 36, GL_UNSIGNED_SHORT, nullptr);

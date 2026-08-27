@@ -2,6 +2,7 @@
 
 #include "ExtendedSlider.hpp"
 #include <noggit/TabletManager.hpp>
+#include <noggit/ui/DesignTokens.hpp>
 #include <noggit/ui/FontAwesome.hpp>
 
 #include <cfloat>
@@ -11,6 +12,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QString>
 #include <QVBoxLayout>
 
 using namespace Noggit::Ui::Tools::UiCommon;
@@ -36,6 +38,99 @@ ExtendedSlider::ExtendedSlider(QWidget* parent)
   // end of the same row. Nothing here can change the row's height: an 11px label has a 13px
   // line box and the row is set by the 20px slider band and the 20x20 grip.
   _ui.label->setObjectName(QStringLiteral("slider-prefix"));
+
+  // THE UNFILLED HALF OF THE TRACK DID NOT EXIST, AND THAT IS WHY THIS CONTROL READ AS A
+  // HAIRLINE WITH A DISC FLOATING ON IT.
+  //
+  // The shipped sheet fills QSlider::add-page with bg.void #100E0B and gives it no border. The
+  // slider sits on a section card whose fill is bg.panel #292621. Measured, WCAG 2.1 sRGB,
+  // (Lmax + 0.05) / (Lmin + 0.05): 1.279:1. That is the same number the surface ladder in
+  // DesignTokens.hpp publishes for void -> panel, and it is a quarter of the 3:1 floor a
+  // graphical mark needs, so the empty part of the track is not dim -- it is ABSENT.
+  //
+  // What that does to a real row is worse than it sounds, because of the ranges these sliders
+  // carry. TerrainTool's radius is 0..1000 and its default sits near the bottom of that span,
+  // so the accent sub-page is a few pixels wide and everything to the right of the grip is
+  // invisible. What is left on screen is a stub of colour and a 20px disc with nothing under
+  // it, which is exactly the "very thin groove with a small circle at the far left" the
+  // complaint describes. It is not a thin groove; it is a groove that stops existing where the
+  // value stops.
+  //
+  // THE SHEET SAYS THIS CANNOT BE FIXED AND ITS OWN PROGRESS BAR PROVES OTHERWISE. The QSlider
+  // block carries an "HONEST LIMIT" paragraph concluding that no stroke in this palette reaches
+  // 3:1 on bg.panel, so none is drawn. Three sections further down, QProgressBar solves the
+  // identical problem -- a bg.void well on bg.panel with an accent fill -- with a 1px edge
+  // #8A8378 border, under a comment that opens "AN EMPTY BAR USED TO BE NOTHING AT ALL" and
+  // quotes 5.138:1 against the track and 4.018:1 against the panel. Recomputed here rather than
+  // copied, and both reproduce: edge on bg.void 5.138:1, edge on bg.panel 4.018:1. The stroke
+  // the slider block ruled out is the one its neighbour already uses.
+  //
+  // THE COLOUR IS A NEUTRAL ON PURPOSE. edge is the design system's "edge of an enabled
+  // control" and it is 13 percent HSV saturation, so it makes no claim on the accent: whatever
+  // the accent becomes, this outline neither collides with it nor has to move with it. Against
+  // the gold accent the outline is only 1.707:1, and that is fine and deliberate -- the outline
+  // is not what separates the filled part from the empty part. The FILL against the well
+  // interior does that, at 8.772:1. The outline exists so that the empty part is a channel
+  // instead of nothing.
+  //
+  // DISABLED DROPS TO stroke.soft, 1.360:1 on bg.panel -- deliberately under the floor, which is
+  // this sheet's disabled signal everywhere else and is exempt under WCAG 2.1 SC 1.4.11.
+  //
+  // NOTHING HERE CAN MOVE THE GRIP, and that is checked against Qt's own arithmetic rather than
+  // assumed. QStyleSheetStyle::subControlRect derives the handle from the GROOVE rule, not from
+  // add-page: gr comes from the groove's box, cr = grooveRule.contentsRect(gr), and the handle
+  // rect is grooveRule-independent of any sibling sub-control
+  // (qstylesheetstyle.cpp:5631-5660, Qt 5.9.9 sources, unchanged in 5.15). add-page is only
+  // ever painted, into a rect derived from gr and the handle centre (:3260-3276). So the groove
+  // box stays 6px, the handle box stays 20px, the band stays 20px and no row changes height.
+  // The 1px border is drawn INSIDE the 6px add-page box, leaving a 4px bg.void interior.
+  //
+  // WHY A WIDGET-LEVEL SHEET RATHER THAN THE APPLICATION SHEET. This file cannot edit
+  // dist/noggit-themes. The mechanics are sound and are the documented hazard used deliberately
+  // for once: QStyleSheetStyle::styleRules collects the application sheet first and every
+  // object sheet after it, stamping the object sheets with a greater depth
+  // (qstylesheetstyle.cpp:1583-1627), and declarations() concatenates in that order so the last
+  // declaration of a property wins. Only `border` is declared here, so `background-color` and
+  // `border-radius` still come from the active theme and an accent change upstream still
+  // reaches this control untouched.
+  //
+  // AND IT IS AN IMPROVEMENT UNDER THE OTHER TWO SHIPPED SHEETS AS WELL, which is the answer to
+  // the obvious objection that this overwrites a theme it does not own. Dark and McNet BOTH
+  // already outline add-page -- they are the sheets that got this right -- but with colours that
+  // measure nothing: Dark's #2d2f34 is 1.216:1 on its own #1f2023 track and 1.101:1 on its
+  // #26282d panel, McNet's #383440 is 1.243:1 on #28252e and 1.146:1 on #2e2b35. edge measures
+  // 4.343:1 / 3.932:1 under Dark and 4.015:1 / 3.700:1 under McNet. Under "System" nothing
+  // happens at all: with no groove rule to make drawable, drawComplexControl hands the whole
+  // control to the base style and returns before add-page is consulted (:3241-3250).
+  //
+  // THIS RULE BELONGS IN THE APPLICATION SHEET, on every QSlider, not on the twenty-three
+  // ExtendedSlider construction sites this class has -- eighteen `new` in eight files, two more
+  // in ChunkManipulatorPanel and three promoted widgets in BrushStack.ui, counted for this pass
+  // rather than inherited. It is one declaration and it is deliberately trivial to delete from
+  // here the day it lands there.
+  _ui.slider->setStyleSheet
+    ( QStringLiteral ("QSlider::add-page:horizontal { border: 1px solid %1; }"
+                      "QSlider::add-page:horizontal:disabled { border: 1px solid %2; }")
+        .arg (QString::fromLatin1 (Design::EDGE), QString::fromLatin1 (Design::STROKE_SOFT))
+    );
+
+  // THE GRIP'S HOVER STATE WAS BORROWED FROM THE SHEET AND NOBODY SAID SO. The brief for this
+  // pass says QSlider "is a real QWidget subclass with its own hover handling, so it should be
+  // fine" -- it is not, and the assumption was checked rather than repeated. QSliderPrivate::
+  // init() sets WA_WState_OwnSizePolicy and nothing else; the only place WA_Hover is ever set
+  // on a QSlider is QStyleSheetStyle::polish, which sets it only when some matching rule
+  // mentions :hover (qstylesheetstyle.cpp:2800-2808, Qt 5.9.9). Without the attribute
+  // QSliderPrivate::updateHoverControl reads it at :162 and returns early, so no repaint is
+  // issued when the pointer crosses the grip.
+  //
+  // So the four-state grip the theme draws -- 2px ring at rest, 3px focused, 4px hovered, 6px
+  // pressed -- exists only while a sheet that happens to name :hover is loaded. It is CrimsonSlate
+  // that keeps it alive today, via QSlider::handle:horizontal:hover; under "System", which
+  // SettingsPanel offers and which applies no sheet at all, the hover half of that never ran.
+  // Setting the attribute here makes the repaint the widget's own property instead of a
+  // side effect of a selector somebody else wrote. This is the same statement OpacitySlider
+  // makes in texturing_tool.cpp and for the same reason.
+  _ui.slider->setAttribute(Qt::WA_Hover, true);
 
   // popup
   _tablet_popup = new QWidget(this);

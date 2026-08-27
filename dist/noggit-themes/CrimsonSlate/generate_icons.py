@@ -89,9 +89,11 @@ HAIRLINE   = (0x40, 0x3B, 0x35)   # stroke.soft
 CONTROL    = (0x56, 0x50, 0x49)   # stroke -- disabled and sub-threshold only
 CONTROL_HI = (0x74, 0x6D, 0x64)   # stroke.hi, separators on bg.overlay
 EDGE       = (0x8A, 0x83, 0x78)   # edge, the visible edge of a control
-ACCENT     = (0xDF, 0xA5, 0x2E)   # accent
-ACCENT_HOV = (0xF0, 0xBA, 0x4A)   # accent.hi, hover on a filled accent
-ACCENT_DIM = (0xB8, 0x80, 0x1F)   # accent.press
+ACCENT     = (0xE5, 0x40, 0x5C)   # accent -- crimson, hue 349.8
+ACCENT_HOV = (0xF3, 0x68, 0x7F)   # accent.hi, hover on a filled accent AND the accent mark
+                                  # colour on any surface lighter than bg.panel
+ACCENT_DIM = (0xC3, 0x28, 0x42)   # accent.press -- no raster below uses it, kept so these
+                                  # constants stay the same set the sheet declares
 INK        = (0x10, 0x0E, 0x0B)   # bg.void, used as ink ON an accent fill
 TEXT_HI    = (0xF3, 0xF0, 0xE9)   # text.hi
 TEXT_BODY  = (0xE4, 0xDF, 0xD7)   # text
@@ -322,6 +324,18 @@ def build(outdir, out_scale=1):
     # surfaces, which is the whole point. Change one of these and re-run this
     # script, or the PNG rings and the CSS-drawn borders beside them drift
     # apart.
+    #
+    # THE CHECKED FILL IS CRIMSON NOW, and for a state indicator the figure that
+    # matters is the one BETWEEN THE TWO STATES rather than against the page:
+    # unchecked is the bg.void well, checked is accent #E5405C, and those are
+    # 4.790:1 apart -- well over the 3:1 SC 1.4.11 asks of a state. The tick
+    # stays INK on both checked rasters, 4.790:1 on the accent fill and 6.513:1
+    # on the accent.hi hover fill, where text.hi would have been 3.535:1 and
+    # 2.600:1 and failed the 4.5 a mark-as-text owes.
+    # The checked indicator's own edge against the bg.panel it sits on is
+    # 3.746:1 (accent) and 5.093:1 (accent.hi). Gold gave 6.860 and 8.488 there,
+    # so this is one of the few places where the crimson accent COSTS contrast
+    # rather than gaining it; both still clear the 3:1 graphical floor.
     specs = [
         ('icon_checkbox_unchecked.png',          INPUT,   EDGE,       None),
         ('icon_checkbox_unchecked_hover.png',    INPUT,   TEXT_DIM,   None),
@@ -413,12 +427,15 @@ def build(outdir, out_scale=1):
     # must be light, and text.hi is 16.93:1 there.
     #
     # That fixes the pen and leaves the FILL as the only free variable, which
-    # is where the sheet used to fail: against bad #E86F62 this glyph measures
-    # 2.68:1, not the "ink on bad, 6.31:1" the sheet's comment asserted -- that
-    # described a glyph nothing here has ever written. theme.qss now darkens
-    # the close fills to close.hover #A75047 and close.press #974840, on which
-    # this pen measures 4.75:1 and 5.56:1, and the plates still read 3.56:1 and
-    # 3.04:1 against the bar as state marks. Both keep bad's hue.
+    # is where the sheet used to fail: against bad this glyph measures 2.544:1,
+    # not the "ink on bad, 6.31:1" the sheet's comment asserted -- that
+    # described a glyph nothing here has ever written. theme.qss darkens the
+    # close fills instead, and BOTH FOLLOWED bad OUT OF RED when the accent
+    # became crimson: they are close.hover #A3501F and close.press #98491B at
+    # bad's new hue 22.1, on which this pen measures 4.954:1 and 5.585:1, and
+    # the plates read 3.418:1 and 3.032:1 against the bar as state marks. Both
+    # still keep bad's hue, which is the point -- one colour family has to mean
+    # "this destroys something" across the whole application.
     #
     # So: change this colour and the two fills in theme.qss stop clearing the
     # floor. They are a pair.
@@ -462,7 +479,13 @@ def build(outdir, out_scale=1):
     made.append(save(c, 'handle_horizontal.png', outdir))
 
     # ---- menu check mark (no box, for QMenu::indicator) --------------------
-    for name, colour in (('icon_menu_check.png', ACCENT),
+    # ACCENT_HOV AND NOT ACCENT, because this is the one generated glyph that
+    # lands on bg.overlay: a QMenu's fill is #4A4640, where accent measures
+    # 2.329:1 and misses the 3:1 floor a state mark owes, and accent.hi measures
+    # 3.167:1. It is the same surface rule theme.qss states for every accent
+    # mark -- plain accent only where both neighbours are bg.void, bg.alt or
+    # bg.panel -- applied to a raster instead of to a border.
+    for name, colour in (('icon_menu_check.png', ACCENT_HOV),
                          ('icon_menu_check_disabled.png', TEXT_DIS)):
         c = new(SZ, SZ)
         stroke_path(c, CHECK, colour, 3.2)

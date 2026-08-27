@@ -60,7 +60,10 @@ namespace
   //                    end to end 2.057:1, where the previous palette managed 1.321:1 total
   //   text on panel    text.hi 13.24  text 11.36  text.dim 7.58  text.off 3.44
   //   text on void     text.hi 16.93  text 14.53  text.dim 9.70  text.off 4.40
-  //   ink on accent    8.77:1, against 4.88:1 for the same ink on the old crimson
+  //   ink on accent    4.79:1. THE ACCENT IS CRIMSON: it is the value the project-selection
+  //                    window has always used, and the status ramp moved with it so that
+  //                    "selected" and "this will destroy your data" are 32.3 degrees apart --
+  //                    see the ACCENT and STATUS sections of DesignTokens.hpp.
   QColor const TOKEN_BG_VOID     (0x10, 0x0E, 0x0B);
   QColor const TOKEN_BG_ALT      (0x1D, 0x19, 0x16);
   QColor const TOKEN_BG_PANEL    (0x29, 0x26, 0x21);
@@ -74,8 +77,13 @@ namespace
   QColor const TOKEN_TEXT        (0xE4, 0xDF, 0xD7);
   QColor const TOKEN_TEXT_DIM    (0xBF, 0xB7, 0xAA);
   QColor const TOKEN_TEXT_OFF    (0x7F, 0x78, 0x6A);
-  QColor const TOKEN_ACCENT      (0xDF, 0xA5, 0x2E);
-  QColor const TOKEN_ACCENT_PRESS(0xB8, 0x80, 0x1F);
+  QColor const TOKEN_ACCENT      (0xE5, 0x40, 0x5C);
+  // accent.hi is here and accent.press is not, and that is the palette's own arithmetic rather
+  // than a preference. A QPalette role is unscoped -- whatever Qt paints with it lands on
+  // whichever surface the widget happens to have -- and plain accent measures 2.925:1 on
+  // bg.raised and 2.329:1 on bg.overlay, under the 3:1 a mark owes and far under the 4.5:1 a
+  // piece of text owes. accent.hi measures 3.977:1 and 3.167:1, and 5.093:1 on bg.panel.
+  QColor const TOKEN_ACCENT_HI   (0xF3, 0x68, 0x7F);
   QColor const TOKEN_INFO        (0x6F, 0xAE, 0xDC);
 
   char const* const DEFAULT_THEME_NAME = "CrimsonSlate";
@@ -109,15 +117,28 @@ namespace
 
     // A hyperlink is information, not an action. The accent means "the thing you are acting on"
     // and nothing else, so Link takes info (#6FAEDC, 6.29:1 on the panel) and only the visited
-    // state -- which is a past action -- borrows the accent's pressed value.
+    // state -- which is a past action -- borrows the accent.
+    //
+    // IT BORROWS accent.hi AND NOT accent.press, AND THAT IS A REPAIR. A visited link is body
+    // TEXT and owes 4.5:1. The pressed accent was #B8801F and measured 4.41:1 on bg.panel --
+    // already under the floor before this change -- and the crimson pressed value #C32842
+    // measures 2.657:1, which would have made a documented near-miss into an obvious failure.
+    // accent.hi is 5.093:1 on bg.panel and 6.513:1 on bg.void, so a visited link clears the
+    // body floor on both surfaces a link is ever drawn on, and it is still unmistakably the
+    // accent rather than a second colour.
     palette.setColor (QPalette::Link, TOKEN_INFO);
-    palette.setColor (QPalette::LinkVisited, TOKEN_ACCENT_PRESS);
+    palette.setColor (QPalette::LinkVisited, TOKEN_ACCENT_HI);
     palette.setColor (QPalette::Highlight, TOKEN_ACCENT);
 
-    // Ink on the accent, not white: measured against #DFA52E, #100E0B gives 8.77:1 where
-    // #F3F0E9 gives only 1.93:1. Gold is a light accent, so the ink has to be the dark end of
-    // the palette; the old crimson managed 4.88:1 with the same ink, which is why the primary
-    // button was always marginal.
+    // Ink on the accent, not white, and under a crimson accent that is measured rather than
+    // inherited: #100E0B on #E5405C is 4.790:1 and #F3F0E9 on it is 3.535:1, so ink is the only
+    // one of the two that clears the 4.5:1 body floor at all. Gold gave ink 8.77:1, so this is
+    // the place the accent change costs the most contrast in the whole palette -- it is above
+    // the floor and it is above it deliberately, not by accident.
+    //
+    // A SOLID ACCENT SURFACE THEREFORE CARRIES INK AND NEVER LIGHT TEXT. The one exception in
+    // the design is the PRESSED accent fill, which is dark enough that the relationship
+    // inverts: see the note at TOKEN_ACCENT_HI above and the ACCENT section of DesignTokens.hpp.
     palette.setColor (QPalette::HighlightedText, TOKEN_BG_VOID);
     palette.setColor (QPalette::PlaceholderText, TOKEN_TEXT_DIM);
 
@@ -152,7 +173,14 @@ namespace
 
     // Disabled is the group that decides whether a greyed-out control is readable or invisible.
     // Highlight drops to bg.raised so a selection in an unfocused, disabled view is a recess
-    // rather than a gold plate; HighlightedText is text.dim, 5.92:1 on it.
+    // rather than a crimson plate; HighlightedText is text.dim, 5.922:1 on it.
+    //
+    // HONEST NOTE ON THAT PAIR. The disabled plate has to be told apart from the ENABLED
+    // Highlight, and in luminance those two got CLOSER, not further: bg.raised against accent
+    // is 2.925:1 where against gold it was 5.356:1. What carries the difference now is chroma
+    // rather than brightness -- bg.raised is 9.1% saturated in HSL and the accent is 76.0% --
+    // and that is a difference in kind, which is the same argument the segmented chips in
+    // theme.qss are built on.
     palette.setColor (QPalette::Disabled, QPalette::WindowText, TOKEN_TEXT_OFF);
     palette.setColor (QPalette::Disabled, QPalette::Text, TOKEN_TEXT_OFF);
     palette.setColor (QPalette::Disabled, QPalette::ButtonText, TOKEN_TEXT_OFF);

@@ -1183,17 +1183,70 @@ namespace Noggit
       // strokes 0.0 -> 35.0, a pill flush to both edges of the widget with no bare pixel left.
       // The radius loses the same half -- 6 - 1 = 5 on the path, plus 1px of pen outside it --
       // so the OUTER corner keeps HANDLE_RADIUS.
+      // FOCUS IS NEW, AND IT IS THE ONE STATE THIS GRIP WAS STILL MISSING. QSlider is
+      // Qt::StrongFocus, so this control is tab-reachable like every other slider in the
+      // editor, and until now it drew identically focused and unfocused -- the paintEvent read
+      // isEnabled, isSliderDown and underMouse and never hasFocus. The theme's grip for the
+      // ExtendedSlider rows gained a focus rule in the same pass that gave it hover and pressed
+      // ones, so the styled sliders answered the keyboard and the painted one did not.
+      //
+      // IT IS BUILT THE SAME WAY THE STYLED GRIP'S FOCUS RULE IS: the core inverts to ink and
+      // the ring becomes the accent, so the two colours swap roles rather than one of them
+      // getting louder. That construction is the only one that survives a groove which is a
+      // VALUE RAMP, and this is why -- measured against both ends of the ramp, WCAG 2.1 sRGB,
+      // (Lmax + 0.05) / (Lmin + 0.05):
+      //
+      //                         vs ramp.lo   vs ramp.hi
+      //   ink core                  1.026      16.932
+      //   accent ring               8.996       1.930
+      //
+      // Neither colour is legible at both ends and the pair always is: at the dark end the
+      // accent ring carries the grip at 8.996:1 and at the pale end the ink core carries it at
+      // 16.932:1, with ring against core a constant 8.772:1. Against the UNFOCUSED appearance
+      // the core alone moves ink against accent, 8.772:1, far over the 3:1 WCAG 2.1 SC 2.4.13
+      // asks of a focus indicator.
+      //
+      // PRECEDENCE MATCHES THE SHEET'S, which orders its four state rules focus, hover,
+      // pressed, disabled and therefore resolves them disabled > pressed > hover > focus. The
+      // chain below is in that order, so a focused grip that is also being dragged reads as
+      // pressed, which is what the styled ones do.
+      //
+      // THE RING GROWS BY A PIXEL AND THE PILL DOES NOT MOVE. The whole point of the
+      // handle_ring / 2 inset derived below is that the outer edge of the stroke lands on
+      // HANDLE_WIDTH x HANDLE_HEIGHT whatever the pen width is, so a 3px focus ring is drawn
+      // inside the same 33 x 12 box as the 2px resting one. Worked through for the 35px widget:
+      // x0 = (35 - 33) / 2 + 1.5 = 2.5 and width = 33 - 3 = 30, so the path runs 2.5 -> 32.5
+      // and a 3px pen covers 1.0 -> 34.0 -- the same 33 painted pixels with the same one bare
+      // pixel either side that the 2px ring produces. Vertically, y0 = top + 1.5 and height
+      // 12 - 3 = 9 puts the pen's outer edge on top and top + 12 exactly. The radius loses the
+      // same half, 6 - 1.5 = 4.5, so the OUTER corner is still HANDLE_RADIUS. Nothing about the
+      // grabbable band changes: that comes from the sheet's declared handle box, not from here.
+      //
+      // ONE DEPENDENCY OUTSIDE THIS FILE, and it is live right now rather than hypothetical.
+      // Every colour here is a Design:: token, and Design::ACCENT is what makes this grip agree
+      // with the styled ones. If the sheet's accent moves and DesignTokens.hpp does not move
+      // with it, this grip keeps the OLD accent while every QSlider next to it takes the new
+      // one -- and so do the other painted sites, minimap_widget and SpawnTilePicker. The two
+      // lists have no compile-time link; DesignTokens.hpp says so itself at "KEEP THIS BLOCK
+      // EQUAL TO theme.qss's palette header".
       constexpr qreal HANDLE_WIDTH = 33.0;
       constexpr qreal HANDLE_HEIGHT = 12.0;
       constexpr qreal HANDLE_RADIUS = 6.0;
       constexpr qreal HANDLE_RING = 2.0;
+      constexpr qreal HANDLE_RING_FOCUS = 3.0;
+
+      bool const focused (isEnabled() && !isSliderDown() && !underMouse() && hasFocus());
 
       char const* const handle_core
         ( !isEnabled()   ? Design::STROKE
         : isSliderDown() ? Design::ACCENT_PRESS
         : underMouse()   ? Design::ACCENT_HI
+        : focused        ? Design::INK
                          : Design::ACCENT
         );
+
+      char const* const handle_ring_color (focused ? Design::ACCENT : Design::INK);
+      qreal const handle_ring (focused ? HANDLE_RING_FOCUS : HANDLE_RING);
 
       // CENTRED ON THE STYLE'S HANDLE RECT, NOT ANCHORED TO ITS TOP, and that is the one line
       // here that is defensive rather than cosmetic. The rect comes from QStyleSheetStyle,
@@ -1217,17 +1270,17 @@ namespace Noggit
         );
 
       QRectF const handle_box
-        ( (width() - HANDLE_WIDTH) / 2.0 + HANDLE_RING / 2.0
-        , handle_top + HANDLE_RING / 2.0
-        , HANDLE_WIDTH - HANDLE_RING
-        , HANDLE_HEIGHT - HANDLE_RING
+        ( (width() - HANDLE_WIDTH) / 2.0 + handle_ring / 2.0
+        , handle_top + handle_ring / 2.0
+        , HANDLE_WIDTH - handle_ring
+        , HANDLE_HEIGHT - handle_ring
         );
 
       p.setBrush(Design::color(handle_core));
-      p.setPen(QPen(Design::color(Design::INK), HANDLE_RING));
+      p.setPen(QPen(Design::color(handle_ring_color), handle_ring));
       p.drawRoundedRect( handle_box
-                       , HANDLE_RADIUS - HANDLE_RING / 2.0
-                       , HANDLE_RADIUS - HANDLE_RING / 2.0
+                       , HANDLE_RADIUS - handle_ring / 2.0
+                       , HANDLE_RADIUS - handle_ring / 2.0
                        );
       p.setRenderHint(QPainter::Antialiasing, false);
 

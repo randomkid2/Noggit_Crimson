@@ -5,8 +5,8 @@
  *
  * The DIRECTORY is still CrimsonSlate and must stay that way: QSettings stores
  * the chosen theme by folder name, so renaming it silently resets every
- * existing user to the default theme. Crimson survives in the palette, but as
- * the DESTRUCTIVE rank only -- the accent is gold.
+ * existing user to the default theme. The name is now literal again: crimson
+ * is the accent, not a rank kept off to one side.
  *
  * Drop-in theme: the settings panel lists any directory under themes/ that
  * contains a theme.qss. Every url() below is written as
@@ -32,10 +32,11 @@
  *
  * HUE DIRECTION. Every neutral is built at hue 30-40 degrees and 6-19%
  * saturation -- warm slate, not photocopier grey. Blizzard chrome is warm iron
- * and old leather lit by gold. Gold is also the only accent that stays fully
- * saturated at the lightness this palette needs; a blue at the same luminance
- * washes out (#6FAEDC is only 61% saturated at L=0.388), so the choice is
- * arithmetic, not taste.
+ * and old leather. The one chromatic rank is crimson, and it is chromatic in a
+ * way nothing else in the ladder is: #E5405C is 76.0% saturated in HSL where
+ * the lightest neutral, edge.lit #A9A296, is 9.9%. That gap is what lets a 1px
+ * accent line read as a colour rather than as another grey, which is the job
+ * the accent has to do at every size in this sheet.
  *
  * SURFACES -- the depth model. The window RECEDES, the panel is the working
  * plane, things you PRESS come forward, fields you TYPE INTO go back to the
@@ -136,52 +137,127 @@
  *
  * ACCENT -- ONE meaning: "the thing you are acting on". Selection, focus,
  * checked, the active tool, slider fill, progress, the tab underline, the dock
- * title rule. The accent moved from crimson to gold because crimson cannot be
- * both "selected" and "will destroy your data": the old accent #E8543F and the
- * old error #E0574B measured 1.024:1 apart in luminance and 4.0 degrees in
- * hue, i.e. the same colour, which is why red meant eight different things.
- * Gold against crimson is 34.5 degrees and 1.389:1.
- *   accent        #DFA52E   ink on it 8.77:1 (crimson managed only 4.88:1)
- *   accent.hi     #F0BA4A   hover on a FILLED accent surface; ink 10.85:1
- *   accent.press  #B8801F   pressed on a FILLED accent surface; ink 5.64:1
- *   ink           #100E0B   = bg.void. The text drawn ON any accent or status
- *                           fill. Note the press no longer has to invert to
- *                           light text the way crimson did.
- * Accent as a 2px/3px RULE on bg.overlay is 4.27:1, over the 3:1 floor for a
- * non-text state indicator. Washes: 0.24 alpha for "selected", 0.34 for
- * "selected AND hovered", permitted on bg.panel and darker only.
+ * title rule. THE ACCENT IS CRIMSON, and it is the same crimson the project
+ * window has always used -- the launcher's brand.crimson #E5405C -- so the
+ * editor and the launcher are one identity now instead of two.
  *
- * STATUS -- meaning, never decoration.
- *   ok            #4FB87E   panel 6.09  raised 4.76  ink-on-it 7.79
- *   warn          #E2803C   panel 5.30  raised 4.14  ink-on-it 6.78
- *   bad           #E86F62   panel 4.94  raised 3.86  ink-on-it 6.31
- *   info          #6FAEDC   panel 6.29  raised 4.91  ink-on-it 8.04
- *   bad.press     #C85F54   the destructive button pressed; ink on it 4.79.
- *                           It was #C4574A, which put ink at 4.41 -- under the
- *                           4.5 floor on an ENABLED control, so the disabled
- *                           exemption did not apply. Lightened until ink
- *                           clears, and it is still 1.32:1 below bad, so the
- *                           press step is as legible as it was.
- *   close.hover   #A75047   title-bar close, hovered. See below: that one
- *                           glyph is a polish-time PNG and cannot restate
- *                           itself per pseudo-state, so it stays text.hi and
- *                           the FILL is what moved. text.hi on it 4.75:1, and
- *                           the 40px plate reads 3.56:1 against the bg.void
- *                           bar it sits in.
- *   close.press   #974840   title-bar close, pressed. text.hi 5.56:1, plate
- *                           vs bar 3.04:1, and 1.17:1 below close.hover.
- *   bad.tint      #2E1C17   bad at 14% alpha over bg.void -- an error field
- *   warn.tint     #2D1E12   warn at 14% alpha over bg.void -- a warning field
+ * THE COLLISION THAT PUT THE ACCENT ON GOLD WAS REAL AND IS SOLVED HERE, NOT
+ * IGNORED. The pre-gold palette had accent #E8543F and error #E0574B measuring
+ * 1.024:1 apart in luminance and 4.0 degrees in hue -- the same colour -- so
+ * red meant selected, focused, checked, active tool, pressed, danger, error,
+ * delete and hover-on-close simultaneously. Putting the accent back on crimson
+ * recreates that exactly UNLESS the status ramp moves too, so it moved: bad is
+ * now a vermillion 32.3 degrees from the accent and warn an amber 56.1 degrees
+ * from it. The arithmetic is under STATUS below and it is the load-bearing
+ * half of this change.
+ *
+ * ONE CRIMSON CANNOT SERVE EVERY SURFACE, which is measured rather than
+ * assumed. Gold sat at relative luminance 0.427955 and cleared the 3:1
+ * non-text floor as a mark on every surface in the ladder. Crimson sits at
+ * 0.210975 and does not: on bg.raised it is 2.925:1 and on bg.overlay 2.329:1.
+ * So the accent is a RAMP WITH A SURFACE RULE, which is exactly the shape this
+ * sheet already uses for neutrals -- edge #8A8378 is barred from bg.overlay
+ * and stroke.hi #746D64 serves there instead.
+ *   accent        #E5405C   hue 349.8, sat 76.0%, L 0.210975. EVERY accent
+ *                           FILL, and every accent mark drawn on bg.void
+ *                           (4.790), bg.alt (4.339) or bg.panel (3.746).
+ *                           BARRED as a mark from bg.raised (2.925) and
+ *                           bg.overlay (2.329). Ink on it 4.790.
+ *   accent.hi     #F3687F   hue 350.1, L 0.304876. Every accent mark on
+ *                           bg.raised (3.977) or bg.overlay (3.167), EVERY
+ *                           focus ring, and the hover of a filled accent
+ *                           surface. Ink on it 6.513. It is the launcher's
+ *                           #F05A73 lifted 1.106:1, for one reason: #F05A73
+ *                           measures 2.862:1 on bg.overlay and misses the
+ *                           floor by 4.6 percent. One ramp serves both
+ *                           windows; there is no second crimson.
+ *   accent.press  #C32842   hue 349.9, L 0.135130. Pressed FILLS only. It
+ *                           carries text.hi at 4.983:1 and NEVER ink, which
+ *                           is 3.398:1 on it.
+ *   ink           #100E0B   = bg.void. The text drawn ON an accent or status
+ *                           fill light enough to take it.
+ * THE RULE FOR CHOOSING BETWEEN THEM, and it is mechanical rather than a
+ * matter of taste: A MARK TAKES PLAIN accent ONLY WHERE BOTH OF ITS NEIGHBOURS
+ * ARE bg.void, bg.alt OR bg.panel. Otherwise accent.hi. A 1px rule has two
+ * sides and SC 1.4.11 asks 3:1 of both, so the surround counts as much as the
+ * fill -- which is what makes a checked tool button different from a checked
+ * push button even though both recess to bg.void:
+ *   QPushButton:checked      bg.void fill 4.790 / bg.panel surround 3.746
+ *                            -> accent
+ *   QToolButton:checked      bg.void fill / bg.raised toolbar 2.925 or a
+ *                            bg.overlay viewport card 2.329 -> accent.hi
+ * EVERY FOCUS RING IS accent.hi without exception, because a focus ring can
+ * coincide with hover and every hover face in this sheet is one surface
+ * LIGHTER than the resting one: a focused push button hovered is bg.raised, a
+ * focused tool button on a viewport card is bg.overlay. accent fails both,
+ * accent.hi clears both.
+ * That closes something the gold sheet listed as an honest limit wherever the
+ * checked mark stays on plain accent -- on a push button and on a segmented
+ * chip, checked and focused are now 1.360:1 apart in shade as well as
+ * different in position, where under gold they were the identical ring.
+ * WHY THE PRESS INVERTS TO LIGHT TEXT AND GOLD DID NOT. Ink clears 4.5:1 only
+ * above relative luminance 0.195178, and text.hi clears it only below 0.155018
+ * -- between those two numbers NO flat label reaches the floor, so a pressed
+ * accent fill has to sit on one side or the other. accent.press is at 0.135130
+ * and is safely in the text.hi half. Gold's press was at 0.257276 and stayed
+ * in the ink half, which is why that sheet could say the press no longer had
+ * to invert. It does again, deliberately, and both ends clear the floor: ink
+ * 4.790:1 at rest, text.hi 4.983:1 pressed.
+ * WASHES over bg.void: 0.24 alpha for "selected" composites to #431A1E, a
+ * 1.290:1 plate carrying text.hi at 13.131:1 with the accent rule on it at
+ * 3.715:1; 0.34 for "selected AND hovered" gives #581F27, 1.505:1, text.hi
+ * 11.249:1, rule 3.182:1. Permitted on bg.panel and darker only.
+ *
+ * STATUS -- meaning, never decoration. THE TWO WARM RANKS MOVED WITH THE
+ * ACCENT. warn walked up into the amber the accent vacated and bad walked out
+ * of red into vermillion, because a crimson accent beside a coral error is the
+ * one arrangement this palette has already been burned by.
+ *                 hue    panel  raised overlay ink-on-it
+ *   ok  #4FB87E  146.9   6.093  4.757  3.788   7.791   unchanged
+ *   warn #D8AB18  45.9   7.003  5.468  4.354   8.955   was #E2803C at 24.6
+ *   bad #EF752E   22.1   5.206  4.065  3.237   6.657   was #E86F62 at  5.8
+ *   info #6FAEDC 205.3   6.289  4.911  3.910   8.043   unchanged
+ *   bad.press     #CE5E1C   the destructive button pressed; ink on it 4.811
+ *                           and 1.384:1 below bad, so the press step is felt.
+ *                           The old pair was #C85F54 at 4.79 and 1.32:1.
+ *   close.hover   #A3501F   title-bar close, hovered. That one glyph is a
+ *                           polish-time PNG and cannot restate itself per
+ *                           pseudo-state, so the pen stays text.hi and the
+ *                           FILL is what moves. text.hi on it 4.954:1 and the
+ *                           40px plate reads 3.418:1 against the bg.void bar
+ *                           it sits in. Both figures improved on the coral
+ *                           pair they replace (4.75 and 3.56).
+ *   close.press   #98491B   text.hi 5.585:1, plate vs bar 3.032:1, and
+ *                           1.127:1 below close.hover. HONEST LIMIT: that
+ *                           step was 1.17:1 before. Both plates have to fit
+ *                           between the 3:1 a plate owes the bar and the
+ *                           4.5:1 the pen owes the plate, and at bad's new
+ *                           hue that window is narrower, so the press step
+ *                           paid for the pen gaining margin.
+ *   bad.tint      #2F1C10   bad at 14% alpha over bg.void -- an error field.
+ *                           text.hi on it 14.254:1, its own border 5.604:1.
+ *   warn.tint     #2C240D   warn at 14% -- a warning field. text.hi 13.515:1,
+ *                           its own border 7.147:1.
  * Status colours are TEXT only on bg.void and bg.panel, where all four clear
  * 4.5:1. On bg.raised and bg.overlay they appear as 1px borders and as fills,
- * where the floor is 3:1 and all four clear it.
- * SEPARATION: accent vs bad 34.5 deg / 1.389:1, vs ok 106.5 deg, vs info
- * 165.0 deg. HONEST LIMIT: accent vs warn is 15.8 deg and warn vs bad is 18.8.
- * Four warm signals cannot all be 30 degrees apart. warn and bad are an
- * escalation pair and adjacency is the traffic-light convention. accent vs
- * warn is disambiguated by FORM and this is a hard rule: a warn or error input
- * takes a coloured border AND a 14%-alpha tinted fill; a focused input takes a
- * 1px accent border and NEVER a tint. Never rely on the hue alone.
+ * where the floor is 3:1 and all four clear it -- bad is the tightest of the
+ * four at 3.237:1 on bg.overlay.
+ * SEPARATION FROM THE ACCENT, which is what this revision exists to fix:
+ *   accent vs bad     32.3 deg / 1.390:1   -- it was 16.0 deg with this accent
+ *   accent vs warn    56.1 deg / 1.870:1
+ *   accent vs ok     157.0 deg
+ *   accent vs info   144.5 deg
+ * The tightest gap left in the warm arc is warn vs bad at 23.9 degrees, where
+ * the gold sheet's tightest was 15.8 (accent vs warn) and its warn vs bad was
+ * 18.8. So every warm pair got FURTHER apart, not just the one that had to.
+ * warn and bad stay an escalation pair and adjacency there is the traffic-
+ * light convention; 23.9 degrees is the honest limit and it is stated, not
+ * hidden.
+ * FORM CARRIES ITS SHARE AND THAT IS A HARD RULE, because a hue gap is never
+ * allowed to be the only cue: a destructive button is an EDGE and not a fill
+ * until it is hovered, where the accent's primary button is a fill from the
+ * start; a warn or error input takes a coloured border AND a 14%-alpha tinted
+ * fill, where a focused input takes a 1px accent.hi border and NEVER a tint.
  *
  * The texture-level slider value ramp, the one gradient in this file:
  *   ramp.hi       #F2F0EC   top of the ramp
@@ -189,29 +265,27 @@
  * Neither is pure white or pure black -- the editor has to stay legible beside
  * a sunlit viewport, and pure endpoints bloom against it.
  *
- * THE BRAND RANK -- the project-selection window and brand furniture ONLY.
- * This is a product identity, not a second accent, and the rule that keeps it
- * honest is set out in full at the launcher section near the foot of this file.
- * It appears on exactly one window, on the banner, the wordmark, the primary
- * action's fill and border, the section ticks and a selected project card.
- * Nothing in the editor's chrome, none of the 34 generated icons, no
- * DesignTokens value and no QPalette role moves.
- *   brand.crimson    #E5405C   hue 349.8, sat 76.0%, L 57.5%. void 4.790,
- *                              band.left 4.620, band.right 4.939, panel 3.746.
- *                              BARRED FROM bg.raised: 2.925, under the 3:1
- *                              graphical floor. Ink on it 4.790; text.hi on it
- *                              3.535, so a SOLID crimson surface carries ink
- *                              and never light text.
- *   brand.crimson.hi #F05A73   hover on a brand border. 5.887 on void, 4.689
- *                              on the hover fill below, and 1.229:1 above
- *                              brand.crimson so the step is felt.
+ * THE BRAND FURNITURE -- the project-selection window's own tokens. It is no
+ * longer a separate RANK: brand.crimson and the accent are now the same value,
+ * which is the entire point of this revision. What is listed here is the set
+ * of surfaces and composites that exist only on the two brand windows.
+ *   brand.crimson    = accent #E5405C. void 4.790, band.left 4.620,
+ *                              band.right 4.939, panel 3.746. BARRED as a mark
+ *                              from bg.raised (2.925) exactly as the ACCENT
+ *                              section above says, which is why every ring on
+ *                              those two windows is accent.hi. Ink on it
+ *                              4.790; text.hi on it 3.535, so a SOLID crimson
+ *                              surface carries ink and never light text.
+ *   brand.crimson.hi = accent.hi #F3687F. Hover on a brand border. 6.513 on
+ *                              void, 4.377 on the card hover fill below, and
+ *                              1.360:1 above the accent so the step is felt.
  *   band.left        #17120F   the banner band at its lit end
  *   band.right       #0B0908   and at its dark end. 1.069:1 apart -- a felt
  *                              darkening, not a boundary.
  *   brand.fill       #2E1516   brand.crimson at 14% straight sRGB alpha over
  *                              bg.void. text.hi on it 14.940, the crimson
  *                              border on it 4.226.
- *   brand.fill.hi    #3F191D   at 22%. text.hi 13.487, crimson.hi border 4.689,
+ *   brand.fill.hi    #3F191D   at 22%. text.hi 13.487, accent.hi border 5.188,
  *                              and 1.108:1 above brand.fill.
  *   brand.fill.lo    #501D23   at 30%. text.hi 11.973, crimson border 3.387,
  *                              and 1.248:1 above brand.fill.
@@ -220,15 +294,18 @@
  *                              text.hi 11.378, text.dim 6.517, info 5.404.
  *   card.select      #3C2927   brand.crimson at 10% over bg.panel -- a project
  *                              card selected. text.hi 11.992, text.dim 6.869,
- *                              info 5.696, crimson border on it 3.392.
+ *                              info 5.696, accent border on it 3.392 and the
+ *                              accent.hi hover border 4.613.
  * THE FILLS ARE PRE-COMPOSITED for the same reason bad.tint and warn.tint are:
  * a widget-level sheet outranks this one, so a control dressed from C++ has to
  * be able to name the identical literal. An rgba() would composite against
  * whatever happened to be underneath.
- * SEPARATION: brand.crimson is 16.0 degrees from bad #E86F62, which is the same
- * order this sheet already lives with between accent and warn (15.8), and 50.5
- * degrees from the accent. It is safe on this one window for a checkable
- * reason -- there is no destructive control on it -- and FORM does the rest: a
+ * SEPARATION: brand.crimson IS the accent, so the only separation that has to
+ * hold is the one the ACCENT section proves -- 32.3 degrees from bad #EF752E.
+ * The old note here recorded 16.0 degrees against the old coral bad and argued
+ * the brand was safe on one window because that window has no destructive
+ * control. That argument is retired: the separation now holds everywhere, so
+ * the brand no longer needs a scope to be safe, and FORM still backs it up -- a
  * 72px full-width action card with a 40px filled tile and a halo is not
  * something a 28px inline danger button could be mistaken for.
  *
@@ -239,8 +316,12 @@
  *      (0.741756+0.05)/(0.019674+0.05)                        = 11.3636:1
  *   2) bg.overlay #4A4640 -> L = 0.062063
  *      (0.741756+0.05)/(0.062063+0.05)                        =  7.0653:1
- *   3) ink #100E0B -> L = 0.004484 ;  accent #DFA52E -> L = 0.427955
- *      (0.427955+0.05)/(0.004484+0.05)                        =  8.7724:1
+ *   3) ink #100E0B -> L = 0.004484 ;  accent #E5405C -> L = 0.210975
+ *      (0.210975+0.05)/(0.004484+0.05)                        =  4.7899:1
+ *   4) accent.hi #F3687F -> L = 0.304876 ;  bg.overlay -> L = 0.062063
+ *      (0.304876+0.05)/(0.062063+0.05)                        =  3.1668:1
+ *      -- the number that decides accent.hi's value: plain accent gives
+ *      (0.210975+0.05)/(0.062063+0.05) = 2.3288:1 and misses the 3:1 floor.
  *
  * ===========================================================================
  * METRICS. One height, three radii, no gradients but the one that is data.
@@ -346,14 +427,15 @@
  *
  * ---------------------------------------------------------------------------
  * NOT REACHABLE FROM QSS -- for whoever wires the 3D side up in C++. Recorded
- * here so the viewport and the chrome stay one design. The accent moved, so
- * these move with it or the viewport still looks crimson.
- *   viewport.active     #DFA52E   accent -- the thing you are acting on
- *   viewport.select     #F0BA4A   accent.hi
+ * here so the viewport and the chrome stay one design. The accent moved to
+ * crimson and the two warm status ranks moved with it, so these move too or
+ * the viewport is the last place still wearing gold.
+ *   viewport.active     #E5405C   accent -- the thing you are acting on
+ *   viewport.select     #F3687F   accent.hi
  *   spawn.creature      #4FB87E   spawn.gameobject   #A98BE8
- *   waypoint.node/line  #DFA52E   (line at 60% alpha)
- *   chunk.ghost         #DFA52E   db.dirty  #E2803C   db.deleted #E86F62 @40%
- *   layer budget 1-2    #4FB87E @25%   3  #E2803C @30%   4  #E86F62 @35%
+ *   waypoint.node/line  #E5405C   (line at 60% alpha)
+ *   chunk.ghost         #E5405C   db.dirty  #D8AB18   db.deleted #EF752E @40%
+ *   layer budget 1-2    #4FB87E @25%   3  #D8AB18 @30%   4  #EF752E @35%
  * ======================================================================== */
 
 
@@ -366,7 +448,7 @@ QWidget {
 	font-family: "Segoe UI";
 	font-size: 12px;
 	outline: 0;
-	selection-background-color: rgba(223, 165, 46, 0.34);
+	selection-background-color: rgba(229, 64, 92, 0.34);
 	selection-color: #F3F0E9;
 }
 
@@ -438,7 +520,7 @@ QMainWindow::separator {
 /* THE HOVER IS edge, NOT bg.raised. A splitter is a drag affordance drawn on
    the bg.void gutter, and bg.raised measures 1.638:1 there -- under the 3:1
    floor, on the one cue that tells you the gutter can be dragged at all. edge
-   is 5.138:1 and the press already goes accent at 8.772:1. (This figure was
+   is 5.138:1 and the press already goes accent at 4.790:1. (This figure was
    published as 2.409:1. No pair in this palette yields that; the sheet's own
    surface ladder gives it directly -- bg.void -> bg.panel 1.279 times
    bg.panel -> bg.raised 1.281 is 1.638. The conclusion survives the
@@ -476,7 +558,7 @@ QSplitter::handle:hover {
 }
 
 QSplitter::handle:pressed {
-	background-color: #DFA52E;
+	background-color: #E5405C;
 }
 
 QDockWidget {
@@ -506,7 +588,7 @@ QDockWidget::title {
 	background-color: #292621;
 	color: #F3F0E9;
 	border: none;
-	border-left: 3px solid #DFA52E;
+	border-left: 3px solid #E5405C;
 	border-bottom: 1px solid #8A8378;
 	padding: 7px 8px 6px 10px;
 	font-size: 14px;
@@ -563,10 +645,13 @@ QMenuBar::item:selected {
 	color: #F3F0E9;
 }
 
-/* The menu is open: accent at 0.24 over bg.void composites to #423213, a
-   1.558:1 plate, with text.hi on it at 10.87:1. */
+/* The menu is open: accent at 0.24 over bg.void composites to #431A1E, a
+   1.290:1 plate, with text.hi on it at 13.131:1. The plate is a shade flatter
+   than the gold wash it replaces (1.558:1) because crimson carries less
+   luminance per unit of alpha; the text on it gained 2.26 points of contrast
+   in the same move, and the plate was never the cue -- the open menu is. */
 QMenuBar::item:pressed {
-	background-color: rgba(223, 165, 46, 0.24);
+	background-color: rgba(229, 64, 92, 0.24);
 	color: #F3F0E9;
 }
 
@@ -622,12 +707,16 @@ QMenu::item {
    SELECTION HERE RECESSES rather than tinting, and that is measured rather
    than stylistic: no accent alpha over bg.overlay keeps body text at 7:1
    (0.16 alpha gives 5.49:1, 0.24 gives 4.81:1). Dropping to bg.raised gives
-   body text 8.87:1, and the 2px accent left rule reads at 5.36:1 against it.
+   body text 8.87:1, and the 2px accent.hi left rule reads at 3.977:1 against
+   it. The rule is accent.hi rather than accent for the reason the palette
+   header gives -- this row's fill is bg.raised, where plain accent is 2.925:1
+   -- and it clears 3:1 on the other side too, 3.167:1 against the bg.overlay
+   menu the row sits in.
    This is the one surface in the sheet where selection goes DOWN. */
 QMenu::item:selected {
 	background-color: #3C3732;
 	color: #F3F0E9;
-	border-left: 2px solid #DFA52E;
+	border-left: 2px solid #F3687F;
 	padding-left: 28px;
 }
 
@@ -895,13 +984,13 @@ QPushButton:pressed {
 
 QPushButton:checked {
 	background-color: #100E0B;
-	border: 1px solid #DFA52E;
+	border: 1px solid #E5405C;
 	color: #F3F0E9;
 }
 
 QPushButton:checked:hover {
 	background-color: #1D1916;
-	border: 1px solid #DFA52E;
+	border: 1px solid #E5405C;
 	color: #F3F0E9;
 }
 
@@ -912,29 +1001,32 @@ QPushButton:checked:hover {
    needs one: its :focus rule restates the 3px leading reserve as transparent
    and therefore erases the accent bar :checked draws, at equal specificity and
    later in document order. This family does NOT have that shape, and it was
-   checked rather than assumed: QPushButton:focus declares one property, the
-   same `1px solid #DFA52E` border that QPushButton:checked already declares,
-   so a checked button that takes focus loses nothing -- the fill (#100E0B) and
-   the colour (text.hi) come from :checked and are not restated here. A
-   :checked:focus rule would be a rule with nothing to say.
+   checked rather than assumed: QPushButton:focus declares one property, a
+   border, and it TIES with QPushButton:checked on Qt specificity (1 + 0x10 =
+   17 apiece) while sitting later in document order, so it wins that one
+   property. The fill (#100E0B) and the colour (text.hi) come from :checked and
+   are not restated here, so a checked button that takes focus keeps its face.
+   A :checked:focus rule would be a rule with nothing to say.
 
-   HONEST LIMIT, recorded because it is real and it is NOT this file's to fix
-   alone: a checked-unfocused button and an unchecked-FOCUSED one therefore
-   carry the identical accent ring and differ only by fill, bg.void #100E0B
-   against bg.raised #3C3732, which is 1.638:1 -- and by text rank, text.hi
-   against text, 1.165:1. Neither separates them. It costs nothing while
-   :checked is rare on a push button, but FlattenTool's four flatten modes are
-   now checkable QPushButtons in a QButtonGroup rather than radio buttons, so
-   the collision is on screen. The fix is a distinct checked FACE (the gizmo
-   bar's `color: #DFA52E` on the bg.void face, 8.772:1, is the pattern already
-   in this file) and it belongs in the same pass that decides whether those
-   chips stay push buttons at all. */
+   THE LIMIT THE GOLD SHEET RECORDED HERE IS NOW CLOSED, and the accent ramp is
+   what closed it. Both rules used to declare the identical `1px solid #DFA52E`,
+   so a checked-unfocused button and an unchecked-FOCUSED one carried the SAME
+   ring and differed only by fill (bg.void against bg.raised, 1.638:1) and text
+   rank (1.165:1). Neither is a difference. Under the crimson ramp the two
+   rings are different values, because a focus ring has to survive a hover face
+   one surface lighter and a checked ring sits on a face that recesses:
+     checked, not focused   accent    #E5405C on the bg.void face   4.790:1
+     unchecked, focused     accent.hi #F3687F on bg.raised          3.977:1
+     the two rings                                                  1.360:1
+   1.360:1 plus the 1.638:1 face step is what tells them apart now, and both
+   clear the 3:1 floor SC 1.4.11 asks of a state mark on the surface each one
+   actually lands on -- which the single gold ring did not do on bg.raised. */
 QPushButton:focus {
-	border: 1px solid #DFA52E;
+	border: 1px solid #F3687F;
 }
 
 QPushButton:default {
-	border: 1px solid #DFA52E;
+	border: 1px solid #F3687F;
 	color: #F3F0E9;
 }
 
@@ -976,31 +1068,38 @@ QDialogButtonBox QPushButton {
 /* Destructive actions. Set from C++ with  btn->setProperty("state", "danger");
    and, if the button already existed, style()->unpolish(btn); polish(btn);
 
-   THE RED IS THE EDGE, NOT THE TEXT, and that is measured: bad #E86F62 as text
-   on bg.raised is 3.86:1 and fails the body floor. As a 1px border it clears
-   the 3:1 non-text floor, and the label stays text at 8.87:1. Hover is the
-   state that commits to the fill, where ink on bad is 6.31:1.
+   THE RED IS THE EDGE, NOT THE TEXT, and that is now doing DOUBLE duty. It was
+   always measured -- bad #EF752E as text on bg.raised is 4.065:1 and fails the
+   body floor, while as a 1px border it clears the 3:1 non-text floor and the
+   label stays text at 8.87:1. Since the accent became crimson it is also the
+   FORM half of telling destructive from active: the primary button is a filled
+   accent plate from the first frame, this one is an outline until you point at
+   it. Hue does the rest at 32.3 degrees. Hover is the state that commits to
+   the fill, where ink on bad is 6.657:1.
 
-   The press used to darken to #C4574A, which put ink at 4.41:1 -- below the
-   4.5 floor, on a control that is ENABLED, so nothing exempted it. The fill
-   is now bad.press #C85F54: ink 4.79:1, still 1.32:1 darker than the hover
-   fill it steps down from, and 3.75:1 against the bg.panel dialog body. */
+   THE WHOLE RAMP MOVED WITH THE ACCENT. bad was #E86F62 at hue 5.8, which is
+   16.0 degrees from the crimson this sheet now uses for "selected" -- the exact
+   collision the palette header describes and the reason the accent was ever put
+   on gold. It is a vermillion at hue 22.1 now. The press is bad.press #CE5E1C:
+   ink 4.811:1, 1.384:1 darker than the hover fill it steps down from, and
+   3.762:1 against the bg.panel dialog body. The pair it replaces was #C85F54 at
+   4.79 and 1.32, so both figures improved in the move. */
 QPushButton[state="danger"] {
 	background-color: #3C3732;
 	color: #E4DFD7;
-	border: 1px solid #E86F62;
+	border: 1px solid #EF752E;
 }
 
 QPushButton[state="danger"]:hover {
-	background-color: #E86F62;
+	background-color: #EF752E;
 	color: #100E0B;
-	border: 1px solid #E86F62;
+	border: 1px solid #EF752E;
 }
 
 QPushButton[state="danger"]:pressed {
-	background-color: #C85F54;
+	background-color: #CE5E1C;
 	color: #100E0B;
-	border: 1px solid #C85F54;
+	border: 1px solid #CE5E1C;
 }
 
 /* The confirming action in a two-button row. Set from C++ the same way danger
@@ -1008,9 +1107,15 @@ QPushButton[state="danger"]:pressed {
    button already existed. At most one per window, marking the one action the
    window exists to perform.
 
-   Ink on the fill, not white: #100E0B on #DFA52E is 8.77:1. Gold also removes
-   the special case crimson needed -- ink on accent.press is 5.64:1, so the
-   press no longer has to invert to light text.
+   Ink on the fill at rest and at hover, light text at press, and the switch is
+   forced rather than chosen: ink #100E0B on accent #E5405C is 4.790:1 and on
+   accent.hi #F3687F 6.513:1, but on accent.press #C32842 it is 3.398:1. There
+   is no third option, because ink clears 4.5:1 only above relative luminance
+   0.195178 and text.hi only below 0.155018, and a press that reads as a press
+   has to be darker than the rest fill's 0.210975. accent.press is at 0.135130
+   and carries text.hi at 4.983:1. Both ends of the interaction clear the floor;
+   what changes mid-press is the pen, and that is stated here so nobody
+   "tidies" it back to ink.
 
    :disabled is spelled out with two conditions because a bare
    QPushButton:disabled ties with a one-attribute rule on Qt specificity and
@@ -1022,22 +1127,22 @@ QPushButton[state="danger"]:pressed {
    source, is set out in full at QSlider#texturing_brush_level_slider. The tie
    is a tie under either model, so the rule below does not change. */
 QPushButton[state="primary"] {
-	background-color: #DFA52E;
+	background-color: #E5405C;
 	color: #100E0B;
-	border: 1px solid #DFA52E;
+	border: 1px solid #E5405C;
 	font-weight: 600;
 }
 
 QPushButton[state="primary"]:hover {
-	background-color: #F0BA4A;
+	background-color: #F3687F;
 	color: #100E0B;
-	border: 1px solid #F0BA4A;
+	border: 1px solid #F3687F;
 }
 
 QPushButton[state="primary"]:pressed {
-	background-color: #B8801F;
-	color: #100E0B;
-	border: 1px solid #B8801F;
+	background-color: #C32842;
+	color: #F3F0E9;
+	border: 1px solid #C32842;
 }
 
 QPushButton[state="primary"]:focus {
@@ -1056,8 +1161,13 @@ QPushButton[state="primary"]:disabled {
 /* The base rule for every QToolButton in the application. HOVER LIFTS, ACTIVE
    RECESSES: the two can never be confused because they move in opposite
    directions. On the default bg.raised surface a hover goes up to bg.overlay
-   and a checked button drops to bg.void, a 1.638:1 recess, with a 3px accent
-   leading rule at 5.36:1 and a gold glyph.
+   and a checked button drops to bg.void, a 1.638:1 recess, with a 3px
+   accent.hi leading rule and a crimson glyph. The rule is accent.hi and NOT
+   plain accent, and the reason is the surround rather than the fill: a tool
+   button rests on a docked toolbar (bg.raised) or a floating viewport card
+   (bg.overlay), so the outer side of that 3px rule is 2.925:1 or 2.329:1 in
+   plain accent and misses the 3:1 floor. accent.hi is 3.977:1 and 3.167:1 on
+   those two, and 6.513:1 against the bg.void face on the inner side.
 
    Both the 1px border and the 3px border-left are declared in every state at
    those exact widths, so switching tools cannot reflow a bar. Only colours
@@ -1096,31 +1206,33 @@ QToolButton:hover {
 }
 
 QToolButton:pressed {
-	background-color: #B8801F;
-	color: #100E0B;
-	border: 1px solid #B8801F;
-	border-left: 3px solid #B8801F;
+	background-color: #C32842;
+	color: #F3F0E9;
+	border: 1px solid #C32842;
+	border-left: 3px solid #C32842;
 }
 
 QToolButton:checked {
 	background-color: #100E0B;
 	color: #F3F0E9;
 	border: 1px solid transparent;
-	border-left: 3px solid #DFA52E;
+	border-left: 3px solid #F3687F;
 }
 
 QToolButton:checked:hover {
 	background-color: #1D1916;
 	color: #F3F0E9;
 	border: 1px solid #746D64;
-	border-left: 3px solid #DFA52E;
+	border-left: 3px solid #F3687F;
 }
 
 /* Focus was missing on every QToolButton in the application. QWidget sets
    outline: 0 at the top of this sheet, which suppresses the focus rect Qt
    would otherwise draw, and nothing replaced it here. accent on the surfaces a
-   tool button rests on measures 6.860:1 (panel), 5.356:1 (raised) and 4.265:1
-   (overlay), all clear of the 3:1 floor for a non-text state mark.
+   tool button rests on measures 5.093:1 (panel), 3.977:1 (raised) and 3.167:1
+   (overlay), all clear of the 3:1 floor for a non-text state mark. Plain
+   accent would have been 3.746, 2.925 and 2.329 and cleared only the first,
+   which is why every ring in this sheet is accent.hi.
 
    It sits here, after the pointer states and before :disabled, exactly where
    QPushButton:focus sits, so the two families resolve ties the same way: equal
@@ -1128,7 +1240,7 @@ QToolButton:checked:hover {
    hover keeps its fill. The 3px leading reserve is RESTATED, or the shorthand
    collapses it to 1px and the bar reflows the moment you tab into it. */
 QToolButton:focus {
-	border: 1px solid #DFA52E;
+	border: 1px solid #F3687F;
 	border-left: 3px solid transparent;
 }
 
@@ -1148,9 +1260,11 @@ QToolButton:focus {
    for exactly this reason; what was missing was the BASE. Two pseudo-classes
    is 1 + 0x20 = 33, so this out-ranks both :checked and :focus outright and
    the result no longer depends on where it sits. Checked AND focused therefore
-   keeps the accent bar at 8.772:1 on its own bg.void face AND shows the accent
-   ring, which is 6.860:1 on bg.panel, 5.356:1 on bg.raised and 4.265:1 on
-   bg.overlay -- all clear of the 3:1 floor SC 2.4.13 asks of a focus mark.
+   keeps the accent.hi bar at 6.513:1 on its own bg.void face AND shows the
+   ring, which is 5.093:1 on bg.panel, 3.977:1 on bg.raised and 3.167:1 on
+   bg.overlay -- all clear of the 3:1 floor SC 2.4.13 asks of a focus mark. The
+   bar and the ring are the same value here and are told apart by width and
+   position, 3px on one edge against 1px all round.
 
    BORDER ONLY, DELIBERATELY. Restating background-color here would also beat
    QToolButton:checked:hover, which is the other two-pseudo rule and therefore
@@ -1160,8 +1274,8 @@ QToolButton:focus {
    cascading from :checked / :checked:hover while the ring and the bar come
    from here. */
 QToolButton:checked:focus {
-	border: 1px solid #DFA52E;
-	border-left: 3px solid #DFA52E;
+	border: 1px solid #F3687F;
+	border-left: 3px solid #F3687F;
 }
 
 QToolButton:disabled {
@@ -1215,10 +1329,11 @@ QToolButton::menu-indicator:disabled {
    and still accent. A field gets no bevel: a well is not a raised thing.
 
    Focus is TWO cues and no reflow: the fill lifts one hair to bg.alt and the
-   border turns accent (8.77:1 against the fill). A focused field is NEVER
-   tinted -- the tint is reserved for warn and error, and it is what separates
-   an orange-bordered field from a gold-bordered one when the two hues are only
-   15.8 degrees apart.
+   border turns accent.hi (5.900:1 against that fill). A focused field is NEVER
+   tinted -- the tint is reserved for warn and error. That rule was written when
+   warn and the accent were 15.8 degrees apart and it stays a hard rule now that
+   they are 56.1, because form is not allowed to depend on how comfortable the
+   hue gap happens to be this revision.
 
    MEASURED heights (Qt 5.15.2 probe, Fusion, Segoe UI 12px, 1px border):
      QLineEdit        padding 1px 8px, min-height 16   -> 28
@@ -1235,7 +1350,7 @@ QComboBox {
 	border: 1px solid #8A8378;
 	border-radius: 6px;
 	font-weight: 600;
-	selection-background-color: rgba(223, 165, 46, 0.34);
+	selection-background-color: rgba(229, 64, 92, 0.34);
 	selection-color: #F3F0E9;
 }
 
@@ -1259,7 +1374,7 @@ QPlainTextEdit:focus,
 QAbstractSpinBox:focus,
 QComboBox:focus {
 	background-color: #1D1916;
-	border: 1px solid #DFA52E;
+	border: 1px solid #F3687F;
 }
 
 QLineEdit:disabled,
@@ -1295,32 +1410,35 @@ QPlainTextEdit {
 /* Error and warning states on an input. Set from C++ with
    setProperty("state", "error") / ("state", "warn") plus unpolish/polish.
 
-   THE TINT IS LOAD-BEARING. Border alone is not enough: warn #E2803C and the
-   accent #DFA52E are 15.8 degrees apart, so a bordered-only warn field and a
-   focused field would be told apart by hue alone. The 14%-alpha fill over
-   bg.void is a difference in KIND. Composited: bad -> #2E1C17, warn ->
-   #2D1E12; the border reads 5.32:1 and 5.66:1 against its own fill and the
-   contents stay at 14.25:1 and 14.13:1. */
+   THE TINT IS LOAD-BEARING AND STAYS SO. It was written because warn #E2803C
+   and the gold accent were 15.8 degrees apart, so a bordered-only warn field
+   and a focused one were told apart by hue alone. Under the crimson accent
+   warn #D8AB18 is 56.1 degrees away and bad #EF752E 32.3, so the hue gap is no
+   longer the thin part -- but the tint is a difference in KIND rather than in
+   degree, and it is what keeps this working for a user who cannot separate
+   those hues at all. Composited at 14% over bg.void: bad -> #2F1C10, warn ->
+   #2C240D; the border reads 5.604:1 and 7.147:1 against its own fill and the
+   contents stay at 14.254:1 and 13.515:1. */
 QLineEdit[state="error"],
 QAbstractSpinBox[state="error"],
 QComboBox[state="error"] {
-	background-color: #2E1C17;
-	border: 1px solid #E86F62;
+	background-color: #2F1C10;
+	border: 1px solid #EF752E;
 }
 
 QLineEdit[state="warn"],
 QAbstractSpinBox[state="warn"],
 QComboBox[state="warn"] {
-	background-color: #2D1E12;
-	border: 1px solid #E2803C;
+	background-color: #2C240D;
+	border: 1px solid #D8AB18;
 }
 
 QLabel[state="error"] {
-	color: #E86F62;
+	color: #EF752E;
 }
 
 QLabel[state="warn"] {
-	color: #E2803C;
+	color: #D8AB18;
 }
 
 QLabel[state="ok"] {
@@ -1373,7 +1491,7 @@ QAbstractSpinBox::down-button:hover {
 
 QAbstractSpinBox::up-button:pressed,
 QAbstractSpinBox::down-button:pressed {
-	background-color: #B8801F;
+	background-color: #C32842;
 }
 
 QAbstractSpinBox::up-button:disabled,
@@ -1418,7 +1536,7 @@ QComboBox {
 }
 
 QComboBox:on {
-	border: 1px solid #DFA52E;
+	border: 1px solid #E5405C;
 }
 
 QComboBox::drop-down {
@@ -1511,13 +1629,13 @@ QRadioButton:checked {
 
 /* Placed after :hover and :checked and before :disabled, the same order
    QPushButton and QToolButton use, so a hovered focused box shows the hover
-   colour AND the ring. accent against the bg.panel these sit on is 6.860:1,
+   colour AND the ring. accent.hi against the bg.panel these sit on is 5.093:1,
    over the 3:1 floor for a non-text state mark. The nine-radio brush grid is
    the most keyboard-navigated control in the editor and until now arrowing
    through it changed nothing you could see. */
 QCheckBox:focus,
 QRadioButton:focus {
-	border: 1px solid #DFA52E;
+	border: 1px solid #F3687F;
 }
 
 QCheckBox:disabled,
@@ -1693,8 +1811,9 @@ QGroupBox::indicator {
                bg.panel that composites to #322F2A, a 1.131:1 lift carrying
                text.hi at 11.710:1 -- a wash, not a plate.
      SELECTED  the bg.raised plate the hover used to steal, 1.281:1 over
-               bg.panel with text.hi at 10.339:1, PLUS the 2px accent underline
-               at 5.356:1 against that plate, PLUS the 12/600 value rank. The
+               bg.panel with text.hi at 10.339:1, PLUS the 2px accent.hi
+               underline at 3.977:1 against that plate, PLUS the 12/600 value
+               rank. The
                front tab now sits on a surface and continues into the pane.
      BOTH      bg.overlay, 1.256:1 above the selected plate, accent underline
                held. Two pseudo-states, so it out-ranks both single-state rules
@@ -1741,7 +1860,7 @@ QTabBar::tab:hover {
 QTabBar::tab:selected {
 	background-color: #3C3732;
 	color: #F3F0E9;
-	border-bottom: 2px solid #DFA52E;
+	border-bottom: 2px solid #F3687F;
 	border-top-left-radius: 6px;
 	border-top-right-radius: 6px;
 	font-weight: 600;
@@ -1749,7 +1868,7 @@ QTabBar::tab:selected {
 
 QTabBar::tab:selected:hover {
 	background-color: #4A4640;
-	border-bottom: 2px solid #DFA52E;
+	border-bottom: 2px solid #F3687F;
 }
 
 QTabBar::tab:disabled {
@@ -1769,7 +1888,7 @@ QTabBar::tab:left {
 }
 
 QTabBar::tab:left:selected {
-	border-right: 2px solid #DFA52E;
+	border-right: 2px solid #F3687F;
 }
 
 QTabBar::tab:right {
@@ -1777,7 +1896,7 @@ QTabBar::tab:right {
 }
 
 QTabBar::tab:right:selected {
-	border-left: 2px solid #DFA52E;
+	border-left: 2px solid #F3687F;
 }
 
 QTabBar::close-button {
@@ -1826,7 +1945,7 @@ QToolBox::tab:hover {
 QToolBox::tab:selected {
 	background-color: #3C3732;
 	color: #F3F0E9;
-	border-left: 2px solid #DFA52E;
+	border-left: 2px solid #F3687F;
 }
 
 QToolBox::tab:disabled {
@@ -1867,7 +1986,7 @@ QAbstractItemView {
 	padding: 6px;
 	outline: 0;
 	show-decoration-selected: 1;
-	selection-background-color: rgba(223, 165, 46, 0.24);
+	selection-background-color: rgba(229, 64, 92, 0.24);
 	selection-color: #F3F0E9;
 }
 
@@ -1914,12 +2033,17 @@ QAbstractItemView::item:hover {
    lost focus still screams "this row is selected" as loudly as the one you are
    actually working in.
 
-   Measured over the bg.void well: 0.24 alpha composites to #423213, a 1.558:1
-   plate carrying text.hi at 10.87:1 and text.dim at 6.23:1. Hovered as well,
-   0.34 gives #564117, 1.986:1, text.hi 8.53:1 and text.dim 4.88:1. */
+   Measured over the bg.void well: 0.24 alpha composites to #431A1E, a 1.290:1
+   plate carrying text.hi at 13.131:1 and text.dim at 7.522:1. Hovered as well,
+   0.34 gives #581F27, 1.505:1, text.hi 11.249:1 and text.dim 6.444:1. The
+   crimson washes are flatter plates than the gold ones were -- 1.290 against
+   1.558 -- and that is deliberate rather than tolerated: the 2px accent leading
+   rule is what carries "this row", at 3.715:1 against the 0.24 plate and
+   3.182:1 against the 0.34 one, and both text ranks gained contrast because the
+   plate got darker rather than lighter. */
 QAbstractItemView::item:selected:active {
-	background-color: rgba(223, 165, 46, 0.24);
-	border-left: 2px solid #DFA52E;
+	background-color: rgba(229, 64, 92, 0.24);
+	border-left: 2px solid #E5405C;
 	color: #F3F0E9;
 }
 
@@ -1930,8 +2054,8 @@ QAbstractItemView::item:selected:!active {
 }
 
 QAbstractItemView::item:selected:hover {
-	background-color: rgba(223, 165, 46, 0.34);
-	border-left: 2px solid #DFA52E;
+	background-color: rgba(229, 64, 92, 0.34);
+	border-left: 2px solid #E5405C;
 	color: #F3F0E9;
 }
 
@@ -1988,7 +2112,7 @@ QTreeView::branch:open:has-children:has-siblings {
 }
 
 QTreeView::branch:selected {
-	background-color: rgba(223, 165, 46, 0.24);
+	background-color: rgba(229, 64, 92, 0.24);
 }
 
 QTableView {
@@ -1996,7 +2120,7 @@ QTableView {
 	alternate-background-color: #1D1916;
 	gridline-color: #403B35;
 	border: 1px solid #8A8378;
-	selection-background-color: rgba(223, 165, 46, 0.24);
+	selection-background-color: rgba(229, 64, 92, 0.24);
 	selection-color: #F3F0E9;
 }
 
@@ -2053,7 +2177,7 @@ QHeaderView::section:hover {
 QHeaderView::section:checked {
 	background-color: #3C3732;
 	color: #F3F0E9;
-	border-bottom: 2px solid #DFA52E;
+	border-bottom: 2px solid #F3687F;
 }
 
 QHeaderView::section:disabled {
@@ -2110,7 +2234,7 @@ QHeaderView::up-arrow {
    nothing else on screen moves. The radius is half the visible width in both
    states -- 3 of 6, 4 of 8 -- so it stays a pill rather than becoming a
    rounded rectangle at one size and a lozenge at the other. Pressed keeps the
-   grown size and takes accent, 8.772:1 against the void well. */
+   grown size and takes accent, 4.790:1 against the void well. */
 QScrollBar:vertical {
 	background: transparent;
 	border: none;
@@ -2148,7 +2272,7 @@ QScrollBar::handle:hover {
 }
 
 QScrollBar::handle:pressed {
-	background-color: #DFA52E;
+	background-color: #E5405C;
 	border-radius: 4px;
 	margin: 2px;
 }
@@ -2248,19 +2372,24 @@ QAbstractScrollArea::corner {
    hovered, 6px pressed.
 
    COLOUR. The ring is always ink, because it is the only token that clears 3:1
-   against both an ivory core and a gold one -- ink/text.hi 16.933:1,
-   ink/accent 8.772:1, ink/accent.hi 10.854:1 -- and because it is what
-   separates the grip from the accent fill it sits at the end of, 8.772:1
-   against sub-page. The old hover put an ACCENT ring on the ivory core:
-   #DFA52E against #F3F0E9 is 1.930:1, so it only existed where it happened to
-   touch the dark track and the grip itself did not respond at all. Hover now
-   moves the CORE to accent.hi, 8.488:1 on bg.panel, and doubles the ring.
+   against both an ivory core and a crimson one -- ink/text.hi 16.933:1,
+   ink/accent 4.790:1, ink/accent.hi 6.513:1 -- and because it is what
+   separates the grip from the accent fill it sits at the end of, 4.790:1
+   against sub-page. An ACCENT ring on the ivory core cannot do that job under
+   either accent: gold measured 1.930:1 against #F3F0E9 and crimson measures
+   3.535:1, which clears the graphical floor but leaves the ring reading as a
+   thin pink line on white rather than as an edge. Hover moves the CORE to
+   accent.hi, 5.093:1 on bg.panel, and doubles the ring.
 
    FOCUS IS NEW; there was none, on a control QSlider gives Qt::StrongFocus and
    which is therefore tab-reachable everywhere in the application. It inverts
-   the grip -- an ink core inside a 3px accent ring -- so it reads at both ends
-   of the track: over the unfilled well the accent ring carries it at 8.772:1,
-   over the accent fill the ink core carries it at 8.772:1. Against the
+   the grip -- an ink core inside a 3px accent.hi ring -- so it reads at both
+   ends of the track: over the unfilled well the ring carries it at 6.513:1
+   against the ink core and 5.093:1 against the bg.panel the groove sits on,
+   over the accent fill the ink core carries it at 4.790:1. The ring is
+   accent.hi and not accent because EVERY focus ring in this sheet is, for the
+   reason the palette header gives -- a slider can sit on a floating bg.overlay
+   card, where plain accent is 2.329:1 and accent.hi is 3.167:1. Against the
    unfocused appearance the core change alone measures 16.933:1, well over the
    3:1 SC 2.4.13 asks of a focus indicator.
 
@@ -2272,7 +2401,7 @@ QAbstractScrollArea::corner {
    rather than one that would fail anyway. The control stays identifiable
    because the grip is drawn at every value and measures 13.241:1 on bg.panel,
    and the VALUE stays identifiable because sub-page against add-page is
-   8.772:1.
+   4.790:1 -- the accent fill against the bg.void #100E0B unfilled run.
 
    THE ONE DEPENDENCY OUTSIDE THIS FILE IS NOW MET, and the paragraph that
    used to stand here is deleted rather than reworded because it described a
@@ -2332,7 +2461,7 @@ QSlider::groove:horizontal {
 }
 
 QSlider::sub-page:horizontal {
-	background-color: #DFA52E;
+	background-color: #E5405C;
 	border: none;
 	border-radius: 3px;
 }
@@ -2368,7 +2497,7 @@ QSlider::sub-page:vertical {
 }
 
 QSlider::add-page:vertical {
-	background-color: #DFA52E;
+	background-color: #E5405C;
 	border: none;
 	border-radius: 3px;
 }
@@ -2394,7 +2523,7 @@ QSlider::handle:vertical {
 QSlider::handle:horizontal:focus,
 QSlider::handle:vertical:focus {
 	background-color: #100E0B;
-	border: 3px solid #DFA52E;
+	border: 3px solid #F3687F;
 	border-radius: 10px;
 	width: 14px;
 	height: 14px;
@@ -2403,7 +2532,7 @@ QSlider::handle:vertical:focus {
 /* 12 + 4 + 4 = 20. */
 QSlider::handle:horizontal:hover,
 QSlider::handle:vertical:hover {
-	background-color: #F0BA4A;
+	background-color: #F3687F;
 	border: 4px solid #100E0B;
 	border-radius: 10px;
 	width: 12px;
@@ -2415,7 +2544,7 @@ QSlider::handle:vertical:hover {
    drifts under the finger that is holding it. */
 QSlider::handle:horizontal:pressed,
 QSlider::handle:vertical:pressed {
-	background-color: #DFA52E;
+	background-color: #E5405C;
 	border: 6px solid #100E0B;
 	border-radius: 10px;
 	width: 8px;
@@ -2457,9 +2586,10 @@ QSlider::add-page:vertical:disabled {
 
    THE CHUNK IS NO LONGER A SOLID ACCENT FILL, AND THIS IS AN ACCESSIBILITY
    REPAIR, NOT A RESTYLE. `text-align: center` puts the percentage ON the bar,
-   and the previous revision measured the chunk against the TRACK (accent on
-   bg.void, 8.772:1) and never against its own TEXT: text #E4DFD7 on accent
-   #DFA52E is 1.657:1. The label is centred, so it is fully inside the fill
+   and the revision before last measured the chunk against the TRACK (accent on
+   bg.void) and never against its own TEXT: text #E4DFD7 on the accent is
+   3.034:1 with crimson and was 1.657:1 with gold. The label is centred, so it
+   is fully inside the fill
    from 50 percent plus half the label width onward -- the whole upper half of
    every run -- and the number a progress bar exists to show was unreadable
    there: on every QProgressDialog in the editor, on the minimap render bar
@@ -2467,7 +2597,7 @@ QSlider::add-page:vertical:disabled {
    updater bars.
 
    INK WAS THE OBVIOUS FIX AND IT IS NOT ONE. ink #100E0B on accent is indeed
-   8.772:1, but ink IS bg.void: on the unfilled track it is 1.000:1, the same
+   4.790:1, but ink IS bg.void: on the unfilled track it is 1.000:1, the same
    colour, invisible. That trades an unreadable second half for an unreadable
    first half, which is worse, because 0 percent is what a load dialog shows
    the moment it appears.
@@ -2485,22 +2615,30 @@ QSlider::add-page:vertical:disabled {
    pass Fusion does is the OTHER branch and is unreachable without giving up
    the border, the radius and the chunk rule together. So one colour has to
    clear the floor on both surfaces. Solving (L+0.05)/0.054484 =
-   0.477955/(L+0.05) for a track at L 0.004484 and a fill at L 0.427955 gives
-   L = 0.111372 and a best-possible 2.962:1 in BOTH regions -- the maximum any
-   flat label colour can reach over bg.void and accent, and still under 4.5:1.
-   The fill is what had to change.
+   0.260975/(L+0.05) for a track at L 0.004484 and a crimson fill at L 0.210975
+   gives L = 0.069243 and a best-possible 2.189:1 in BOTH regions -- the maximum
+   any flat label colour can reach over bg.void and the accent. The gold accent
+   made that ceiling 2.962:1; crimson lowers it to 2.189:1, so the argument for
+   moving the fill got stronger rather than weaker. The fill is what had to
+   change.
 
-   WHAT IT IS NOW: a bg.hover #5B5651 face carrying the 1px accent rule, which
-   is the same "the thing you are acting on gets the accent as a RULE, not as a
-   plate" move the tab underline, the item-view leading rule and the active
-   tool bar all make. Measured:
-     label text #E4DFD7 on the chunk face            5.470:1   (floor 4.5)
+   THE CHUNK FACE MOVED AGAIN WITH THE ACCENT, and it had to. It was bg.hover
+   #5B5651 carrying a 1px gold rule, which worked only because gold measured
+   3.302:1 against that face; accent.hi measures 2.452:1 there and accent
+   1.803:1, so the rule would have vanished into its own fill. The face is
+   bg.raised #3C3732 now and the rule is accent.hi. Measured:
+     label text #E4DFD7 on the chunk face            8.873:1   (floor 4.5, was
+                                                                5.470 on
+                                                                bg.hover)
      label text #E4DFD7 on the bg.void track        14.532:1
-     accent rule against the track                   8.772:1   (floor 3)
-     accent rule against the chunk face it edges     3.302:1
-   The chunk face alone is 2.657:1 on the track, under the graphical floor,
-   which is precisely why the boundary is carried by the 1px accent rule rather
-   than by the fill -- the rule clears 3:1 on both sides of itself, so where the
+     accent.hi rule against the track                6.513:1   (floor 3)
+     accent.hi rule against the chunk face it edges  3.977:1
+   Both figures the rule owes are better than the pair they replace (8.772 and
+   3.302) on the side that was tight, and the label gained 3.4 points. The
+   chunk face alone is 1.638:1 on the track, under the graphical floor and one
+   step flatter than the 2.657:1 the bg.hover face managed -- which is precisely
+   why the boundary is carried by the 1px rule rather than by the fill, exactly
+   as it was before. The rule clears 3:1 on both sides of itself, so where the
    progress has reached is never in doubt. At 0 percent Qt computes
    chunkWidth = 0 and skips the draw entirely (qstylesheetstyle.cpp:3974), so
    an empty bar shows no stray rule; the 1px edge rule keeps carrying "the bar
@@ -2530,8 +2668,8 @@ QProgressBar {
 }
 
 QProgressBar::chunk {
-	background-color: #5B5651;
-	border: 1px solid #DFA52E;
+	background-color: #3C3732;
+	border: 1px solid #F3687F;
 	border-radius: 10px;
 	margin: 0px;
 }
@@ -2555,11 +2693,11 @@ QProgressBar::chunk:disabled {
    pill derivation applied to the size it actually is.
 
    ITS CHUNK STAYS A SOLID ACCENT FILL, and now has to say so. The generic
-   chunk moved to a bg.hover face with a 1px accent rule so that the centred
+   chunk moved to a bg.raised face with a 1px accent.hi rule so that the centred
    percentage can be read on it -- see the derivation above. This bar has NO
    text on it, so it does not carry that cost, and a 1px border on a 4px band
    would be the same two-borders-no-interior failure the paragraph above
-   avoids. Solid accent on the bg.void track is 8.772:1 and needs no rule to
+   avoids. Solid accent on the bg.void track is 4.790:1 and needs no rule to
    separate it. Specificity is not in doubt: 1 + 0x100 + 0x10 = 273 against the
    generic chunk's 17, on the Qt model named at
    QSlider#texturing_brush_level_slider.
@@ -2574,7 +2712,7 @@ QProgressBar#pressureBar {
 }
 
 QProgressBar#pressureBar::chunk {
-	background-color: #DFA52E;
+	background-color: #E5405C;
 	border: none;
 	border-radius: 2px;
 }
@@ -2732,25 +2870,31 @@ QPushButton[accessibleName="titlebar_restore"]:pressed {
    not restate itself when a pseudo-state changes. So ONE pen has to serve the
    resting bar and every fill, and the resting bar is bg.void: an ink glyph is
    1.00:1 there, i.e. invisible, so the pen has to be light and is text.hi.
-   The fill is therefore the half that had to move. It was bad #E86F62, on
-   which text.hi measures 2.68:1 -- and the comment that used to sit here
+   The fill is therefore the half that had to move. It cannot be bad itself, on
+   which text.hi measures 2.544:1 -- and the comment that used to sit here
    claimed "ink on bad, 6.31:1", describing a glyph this theme has never
    shipped. generate_icons.py writes that pixel as text.hi and says so.
 
-   Measured on what is actually drawn:
-     text.hi #F3F0E9 on close.hover #A75047   4.75:1   (was 2.68 on bad)
-     text.hi #F3F0E9 on close.press #974840   5.56:1   (was 3.84)
+   BOTH FILLS FOLLOWED bad OUT OF RED. They keep bad's hue on purpose, so that
+   "this destroys something" is one colour family across the application, and
+   bad moved from hue 5.8 to 22.1 when the accent became crimson. Measured on
+   what is actually drawn:
+     text.hi #F3F0E9 on close.hover #A3501F   4.954:1   (was 4.75)
+     text.hi #F3F0E9 on close.press #98491B   5.585:1   (was 5.56)
    and the plate itself is a graphical state mark against the bg.void bar, so
    it carries the 3:1 floor rather than 4.5:
-     close.hover vs bg.void  3.56:1     close.press vs bg.void  3.04:1
-   with close.press 1.17:1 below close.hover so the press still reads as a
-   step. Both fills keep bad's hue; they are darker, not greyer. */
+     close.hover vs bg.void  3.418:1   close.press vs bg.void  3.032:1
+   with close.press 1.127:1 below close.hover so the press still reads as a
+   step. HONEST LIMIT: that step was 1.17:1 before and it narrowed. Both plates
+   have to fit between the 3:1 a plate owes the bar and the 4.5:1 the pen owes
+   the plate, and at hue 22.1 that window is narrower than it was at 5.8, so
+   the press step is what paid for the pen gaining margin at both ends. */
 QPushButton[accessibleName="titlebar_close"]:hover {
-	background-color: #A75047;
+	background-color: #A3501F;
 }
 
 QPushButton[accessibleName="titlebar_close"]:pressed {
-	background-color: #974840;
+	background-color: #98491B;
 }
 
 /* Real PNG icons rather than Font Awesome glyphs, so the window controls are
@@ -2795,33 +2939,66 @@ QPushButton[accessibleName="titlebar_close"] {
 
    `color` on a QToolButton rule elsewhere in this file colours that button
    TEXT and cannot reach the glyph. Hover is not a slot at all: Qt reports a
-   hovered button as QIcon::Active and the engine derives it as
-   QColor::lighter(125) on whichever pen the state resolved to.
+   hovered button as QIcon::Active and the engine DERIVES it from whichever pen
+   the state resolved to -- iconPenHoverColor in FontAwesome.hpp, which holds
+   hue and HSL saturation and spends 45 percent of the remaining lightness
+   headroom. (It is no longer QColor::lighter(125); that scaled the HSV value
+   channel and destroyed saturation on overflow, and FontAwesome.hpp records
+   the measurement that retired it.)
 
    OFF is text.dim #BFB7AA. WHY NOT text OR text.hi -- two reasons, both
    measured. First, lighter(125) on text #E4DFD7 CLIPS TO PURE #FFFFFF (HSL
    lightness 0.869 x 1.25 = 1.000) and text.hi clips too, and this palette
-   forbids pure white; #BFB7AA has HSL lightness 0.708, lifts to 0.885 and
-   lands on #E6E3DD with room to spare, so it is the only candidate in the text
-   ramp that gives a working hover at all. Second, thirty-six icons are on
+   forbids pure white; #BFB7AA has HSL lightness 0.708 and lifts to 0.839 with
+   room to spare, landing on #DCD7D0, so it is the only candidate in the text
+   ramp that gives a working hover at all. (0.839 rather than 0.885 because the
+   engine spends 45 percent of the remaining headroom rather than scaling by
+   1.25: 0.708 + 0.292 x 0.45. The 0.885 figure and the #E6E3DD it produced
+   belonged to the retired lighter(125) path.) Second, thirty-six icons are on
    screen at once (16 tools plus 20 toggles); at `text` they would all sit at
    7.07:1 and the two bars would be the loudest thing in the application.
 
-   MEASURED, per surface an icon actually rests on:
+   THE CHECKED PEN IS accent.hi AND NOT accent, and this is the one place in
+   the sheet where that is forced rather than preferred. Every other accent mark
+   is written by a RULE that knows which surface it lands on, so it can take
+   plain accent where the face recesses. This pen is written once into a
+   QPalette slot and the icon engine paints it on whatever face the button
+   happens to have, so it has to clear 3:1 on the whole ladder -- and accent
+   does not (2.925:1 on bg.raised, 2.329:1 on bg.overlay) where accent.hi does.
+   It is the same "one pen, no pseudo-state" argument the title-bar close glyph
+   is built on.
 
-                       OFF #BFB7AA   HOVER #E6E3DD   ON #DFA52E
-     bg.void  #100E0B      9.70          15.05          8.77
-     bg.alt   #1D1916      8.79          13.63          7.95
-     bg.panel #292621      7.58          11.77          6.86
-     bg.raised#3C3732      5.92           9.19          5.36
-     bg.overlay #4A4640    4.72           7.32          4.27
-     bg.hover #5B5651      3.65           5.66          3.30
+   MEASURED, per surface an icon actually rests on. The two hover pens are
+   DERIVED by iconPenHoverColor in FontAwesome.hpp -- HSL, hue and saturation
+   held, lightness moved 45 percent of the remaining headroom -- and the values
+   below were produced by running that arithmetic, not guessed. The figure this
+   table used to print for the unchecked hover, #E6E3DD, matched neither that
+   function nor the QColor::lighter(125) it replaced:
 
-   The OFF -> HOVER step between the two pens is 1.551:1, a real and visible
-   response. OFF -> CHECKED is only 1.106:1 in luminance but 105 degrees in
-   hue, and it is never asked to carry the state alone: the checked face drops
-   2.057:1 and a 2px or 3px accent rule appears. The pen is the supporting cue.
-   Checked-and-hovered derives to #E8BE68, 9.97:1 on bg.alt.
+                       OFF #BFB7AA   HOVER #DCD7D0   ON #F3687F   ON+HOVER #F8ACB9
+     bg.void  #100E0B      9.70          13.47          6.51         10.64
+     bg.alt   #1D1916      8.79          12.20          5.90          9.64
+     bg.panel #292621      7.58          10.53          5.09          8.32
+     bg.raised#3C3732      5.92           8.22          3.98          6.50
+     bg.overlay #4A4640    4.72           6.55          3.17          5.17
+     bg.hover #5B5651      3.65           5.07          2.45          4.00
+
+   The OFF -> HOVER step is 1.388:1 and ON -> ON+HOVER is 1.633:1, both real
+   and visible responses. OFF -> CHECKED is now 1.489:1 in luminance and 47.1
+   degrees in hue, where under the gold pen it was 1.106:1 and 3.2 degrees --
+   so the checked state gained BOTH a luminance difference and a hue
+   difference it did not have. (An earlier draft of this paragraph said 105
+   degrees. It was not 105: gold #DFA52E and text.dim #BFB7AA sit 3.2 degrees
+   apart, which is why the gold pen could not signal "checked" by hue at all.
+   That same false figure was already retired once from FontAwesome.hpp and
+   came back here; it is recorded rather than quietly deleted so it does not
+   return a third time.) The state is still never asked to carry itself
+   alone: the checked face drops 2.057:1 and a 2px or 3px accent rule appears.
+
+   THE ONE CELL UNDER THE FLOOR is ON at 2.45:1 on bg.hover, and it cannot be
+   reached: bg.hover IS the hover face, so a checked icon on it is drawn with
+   the ON+HOVER pen at 4.00:1. Every cell an icon can actually be painted in
+   clears 3:1.
 
    DISABLED is the OFF pen at 0.45 alpha: #5F5A53 on bg.void (2.82:1), #6C675F
    on bg.panel (2.69:1), #777168 on bg.raised (2.44:1), #7F7970 on bg.overlay
@@ -2831,7 +3008,7 @@ QPushButton[accessibleName="titlebar_close"] {
    express. */
 QWidget[accessibleName="FontNoggitButtonStyle"],
 QWidget[accessibleName="FontAwesomeButtonStyle"] {
-	color: #DFA52E;
+	color: #F3687F;
 }
 
 QWidget[accessibleName="FontNoggitButtonStyle"]:disabled,
@@ -2922,15 +3099,16 @@ Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolBar {
 
      INACTIVE      transparent, the card shows through. Icon text.dim, 4.72:1.
      HOVER         bg.hover #5B5651, a 1.292:1 LIFT over the card, 1px
-                   stroke.hi. Icon derives to #E6E3DD, 5.66:1.
-     ACTIVE        bg.void #100E0B, a 2.057:1 RECESS below the card, 3px accent
-                   leading rule at 4.27:1 against the card, icon accent at
-                   8.77:1 on the recessed face. Three simultaneous cues, and
+                   stroke.hi. Icon derives to #DCD7D0, 5.07:1.
+     ACTIVE        bg.void #100E0B, a 2.057:1 RECESS below the card, 3px
+                   accent.hi leading rule at 3.17:1 against the card and
+                   6.51:1 against the recessed face, icon accent.hi at 6.51:1
+                   on that face. Three simultaneous cues, and
                    against a hovered neighbour that has gone UP one level the
                    direction alone is unmistakable.
      ACTIVE+HOVER  bg.alt #1D1916, 1.863:1 -- still clearly down, but lifted
                    from the resting active state so the hover is felt. Icon
-                   accent 7.95:1.
+                   accent.hi 5.90:1.
      PRESSED       accent.press fill, the 3px accent rule held at full strength
                    so a click cannot erase the state it is about to change.
                    Icon ink 5.64:1.
@@ -2971,7 +3149,7 @@ QWidget#leftToolbarHolder > QToolBar QToolButton:checked {
 	background-color: #100E0B;
 	color: #F3F0E9;
 	border: 1px solid transparent;
-	border-left: 3px solid #DFA52E;
+	border-left: 3px solid #F3687F;
 }
 
 /* Both marks at once. Two pseudo-states, so it outranks the two single-state
@@ -2980,24 +3158,24 @@ QWidget#leftToolbarHolder > QToolBar QToolButton:checked:hover {
 	background-color: #1D1916;
 	color: #F3F0E9;
 	border: 1px solid #746D64;
-	border-left: 3px solid #DFA52E;
+	border-left: 3px solid #F3687F;
 }
 
 /* :pressed ties with :hover on specificity and wins on document order, and
    :checked:pressed ties with :checked:hover the same way, so all four are
    spelled out rather than left to chance. */
 QWidget#leftToolbarHolder > QToolBar QToolButton:pressed {
-	background-color: #B8801F;
-	color: #100E0B;
-	border: 1px solid #B8801F;
-	border-left: 3px solid #B8801F;
+	background-color: #C32842;
+	color: #F3F0E9;
+	border: 1px solid #C32842;
+	border-left: 3px solid #C32842;
 }
 
 QWidget#leftToolbarHolder > QToolBar QToolButton:checked:pressed {
-	background-color: #B8801F;
-	color: #100E0B;
-	border: 1px solid #B8801F;
-	border-left: 3px solid #DFA52E;
+	background-color: #C32842;
+	color: #F3F0E9;
+	border: 1px solid #C32842;
+	border-left: 3px solid #F3687F;
 }
 
 /* Focus, which this bar had none of: on Qt's specificity model the base
@@ -3021,13 +3199,13 @@ QWidget#leftToolbarHolder > QToolBar QToolButton:checked:pressed {
    scope out-ranks the base outright and would otherwise take the base's
    transparent reserve back. */
 QWidget#leftToolbarHolder > QToolBar QToolButton:focus {
-	border: 1px solid #DFA52E;
+	border: 1px solid #F3687F;
 	border-left: 3px solid transparent;
 }
 
 QWidget#leftToolbarHolder > QToolBar QToolButton:checked:focus {
-	border: 1px solid #DFA52E;
-	border-left: 3px solid #DFA52E;
+	border: 1px solid #F3687F;
+	border-left: 3px solid #F3687F;
 }
 
 /* Last of the single-pseudo rules, so a disabled tool shows no state mark. */
@@ -3060,7 +3238,7 @@ QWidget#leftToolbarHolder > QToolBar::separator {
 
    Same recess model as the tool strip, rotated: the rule goes on the BOTTOM
    edge at 2px and the left reserve drops to 1px. Eight recessed dark wells
-   with gold glyphs along a bar reads as a row of latched switches, which is
+   with crimson glyphs along a bar reads as a row of latched switches, which is
    exactly what it is -- louder than a bare underline, quieter than eight
    saturated boxes, because the loudness is carried by a DARK plate rather than
    by a saturated one.
@@ -3091,7 +3269,7 @@ Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton {
 }
 
 /* OFF, pointer on it: the plate LIFTS to bg.hover, 1.292:1 over the card, with
-   a stroke.hi edge at 1.84:1. Icon derives to #E6E3DD, 5.66:1 on the plate. */
+   a stroke.hi edge at 1.84:1. Icon derives to #DCD7D0, 5.07:1 on the plate. */
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:hover {
 	background-color: #5B5651;
 	color: #F3F0E9;
@@ -3101,24 +3279,25 @@ Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:hover {
 }
 
 /* ON: the face RECESSES to bg.void, 2.057:1 below the card, and the bottom
-   rule turns accent at 4.27:1 against the card. Icon accent, 8.77:1. */
+   rule turns accent.hi at 3.17:1 against the card and 6.51:1 against the
+   recessed face it edges. Icon accent.hi, 6.51:1. */
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:checked {
 	background-color: #100E0B;
 	color: #F3F0E9;
 	border: 1px solid transparent;
 	border-left: 1px solid transparent;
-	border-bottom: 2px solid #DFA52E;
+	border-bottom: 2px solid #F3687F;
 }
 
 /* ON, pointer on it: lifted off the resting ON face to bg.alt (1.863:1 recess,
    so still clearly down) with the stroke.hi edge and the accent rule held.
-   Icon accent 7.95:1. */
+   Icon accent.hi 5.90:1. */
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:checked:hover {
 	background-color: #1D1916;
 	color: #F3F0E9;
 	border: 1px solid #746D64;
 	border-left: 1px solid #746D64;
-	border-bottom: 2px solid #DFA52E;
+	border-bottom: 2px solid #F3687F;
 }
 
 /* :pressed ties with :hover and :checked on specificity and wins on document
@@ -3126,19 +3305,19 @@ Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:checked:hover {
    are spelled out. The ON rule is held at full accent so a press cannot erase
    the state it is about to change. */
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:pressed {
-	background-color: #B8801F;
-	color: #100E0B;
-	border: 1px solid #B8801F;
-	border-left: 1px solid #B8801F;
-	border-bottom: 2px solid #B8801F;
+	background-color: #C32842;
+	color: #F3F0E9;
+	border: 1px solid #C32842;
+	border-left: 1px solid #C32842;
+	border-bottom: 2px solid #C32842;
 }
 
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:checked:pressed {
-	background-color: #B8801F;
-	color: #100E0B;
-	border: 1px solid #B8801F;
-	border-left: 1px solid #B8801F;
-	border-bottom: 2px solid #DFA52E;
+	background-color: #C32842;
+	color: #F3F0E9;
+	border: 1px solid #C32842;
+	border-left: 1px solid #C32842;
+	border-bottom: 2px solid #F3687F;
 }
 
 /* Focus, the same two-rule construction the left strip uses and for the same
@@ -3148,15 +3327,15 @@ Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:checked:pressed {
    border widths at their exact values -- 1px, 1px, 2px -- or the 34x34 box
    changes size the moment you tab across the bar. */
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:focus {
-	border: 1px solid #DFA52E;
-	border-left: 1px solid #DFA52E;
+	border: 1px solid #F3687F;
+	border-left: 1px solid #F3687F;
 	border-bottom: 2px solid transparent;
 }
 
 Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolButton:checked:focus {
-	border: 1px solid #DFA52E;
-	border-left: 1px solid #DFA52E;
-	border-bottom: 2px solid #DFA52E;
+	border: 1px solid #F3687F;
+	border-left: 1px solid #F3687F;
+	border-bottom: 2px solid #F3687F;
 }
 
 /* Last of the single-pseudo rules, so it beats :checked on document order and
@@ -3193,29 +3372,36 @@ QWidget#gizmoBar QPushButton:hover {
 }
 
 /* Same recess model as the two bars beside it, so the three read as one
-   family: the checked face drops to bg.void and the glyph turns accent. */
+   family: the checked face drops to bg.void and the ring and glyph turn
+   accent.hi -- accent.hi and not accent because this bar is a floating
+   bg.overlay card, where the outer side of the ring would be 2.329:1 in plain
+   accent. On the recessed face both read 6.513:1. */
 QWidget#gizmoBar QPushButton:checked {
 	background-color: #100E0B;
-	border: 1px solid #DFA52E;
-	color: #DFA52E;
+	border: 1px solid #F3687F;
+	color: #F3687F;
 }
 
 /* On Qt's specificity model the base QPushButton:focus rule is 1 + 0x10 = 17
    and this scope is (1 + 0x100) + (1 + 0x10) = 274, so without this rule the
    base would have won and these eight buttons had no focus mark at all.
-   accent on the bg.overlay card is 4.265:1. (Published as 257 and 65538,
+   accent.hi on the bg.overlay card is 3.167:1. (Published as 257 and 65538,
    which match neither Qt's model nor the 257 quoted elsewhere in this file for
    a single pseudo-class; see QSlider#texturing_brush_level_slider for the
    model every figure here now uses. The conclusion is unchanged.)
 
    NOTE THE TIE THIS SCOPE DOES HAVE: QWidget#gizmoBar QPushButton:checked is
    also 274, and this rule is later in document order, so it wins on the
-   BORDER. That is harmless only because both declare the identical
-   `1px solid #DFA52E`; the checked fill and glyph colour are not restated
-   here, so a checked button that takes focus keeps them. Add anything else to
-   this rule and it will start eating the checked face. */
+   BORDER. That is harmless, and it stayed harmless through the accent moving
+   to crimson only because BOTH rules resolved to the same value again: this
+   bar is a bg.overlay card, so its checked ring is accent.hi for the surround
+   reason the palette header gives, and every focus ring in the sheet is
+   accent.hi. If either one is ever moved to plain accent, this tie starts
+   deciding which crimson a checked-and-focused gizmo shows. The checked fill
+   and glyph colour are not restated here, so the face survives. Add anything
+   else to this rule and it will start eating that face. */
 QWidget#gizmoBar QPushButton:focus {
-	border: 1px solid #DFA52E;
+	border: 1px solid #F3687F;
 }
 
 QWidget#gizmoBar QPushButton:disabled {
@@ -3388,14 +3574,15 @@ Noggit--Ui--Tools--ToolPanel QGroupBox {
    controls are the objects. On the bg.void ground the title sits on it
    measures 9.699:1, over the 7:1 prose floor.
 
-   THE TICK IS LEGITIMATE CRIMSON AND IS NOT A STATE. brand.crimson is barred
-   from meaning "selected", "active" or "checked" anywhere in the editor,
-   because it sits 1.318:1 and 16.0 degrees from bad #E86F62 while the gold
-   accent sits 1.389:1 and 34.5 degrees away, and that separation is the whole
-   reason the accent moved off red. This tick is a SECTION MARK -- it is
-   present in every state of the section, it never changes, and it carries no
-   information a user could mistake for "this one is chosen". On the bg.void
-   ground it measures 4.790:1, over the 3:1 graphical floor. On a nested
+   THE TICK IS THE ACCENT AND IS STILL NOT A STATE. It used to need a paragraph
+   arguing that crimson here was safe because crimson was barred from meaning
+   "selected", "active" or "checked" in the editor. That bar is gone -- crimson
+   IS the accent now, 32.3 degrees from bad #EF752E -- so the tick simply uses
+   the same value everything else does. What has not changed is that it is a
+   SECTION MARK: present in every state of the section, never changing, and
+   carrying no information a user could mistake for "this one is chosen". On
+   the bg.void ground it measures 4.790:1, over the 3:1 graphical floor. On a
+   nested
    section, where it falls on the card fill instead, it measures 3.746:1 and
    still clears it.
 
@@ -3442,29 +3629,40 @@ Noggit--Ui--Tools--ToolPanel QGroupBox QGroupBox {
 /* --- the segmented chips ------------------------------------------------- */
 
 /* CHECKED AND FOCUSED WERE THE SAME MARK. The QPushButton block near the top
-   of this file states the collision and defers it: QPushButton:checked and
-   QPushButton:focus both declare `1px solid #DFA52E` and nothing else
-   separates them, so a checked-unfocused chip and an unchecked-FOCUSED one
-   carried the identical gold ring and differed only by fill -- bg.void against
-   bg.raised, 1.638:1 -- and by text rank, text.hi against text, 1.165:1.
-   Neither is a difference. With nine chips in one exclusive group in the
-   terrain tool, four in the flatten tool and a third set in the chunk
-   manipulator, that collision is on screen permanently.
+   of this file states the collision: :checked and :focus both used to declare
+   the identical `1px solid #DFA52E`, so a checked-unfocused chip and an
+   unchecked-FOCUSED one carried the same gold ring and differed only by fill --
+   bg.void against bg.raised, 1.638:1 -- and by text rank, text.hi against text,
+   1.165:1. Neither is a difference. With nine chips in one exclusive group in
+   the terrain tool, four in the flatten tool and a third set in the chunk
+   manipulator, that collision was on screen permanently.
 
-   The fix is the pattern already proven on the gizmo bar: the checked face
-   keeps the recess and the ring and turns its GLYPH accent.
+   TWO THINGS FIX IT NOW, not one. The first is the pattern proven on the gizmo
+   bar: the checked face keeps the recess and the ring and turns its GLYPH
+   accent. The second arrived with the crimson ramp, which splits the ring
+   itself -- a checked mark on a recessing face is plain accent, a focus ring
+   that has to survive a lighter hover face is accent.hi.
 
-     checked            face bg.void, accent glyph  8.772:1, accent ring on the
-                        same face 8.772:1
-     focused, unchecked face bg.raised, text glyph  8.873:1, accent ring 5.356:1
+     checked            face bg.void, accent glyph  4.790:1, accent ring on the
+                        same face 4.790:1
+     checked + hovered  face bg.alt, accent.hi glyph and ring   5.900:1
+     focused, unchecked face bg.raised, text glyph  8.873:1, accent.hi ring
+                        3.977:1
      the two faces                                  1.638:1 apart
-     the two glyphs                                 1.657:1 apart in luminance
+     the two rings                                  1.360:1 apart
+     the two glyphs                                 3.034:1 apart in luminance
 
-   1.657:1 is not what separates them and this note does not pretend it is:
-   what separates them is CHROMA. accent #DFA52E is 79.4% saturated and text
-   #E4DFD7 is 5.7% saturated -- one is a colour and the other is white. (Hue is
-   the wrong measure here and was quoted wrongly once: the two are 3.4 degrees
-   apart in hue, because the hue of a near-neutral is meaningless.)
+   The glyph separation used to be 1.657:1 and the note here had to argue that
+   CHROMA rather than luminance was doing the work. It is 3.034:1 under crimson,
+   so luminance now carries it on its own -- and chroma still helps: accent
+   #E5405C is 76.0% saturated in HSL where text #E4DFD7 is 19.4%. (Hue is the
+   wrong measure between an accent and a near-neutral and was quoted wrongly
+   once; it is not quoted here.)
+
+   THE CHECKED-AND-HOVERED GLYPH LIFTS TO accent.hi rather than staying accent,
+   for the reason the ACCENT section gives: accent on bg.alt is 4.339:1, which
+   clears the 3:1 mark floor but not the 4.5:1 a glyph-as-text owes, and this
+   chip's glyph is a text label. accent.hi on bg.alt is 5.900:1.
 
    Scoped to the segmented sections by the object name ToolWidgetStyle.hpp
    already sets on them, so it cannot reach an ordinary push button anywhere
@@ -3472,19 +3670,21 @@ Noggit--Ui--Tools--ToolPanel QGroupBox QGroupBox {
    :checked and :focus rules at 17 each. */
 QGroupBox#toolSegments QPushButton:checked {
 	background-color: #100E0B;
-	border: 1px solid #DFA52E;
-	color: #DFA52E;
+	border: 1px solid #E5405C;
+	color: #E5405C;
 }
 
 /* A checked chip still answers the pointer, and it has to say so with the same
    one-step lift the base rule uses -- bg.alt #1D1916 -- rather than losing the
    response entirely, which is what would happen if the rule above (274) were
-   left to out-rank the base :checked:hover (33) on its own. accent on bg.alt
-   is 7.947:1. (1 + 0x100) + (1 + 0x10 + 0x10) = 290. */
+   left to out-rank the base :checked:hover (33) on its own. The ring and glyph
+   lift to accent.hi with the face, 5.900:1 on bg.alt -- the glyph is a text
+   label and plain accent is 4.339:1 there, which clears the 3:1 mark floor but
+   not the 4.5:1 a label owes. (1 + 0x100) + (1 + 0x10 + 0x10) = 290. */
 QGroupBox#toolSegments QPushButton:checked:hover {
 	background-color: #1D1916;
-	border: 1px solid #DFA52E;
-	color: #DFA52E;
+	border: 1px solid #F3687F;
+	color: #F3687F;
 }
 
 /* NINE CHIPS THAT READ AS ONE CONTROL. Every chip inherited the standalone
@@ -3543,7 +3743,7 @@ Noggit-Ui--PaletteList::item:selected,
 Noggit--Ui--TextureList::item:selected,
 Noggit-Ui--TextureList::item:selected {
 	background: transparent;
-	border: 2px solid #DFA52E;
+	border: 2px solid #E5405C;
 	color: #F3F0E9;
 }
 
@@ -3560,8 +3760,8 @@ QTreeView[accessibleName="ab_treeview"]::item:hover {
 }
 
 QTreeView[accessibleName="ab_treeview"]::item:selected {
-	background-color: rgba(223, 165, 46, 0.24);
-	border-left: 2px solid #DFA52E;
+	background-color: rgba(229, 64, 92, 0.24);
+	border-left: 2px solid #E5405C;
 	color: #F3F0E9;
 }
 
@@ -3682,7 +3882,7 @@ QSlider[accessibleName="texturing_brush_level_slider"]::groove:vertical {
    reason. */
 QSlider#texturing_brush_level_slider::handle:vertical,
 QSlider[accessibleName="texturing_brush_level_slider"]::handle:vertical {
-	background-color: #DFA52E;
+	background-color: #E5405C;
 	border: 2px solid #100E0B;
 	border-radius: 6px;
 	height: 8px;
@@ -3802,11 +4002,14 @@ QLabel#project-icon-label {
 }
 
 /* A favourite or a pin is a marked state, not a warning, so it takes the
-   accent: 6.86:1 on the panel and 8.77:1 over the bg.void list well. */
+   accent -- accent.hi specifically, because a project row LIGHTENS under the
+   pointer and this glyph has to survive that: 5.093:1 on the panel and 6.513:1
+   over the bg.void list well, where plain accent would be 3.746:1 and 4.790:1
+   and a glyph rendered as a character owes 4.5:1, not 3:1. */
 QLabel#project-favorite,
 QLabel#project-pinned {
 	background: transparent;
-	color: #DFA52E;
+	color: #F3687F;
 }
 
 QPushButton#importPathField_browse,
@@ -4012,7 +4215,7 @@ ads--CDockWidgetTab:hover {
 ads--CDockWidgetTab[activeTab="true"] {
 	background: transparent;
 	color: #F3F0E9;
-	border-bottom: 2px solid #DFA52E;
+	border-bottom: 2px solid #F3687F;
 }
 
 ads--CDockWidgetTab QLabel {
@@ -4072,15 +4275,23 @@ QLabel#DockWidgetAreaLabel {
 /* ============================================================================
    THE PROJECT-SELECTION WINDOW -- THE BRAND RANK
    ============================================================================
-   brand.crimson is scoped to THIS WINDOW and to brand furniture, and it has to
-   stay that way. Red already means "will destroy your data" everywhere else in
-   this application (bad #E86F62), and the accent moved OFF crimson precisely
-   because one red could not carry both meanings -- the old accent #E8543F and
-   the old error #E0574B measured 1.024:1 apart in luminance and 4.0 degrees in
-   hue, i.e. the same colour, which is why red meant eight different things.
+   brand.crimson IS the accent now, and this window is no longer a walled
+   garden for it. The scoping below stays exactly as it was, because these
+   selectors describe a layout nothing else in the application has -- not
+   because the colour needs quarantining.
 
-   brand.crimson is 16.0 degrees from bad and 50.5 degrees from the accent. The
-   16.0 is the same order of separation this sheet already lives with between
+   THE OLD ARGUMENT, AND WHY IT NO LONGER APPLIES. Red used to mean "will
+   destroy your data" and nothing else outside this window, because the pre-gold
+   palette had accent #E8543F and error #E0574B 1.024:1 apart in luminance and
+   4.0 degrees in hue -- the same colour, which is why red meant eight different
+   things. The fix that made a crimson accent possible was to move the ERROR,
+   not the accent: bad is a vermillion #EF752E at hue 22.1 and sits 32.3 degrees
+   from the crimson on this window. The full arithmetic is in the ACCENT and
+   STATUS sections at the head of this file.
+
+   For the record, the figures the old note quoted: brand.crimson was 16.0
+   degrees from the old bad and 50.5 degrees from the gold accent. The
+   16.0 was the same order of separation this sheet already lived with between
    accent and warn (15.8), and it is safe HERE for one checkable reason:
 
      THERE IS NO DESTRUCTIVE CONTROL ON THIS WINDOW.
@@ -4249,12 +4460,14 @@ QPushButton#launcher-action:pressed {
 	border: 1px solid #8A8378;
 }
 
-/* Focus stays GOLD even on this window. Focus means "the thing you are acting
-   on" and that is the accent's one job application-wide; making it crimson
-   here would be the brand leaking into a system signal. 6.860:1 on the card
-   fill. */
+/* Focus is the accent here as everywhere, and the accent is now the same
+   crimson this window's furniture wears -- so what used to be a rule against
+   "the brand leaking into a system signal" is simply the system signal. It is
+   accent.hi and not accent because this card's HOVER face is bg.raised: accent
+   would be 2.925:1 there and misses the floor, accent.hi is 3.977:1, and on
+   the resting bg.panel card fill it is 5.093:1. */
 QPushButton#launcher-action:focus {
-	border: 1px solid #DFA52E;
+	border: 1px solid #F3687F;
 }
 
 /* The disabled card RECEDES to bg.alt and drops to a seam edge. It must not
@@ -4293,14 +4506,14 @@ QPushButton#launcher-action[state="primary"] {
 QPushButton#launcher-action[state="primary"]:hover {
 	background-color: #3F191D;
 	color: #F3F0E9;
-	border: 1px solid #F05A73;
+	border: 1px solid #F3687F;
 }
 
-/* THE PRESSED BORDER STAYS brand.crimson rather than dropping to a darker
-   crimson. A #B82E46 border on this fill measures 2.282:1 -- under the 3:1
-   floor, so the card would lose its outline at the moment it is pressed.
-   brand.crimson on the same fill is 3.387:1 and clears it. The press is felt
-   through the fill instead: 1.248:1 below the resting fill, which is a larger
+/* THE PRESSED BORDER STAYS at plain accent rather than dropping to accent.press.
+   accent.press #C32842 on this fill measures 2.403:1 -- under the 3:1 floor, so
+   the card would lose its outline at the moment it is pressed. The accent on
+   the same fill is 3.387:1 and clears it. The press is felt through the fill
+   instead: 1.248:1 below the resting fill, which is a larger
    step than the hover's 1.108:1. */
 QPushButton#launcher-action[state="primary"]:pressed {
 	background-color: #501D23;
@@ -4308,10 +4521,14 @@ QPushButton#launcher-action[state="primary"]:pressed {
 	border: 1px solid #E5405C;
 }
 
-/* The one place text.hi is a BORDER on this window. On the crimson card a gold
-   focus ring would sit 50.5 degrees from a border it has to be told apart
-   from; text.hi on the rest fill is 14.940:1 and is unmistakable. This matches
-   what the sheet already does for QPushButton[state="primary"]:focus. */
+/* The one place text.hi is a BORDER on this window, and the accent moving to
+   crimson is what makes it REQUIRED rather than merely tidy. A gold focus ring
+   used to sit 50.5 degrees from the crimson border it had to be told apart
+   from, which was already uncomfortable; an accent.hi ring would sit 0.3
+   degrees and 1.360:1 from it, i.e. it would be the same colour. text.hi on
+   the rest fill is 14.940:1 and is unmistakable. This matches what the sheet
+   already does for QPushButton[state="primary"]:focus, and for the same
+   reason -- you cannot ring an accent-filled control in the accent. */
 QPushButton#launcher-action[state="primary"]:focus {
 	border: 1px solid #F3F0E9;
 }
@@ -4352,8 +4569,8 @@ QToolButton#launcher-gear:pressed {
 }
 
 QToolButton#launcher-gear:focus {
-	border: 1px solid #DFA52E;
-	border-left: 1px solid #DFA52E;
+	border: 1px solid #F3687F;
+	border-left: 1px solid #F3687F;
 }
 
 /* --- the project card ---------------------------------------------------- */
@@ -4398,7 +4615,7 @@ QWidget#project-card[state="selected"] {
 
 QWidget#project-card[state="selected"]:hover {
 	background-color: #3C2927;
-	border: 1px solid #F05A73;
+	border: 1px solid #F3687F;
 }
 
 QLabel#project-card-name {
@@ -4467,13 +4684,17 @@ QWidget#project-card-date-row {
    page out for MapView. Not one selector here can be reached from a tool dock,
    because not one of them matches without an id this window sets by hand.
 
-   THE SAME TEST APPLIES. brand.crimson is 16.0 degrees from bad #E86F62, and it
-   is safe here only while THERE IS NO DESTRUCTIVE CONTROL ON THIS WINDOW. What
-   is on it: two tab bars, a name filter, a type and an expansion combo, a
-   WMO check box, a list of maps, an add-map button, a settings gear and a
-   minimap. The map list's context menu pins and unpins. Nothing deletes. If a
-   [state="danger"] control is ever added here, this whole section goes back to
-   the accent, and that is one grep.
+   THE TEST THAT USED TO APPLY HERE HAS BEEN RETIRED. This section carried a
+   standing condition -- crimson was 16.0 degrees from the old bad #E86F62 and
+   was safe on this window only while nothing on it destroyed anything -- with a
+   note that a [state="danger"] control appearing here would send the whole
+   section back to the accent. It cannot fire any more: crimson IS the accent,
+   and bad moved to a vermillion 32.3 degrees away, so a danger button on this
+   window would be told apart from the brand furniture by exactly the same
+   margin it is told apart from the accent everywhere else. The inventory is
+   still worth having, so: two tab bars, a name filter, a type and an expansion
+   combo, a WMO check box, a list of maps, an add-map button, a settings gear
+   and a minimap. The map list's context menu pins and unpins. Nothing deletes.
 
    THE GROUND IS bg.void, not bg.panel. Every tab page below is turned back to
    #100E0B, which is what lets the map cards reuse the launcher's project-card
@@ -4546,14 +4767,15 @@ QToolButton#map-header-gear:pressed {
 	border-left: 1px solid #BFB7AA;
 }
 
-/* Focus stays GOLD on this window too. Focus means "the thing you are acting
-   on" and that is the accent's one job application-wide. 6.860:1 on the
-   button's own bg.panel fill and 4.204:1 against the worst veiled pixel the
-   strip can put behind it, so the ring clears the 3:1 floor on both sides of
-   itself at every size this window has. */
+/* Focus is the accent here too, and accent.hi rather than accent for the same
+   reason the launcher gear gives: this button's hover face is bg.raised.
+   5.093:1 on the button's own bg.panel fill and 3.122:1 against the worst
+   veiled pixel the strip can put behind it, so the ring clears the 3:1 floor
+   on both sides of itself at every size this window has. Plain accent would
+   have measured 2.296:1 against that worst pixel and failed the outer side. */
 QToolButton#map-header-gear:focus {
-	border: 1px solid #DFA52E;
-	border-left: 1px solid #DFA52E;
+	border: 1px solid #F3687F;
+	border-left: 1px solid #F3687F;
 }
 
 /* --- the two tab bars ---------------------------------------------------- */
@@ -4616,12 +4838,12 @@ QTabWidget#map-detail-tabs QTabBar::tab:selected {
 	font-weight: 600;
 }
 
-/* Two pseudo-states outrank one, so this needs no ordering argument. 5.887:1
-   on bg.void and 1.229:1 above the resting crimson, which is the same step the
-   launcher's brand border takes on hover. */
+/* Two pseudo-states outrank one, so this needs no ordering argument. accent.hi
+   is 6.513:1 on bg.void and 1.360:1 above the resting accent, which is the same
+   step the launcher's brand border takes on hover -- they are one ramp now. */
 QTabWidget#map-entry-tabs QTabBar::tab:selected:hover,
 QTabWidget#map-detail-tabs QTabBar::tab:selected:hover {
-	border-bottom: 2px solid #F05A73;
+	border-bottom: 2px solid #F3687F;
 }
 
 /* --- the pages ----------------------------------------------------------- */
@@ -4742,7 +4964,7 @@ QListWidget#bookmark-list QScrollBar::handle:vertical {
 
 QListWidget#map-list QScrollBar::handle:vertical:hover,
 QListWidget#bookmark-list QScrollBar::handle:vertical:hover {
-	background-color: #F05A73;
+	background-color: #F3687F;
 }
 
 /* --- one map card -------------------------------------------------------- */
@@ -4776,7 +4998,7 @@ QWidget#map-card[state="selected"] {
 
 QWidget#map-card[state="selected"]:hover {
 	background-color: #3C2927;
-	border: 1px solid #F05A73;
+	border: 1px solid #F3687F;
 }
 
 QLabel#map-card-name {
@@ -4856,11 +5078,12 @@ QPushButton#map-add-button {
 QPushButton#map-add-button:hover {
 	background-color: #3F191D;
 	color: #F3F0E9;
-	border: 1px solid #F05A73;
+	border: 1px solid #F3687F;
 }
 
-/* THE PRESSED BORDER STAYS brand.crimson rather than dropping to a darker red:
-   on this fill brand.crimson is 3.387:1 and clears the floor, and the press is
+/* THE PRESSED BORDER STAYS at plain accent rather than dropping to accent.press
+   (2.403:1 on this fill): the accent is 3.387:1 and clears the floor, and the
+   press is
    felt through the fill instead -- 1.248:1 below the resting fill, a larger
    step than the hover's 1.108:1. */
 QPushButton#map-add-button:pressed {
@@ -4869,9 +5092,10 @@ QPushButton#map-add-button:pressed {
 	border: 1px solid #E5405C;
 }
 
-/* text.hi as a border, matching the launcher's primary action: a gold focus
-   ring here would sit 50.5 degrees from a border it has to be told apart from,
-   where text.hi on the rest fill is 14.940:1 and is unmistakable. */
+/* text.hi as a border, matching the launcher's primary action: an accent.hi
+   focus ring here would sit 0.3 degrees and 1.360:1 from the accent border it
+   has to be told apart from, i.e. it would be the same colour, where text.hi
+   on the rest fill is 14.940:1 and is unmistakable. */
 QPushButton#map-add-button:focus {
 	border: 1px solid #F3F0E9;
 }

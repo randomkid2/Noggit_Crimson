@@ -32,7 +32,8 @@
     Third, the slider took whatever height the style's slider thickness happened to be - around
     22px under Fusion, and none of it used. The band is pinned as a MINIMUM as well as a maximum,
     so the row height is this file's decision rather than the style's. That was the single
-    biggest saving on the panel, before the row gap below dropped from 3 to 2.
+    biggest saving on the panel, before the row gap below dropped from 3 to 2 and then, in this
+    pass, from 2 to 0.
 
     THE BAND IS 20px AND IT IS DERIVED, NOT CHOSEN. It is Design::SLIDER_BAND, and the whole
     derivation is on that constant in DesignTokens.hpp; in one line, QSS width/height size the
@@ -81,6 +82,33 @@
     these - but this time it buys 56 percent more hit target on the control that sets brush
     radius and speed, instead of nothing.
 
+    THE CHAIN IS NOW READ OUT OF QT RATHER THAN INFERRED FROM A PROBE, because the probe gave
+    the answer without giving the reason, and the reason is what tells a later edit whether it
+    has broken anything. QStyleSheetStyle::subControlRect, CC_Slider (qstylesheetstyle.cpp:
+    5631-5660, Qt 5.9.9 sources; the function is unchanged in 5.15):
+
+        gr        = positionRect(groove rule)                6px tall, CENTRED in the band
+        cr        = grooveRule.contentsRect(gr)              still 6 - no border, no padding
+        len       = handleRule.size().width()                boxSize(16) = 16 + 2 + 2 = 20
+        thickness = cr.height()                              6
+        cr        = QRect(x + sliderPos, cr.y(), len, thickness)
+        return      handleRule.borderRect(cr)
+
+    and borderRect (:1049-1055) SUBTRACTS the margins, so -7px top and bottom adds fourteen:
+    6 + 7 + 7 = 20. The rect QSlider::mousePressEvent hit-tests is therefore 20 x 20 = 400px, a
+    20px acquisition target on a 6px track, and the band is pinned to exactly 20 below so none
+    of it is clipped. At band 18 the disc loses a row top and bottom; at band 22 nothing is
+    gained, because the box comes from the sheet and the band only clips it - which is what the
+    eight-row table above records from the other direction.
+
+    NOTE FOR ANYONE ADDING A SUB-CONTROL RULE: in that chain the handle is derived from the
+    GROOVE rule and from nothing else. ExtendedSlider.cpp gives ::add-page a 1px border so that
+    the unfilled part of the track exists at all, and that cannot move the grip, change the band
+    or change this file's two 20s - add-page is only ever PAINTED, into a rect built from gr and
+    the handle centre (:3260-3276). A border on ::groove would be a different matter, and would
+    also be invisible: sub-page and add-page are drawn AFTER the groove over its full box, so
+    they paint over its border.
+
     Fourth, the value was left-aligned, so in a column of three sliders the digits started at
     three different x positions and the eye had nothing to scan down. The spinbox is now
     right-aligned. That is the whole fix and it costs no width: the row is label, expanding
@@ -100,10 +128,83 @@
 
     No widget was renamed, removed or reordered; ExtendedSlider.cpp addresses the same five
     objects and none of its ranges or connections changed.
+
+    ============================================================================================
+    FIFTH, AND IT IS THE ONE THAT MADE THE TRACK LOOK DETACHED: THE ROW GROUPED THE WRONG WAY.
+
+    A slider row is two lines that are ONE control, stacked inside a section that separates
+    SIBLING controls by S3 = 8px (ToolWidgetStyle.hpp, sectionColumn). For the two lines to read
+    as one thing, the gap inside the row has to be visibly smaller than the gap between rows.
+    It was not, and the reason is that a QSlider's 20px band is mostly air:
+
+      QSS width/height size the CONTENT rect, and the theme's groove is 6px. Qt centres it -
+      defaultPosition(PseudoElement_SliderGroove) is Qt::AlignCenter and its position mode is
+      PositionMode_Absolute (qstylesheetstyle.cpp:2180-2181 and :2308-2311, Qt 5.9.9), so the
+      groove occupies y = 7..12 of the 20px band and there are SEVEN TRANSPARENT PIXELS above it
+      and seven below.
+
+    So the gap a reader actually sees is not the layout spacing, it is the layout spacing plus
+    that dead band. With the spacing at 2:
+
+      value line  ->  visible track      2 + 7  =  9px
+      visible track  ->  next row's label   7 + 8  = 15px
+
+    9 against 15 is a ratio of 1.67, which is inside the range where the eye cannot decide which
+    line the track belongs to - and "the handle looks detached" is exactly what a 1.67 ratio
+    looks like. Dropping the row spacing to 0 makes it 7 against 15, a ratio of 2.14, and the
+    two lines bind. It also gives 2px per row back to the dock, which over the twenty-three
+    construction sites in this tree is 46px, and 6px in Raise/Lower alone. (Twenty-three,
+    counted for this pass: eighteen `new` across eight files, two more in
+    ChunkManipulatorPanel, three promoted widgets in BrushStack.ui. This file's opening line
+    still says "eighteen of these", which was the count before the chunk manipulator and the
+    stamp tool existed.)
+
+    ZERO IS SAFE HERE PRECISELY BECAUSE OF THE DEAD BAND. Nothing touches: the spin box's bottom
+    border and the first painted pixel of the track are still 7px apart. That is also true of
+    the pressure bar, which is the third item in this layout and sits 7px below the groove for
+    the same reason - and it should be tight, because it is a readout OF the value the track
+    above it is setting, not a separate control.
+
+    SIXTH, THE VALUE AND ITS MENU ARE ONE UNIT AND NOW SPACE LIKE ONE. The horizontal layout ran
+    at 6px, which is not a step on the design system's scale at all - it is the Fusion default
+    that was left behind when the margins were zeroed. The gaps it governs are label|spacer,
+    spacer|spinbox and spinbox|button; the first two are swallowed by the expanding spacer, so
+    the only one anybody sees is the last, between the number and the pencil that configures how
+    that number responds to pen pressure. That is a control and its menu, which is S1 = 4px
+    ("inside a unit") and not S3. Three gaps at 6 become three at 4, so the row's minimum width
+    drops by 6px as well.
+
+    THE ROW STILL FITS THE DOCK FLOOR, and this is the constraint that governs any change here:
+    ToolWidgetStyle.hpp pins every tool to TOOL_CONTENT_WIDTH = 250px and a section card spends
+    CARD_BOX_WIDTH = 26px of it, so a slider row has 224px to lay out in.
+
+    Four items means THREE inter-item gaps - label|spacer, spacer|spinbox, spinbox|button -
+    and the spacer's minimum is 0, so the row's minimum width is
+    label + 3 x spacing + spinbox + button. Measured for this pass with GetTextExtentPoint32
+    against the shipped Segoe UI at the 11px the sheet gives QLabel#slider-prefix, every prefix
+    setPrefix is called with in this tree:
+
+        Angle of Repose:  88      Height offset:  71      Radius:  38      End:      26
+        Inner Radius:     68      Inner radius:   65      weight   39      Size:     23
+        Strength:         48                              Speed:   35      Start:    30
+
+    Taking the widest label with the widest spin box the file's own note records - 95px, at a
+    maximum of 10000 - gives a conservative upper bound, conservative because those two do not
+    occur on the same row (the 0..10000 site is ShaderTool's "Speed:", a 35px label):
+
+        spacing 6   88 + 6 + 0 + 6 + 95 + 6 + 20 = 221px    3px of slack in 224
+        spacing 4   88 + 4 + 0 + 4 + 95 + 4 + 20 = 215px    9px of slack in 224
+
+    So the row was inside the floor by three pixels and is inside it by nine. NOTHING HERE
+    WIDENS THE ROW; both changes make it narrower, so the texturing tool's Paint tab keeps the
+    margin it was measured with.
   -->
   <layout class="QVBoxLayout" name="verticalLayout">
+   <!-- 0, not 2: the QSlider band already supplies 7px of transparent margin above and below
+        the 6px groove, so this is a 7px gap inside the row against a 15px gap between rows.
+        See "FIFTH" above for the derivation. -->
    <property name="spacing">
-    <number>2</number>
+    <number>0</number>
    </property>
    <property name="leftMargin">
     <number>0</number>
@@ -119,8 +220,10 @@
    </property>
    <item>
     <layout class="QHBoxLayout" name="horizontalLayout">
+     <!-- Design::S1. The only gap a reader sees here is number-to-menu-button, and a control
+          and its own menu are one unit. See "SIXTH" above. -->
      <property name="spacing">
-      <number>6</number>
+      <number>4</number>
      </property>
      <property name="leftMargin">
       <number>0</number>
