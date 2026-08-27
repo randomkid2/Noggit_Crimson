@@ -777,6 +777,47 @@ QStatusBar QLabel:disabled {
 	color: #7F786A;
 }
 
+/* THE EIGHT OBJECT NAMES THE C++ ALREADY MINTS. NoggitWindow::prepareStatusBar
+   names the bar "editor-status-bar" and dressStatusReadout names the seven
+   readouts positionally from STATUS_READOUT_NAMES, and until now this sheet
+   used none of them -- eight hooks were cut for a lock that was never fitted.
+   Two of the seven are worth a rule.
+
+   THE LEFTMOST FIELD LOSES ITS LEADING RULE. The paragraph above concedes the
+   defect and cannot fix it, because QSS has no :first-child: the hairline that
+   separates field n from field n-1 is drawn by every field including the one
+   with nothing to its left, so the position readout carried an edge hairline
+   1px from the window's own frame. An id pair scores (1 + 0x100) + (1 + 0x100)
+   = 514 against "QStatusBar QLabel"'s 2, so this reaches it by cascade rather
+   than by document order. The 10px the text used to sit inside becomes 12px,
+   so it does not slide left by the pixel the border gave back.
+
+   THE DATABASE FIELD IS CONTEXT, NOT DATA. It is written once, at map load and
+   only under USE_MYSQL_UID_STORAGE, and never updates again. Position, FPS and
+   the tile counts change every frame and already lift to the 12/600 text.hi
+   value rank through QLabel[state="value"]. A never-changing configuration
+   note sharing the 11/400 text rank with them was the loudest thing in the bar
+   that had nothing to say. text.dim on bg.void is 9.699:1, still over the 7:1
+   prose floor this sheet sets for itself, and it is now quieter than the
+   readouts beside it rather than equal to them.
+
+   NO min-width RESERVE, and that is a refusal rather than an oversight. The
+   obvious cure for a bar that twitches once a second is to pin the two live
+   counters to a fixed width, but a reserve has to be at least as wide as the
+   longest string it reserves for, and the strings MapView builds are long --
+   the FPS field is "FPS: %1 - Average frame time: %2ms" and the culling field
+   names four counts in one label. At that length the reserve is most of the
+   bar. The twitch is real; its fix is a shorter string in MapView, not a width
+   here. */
+QStatusBar#editor-status-bar QLabel#status-position {
+	border-left: none;
+	padding-left: 12px;
+}
+
+QLabel#status-database {
+	color: #BFB7AA;
+}
+
 QSizeGrip {
 	background: transparent;
 	image: url(themes/CrimsonSlate/images/sizegrip.png);
@@ -1556,26 +1597,35 @@ QRadioButton::indicator:checked:disabled {
 
 /* -------------------------------------------------------------- group box -- */
 
-/* Stock Qt draws a group box as a bordered rectangle with a centred bold
-   underlined title, and the tool panels are nothing but group boxes, so the
-   right-hand dock would read as a stack of 1998 dialog frames. Here there is
-   no box: the title is a heading in the widget own top margin, one rule runs
-   under it, and that rule is the only mark.
+/* THIS IS NO LONGER THE RULE THE TOOL DOCK USES. Read it with "the tool dock"
+   further down this file, which re-scopes every declaration below to
+   Noggit--Ui--Tools--ToolPanel and draws a section there as a bg.panel card on
+   a bg.void ground instead. What is left here reaches the group boxes in the
+   settings window, the dialogs and the wizards, where a heading over a rule is
+   still the right construction because those forms sit on bg.panel already and
+   have nowhere to recess to.
+
+   Stock Qt draws a group box as a bordered rectangle with a centred bold
+   underlined title, so a form built out of them reads as a stack of 1998
+   dialog frames. Here there is no box: the title is a heading in the widget
+   own top margin, one rule runs under it, and that rule is the only mark.
 
    THE RULE IS edge #8A8378. It was stroke #565049, which measures 1.894:1 on
    bg.panel, and the argument for it was that this is the quietest line that
    can still be found. Re-measured, it cannot: 1.894:1 is under the 3:1 floor
    WCAG 2.1 SC 1.4.11 sets for a graphical object, and this is not a decorative
-   seam -- it is the application primary structural divider and there are a
-   dozen of them stacked down the tool dock. edge is 4.018:1 on bg.panel, which
-   is the quietest line that can ACTUALLY be found. stroke.soft, at 1.360:1,
-   was never a candidate.
+   seam -- it is the application primary structural divider. edge is 4.018:1 on
+   bg.panel, which is the quietest line that can ACTUALLY be found.
+   stroke.soft, at 1.360:1, was never a candidate.
 
    REFLOW, stated so nobody is surprised: the title goes 11/700 -> 13/700, the
    section-heading rank. Its line box measures 17px (probe: QFontMetrics, Segoe
    UI 13px, any weight). margin-top therefore goes 20px -> 22px and the title
    padding-bottom 6px -> 5px, so 17 + 5 = 22 fits the margin exactly. Every
-   group section grows by 2px and nothing else moves. */
+   group section grows by 2px and nothing else moves. (The dock's own sections
+   went BACK to 11/700 when they became cards -- the heading rank the two brand
+   windows use -- and their margin to 21px with it. The paragraph above is the
+   history of this rule, not of that one.) */
 QGroupBox {
 	background: transparent;
 	border: none;
@@ -1611,7 +1661,9 @@ QGroupBox:disabled {
 }
 
 /* A group box nested inside another one gets no rule of its own, or the panel
-   turns into a ladder. */
+   turns into a ladder. The tool dock's scoped twin does the same thing for the
+   same reason, one specificity point higher so it wins on cascade rather than
+   on document order. */
 QGroupBox QGroupBox {
 	border-top: none;
 	margin-top: 16px;
@@ -2527,6 +2579,27 @@ QProgressBar#pressureBar::chunk {
 	border-radius: 2px;
 }
 
+/* THE ROW LABEL, AND IT IS THE MOST REPEATED LABEL IN THE EDITOR. It is the
+   QLabel named "label" in ExtendedSliderUi.ui -- the one setPrefix writes --
+   and until the constructor gave it this object name it carried no rank at
+   all: it rendered at the global 12/400 text, which is exactly what a check
+   box caption sitting next to it renders at. Nineteen construction sites plus
+   the open-ended expansion in script_settings.cpp all inherited that.
+
+   text.dim at 11px puts the NAME of the row below its VALUE, which is the
+   right order -- the value is the 12/600 text.hi in the spin box at the other
+   end of the same row. On the tool-dock card the label measures 7.585:1 and on
+   a bg.void dialog ground 9.699:1, both over the 7:1 prose floor.
+
+   NO GEOMETRY HERE. The row height is set by the 20px band and the 20x20 grip
+   the block above measures, and an 11px label has a 13px line box, so nothing
+   in this rule can change the height of a slider row. */
+QLabel#slider-prefix {
+	color: #BFB7AA;
+	background: transparent;
+	font-size: 11px;
+}
+
 
 /* -------------------------------------------------------------- tool tip -- */
 
@@ -2769,12 +2842,26 @@ QWidget[accessibleName="FontAwesomeButtonStyle"]:disabled {
 /* --- the viewport overlay ------------------------------------------------ */
 
 /* The overlay itself is translucent, but its layout holders are plain QWidgets
-   and would otherwise paint opaque slabs of panel colour over the 3D view. */
+   and would otherwise paint opaque slabs of panel colour over the 3D view.
+
+   toolbar-action-holder IS THE SAME DEFECT, SIX MORE TIMES, and it was on the
+   render the whole time this rule was fixing the other five. Every
+   QWidgetAction in ViewToolbar.cpp wraps its content in a bare `new
+   QWidget(NULL)` -- SliderAction, PushButtonAction, CheckBoxAction, IconAction,
+   SpacerAction and SubToolBarAction -- and a bare QWidget matches nothing in
+   this sheet except the global QWidget rule, which is bg.panel #292621. So the
+   contextual second row (the climb bar is icon + two check boxes + a slider +
+   Reset) rendered as five opaque bg.panel slabs inside a bg.overlay card, a
+   1.608:1 step, floating over arbitrary terrain. These five were named and
+   fixed; those six were never named, so they were never reached. The six now
+   set the object name in their constructors and join this list at
+   (1 + 0x100) = 257 against the global rule's 1. */
 QWidget#MapViewOverlay,
 QWidget#leftToolbarHolder,
 QWidget#upperToolbarHolder,
 QWidget#secondaryToolbarHolder,
-QWidget#leftSecondaryToolbarHolder {
+QWidget#leftSecondaryToolbarHolder,
+QWidget#toolbar-action-holder {
 	background: transparent;
 }
 
@@ -2805,6 +2892,27 @@ QWidget#gizmoBar {
 	padding: 5px;
 	spacing: 2px;
 	min-height: 0px;
+}
+
+/* A DOCKED TOOL BAR INSIDE A FLOATING CARD. SubToolBarAction nests a plain
+   `new QToolBar()` inside its holder, and a plain QToolBar matches the docked
+   bar rule further up this file: bg.raised #3C3732, a 1px edge.lit #A9A296 lid
+   and min-height 35px. Four sub-mode bars are built that way -- texture,
+   flatten, light and climb -- so picking a sub-mode drew full docked-toolbar
+   chrome, lit top edge and all, inside a bg.overlay card, in a 45px box the
+   card then padded to about 55px.
+
+   The card is the object here; the bar inside it is a layout, so it takes no
+   fill, no border and no height floor of its own, and the card's own 5px of
+   padding is the only inset. Scoping by class name scores 1 + 1 = 2 against
+   the bare QToolBar rule's 1 -- and the four sub-bars are horizontal, so
+   QToolBar:vertical (17) cannot reach them. */
+Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar QToolBar {
+	background: transparent;
+	border: none;
+	min-height: 0px;
+	padding: 0px;
+	spacing: 2px;
 }
 
 /* --- the left tool strip ------------------------------------------------- */
@@ -3165,6 +3273,238 @@ QLabel[accessibleName="overlay_label"] {
 	font-weight: 600;
 }
 
+/* --- the tool dock ------------------------------------------------------- */
+
+/* THE GROUND DROPS AND THE SECTIONS BECOME CARDS.
+
+   The right-hand dock was the last region still on the SECOND revision of this
+   design language: a bg.panel ground with each section drawn as a 13/700
+   text.hi caption over a full-width edge hairline, a dozen of them stacked
+   down the panel. Both brand windows had already left that construction
+   behind -- the project selector puts bg.panel cards on a bg.void root
+   (QWidget#project-card) and the map window does the same on its pages
+   (QWidget#map-card) -- and the map window's own source records why it did:
+   "THIS REPLACES A QGroupBox ... three nested outlines around one form".
+
+   So the dock takes the same construction, checked against the same numbers
+   those two cards were checked against:
+
+     ground   bg.void   #100E0B
+     card     bg.panel  #292621   1.279:1 above the ground
+     edge     edge      #8A8378   4.018:1 on the card, 5.138:1 on the ground
+
+   The card is an object by BOTH cues, a fill step and a border, which is the
+   whole reason the edge ramp exists. 12px radius is the CONTAINER tier -- the
+   same radius the two brand cards and the three floating viewport cards take.
+
+   NOTHING INSIDE A CARD CHANGES MEASUREMENT, and that is what makes almost all
+   of this a sheet edit. A button is bg.raised #3C3732, 1.281:1 on the card; an
+   input well is bg.void #100E0B, 1.279:1 on the card; a slider groove is
+   bg.void. Every one of those was already measured against bg.panel, because
+   bg.panel is what the dock's ground used to be. Only the ground moved.
+
+   SCOPING, and why it wins by cascade rather than by document order. Qt scores
+   a basic selector as 1 for a type name, 0x10 per pseudo-state or attribute
+   and 0x100 per id, and sums the basic selectors of a descendant chain
+   (qcssparser.cpp, BasicSelector::specificity). ToolPanel carries Q_OBJECT and
+   lives in Noggit::Ui::Tools, so the type name resolves.
+
+     Noggit--Ui--Tools--ToolPanel QWidget#scrollHolder   1 + (1 + 0x100) = 258
+     QWidget#scrollAreaWidgetContents                        (1 + 0x100) = 257
+     QWidget                                                             =   1
+     Noggit--Ui--Tools--ToolPanel QGroupBox                      1 + 1   =   2
+     QGroupBox                                                           =   1
+
+   The one tie is with "QGroupBox QGroupBox" further up this file, also 2, and
+   it is broken deliberately: the nested rule below scores 3 and therefore wins
+   on specificity, not on being written later. */
+
+Noggit--Ui--Tools--ToolPanel QWidget#scrollHolder,
+Noggit--Ui--Tools--ToolPanel QScrollArea#scrollArea,
+Noggit--Ui--Tools--ToolPanel QWidget#scrollAreaWidgetContents {
+	background-color: #100E0B;
+}
+
+/* BELT AND BRACES FOR THE TOOL WIDGETS THEMSELVES. Each of the sixteen widgets
+   ToolPanel::registerTool takes is a direct child of scrollAreaWidgetContents,
+   and the global QWidget rule at the top of this file paints bg.panel. Whether
+   it reaches a given tool depends on something this sheet cannot see: a plain
+   QWidget instance takes a style-sheet background, a QWidget SUBCLASS does not
+   unless it sets Qt::WA_StyledBackground or paints one itself -- the same
+   mechanism QWidget#TitleBar's note records. Most tool widgets are subclasses
+   and would show the new ground through; the impassibility tool's placeholder
+   is a bare QWidget and would have painted a bg.panel slab over it. This rule
+   settles both cases at 1 + (1 + 0x100) + 1 = 259 without needing to know
+   which is which. */
+Noggit--Ui--Tools--ToolPanel QWidget#scrollAreaWidgetContents > QWidget {
+	background: transparent;
+}
+
+/* THE CARD.
+
+   REFLOW, and it is the one part of this that is NOT free. The base QGroupBox
+   rule pads 12px top and bottom and deliberately NOTHING left or right, so
+   that "a section costs the panel no width at all". A card cannot do that --
+   content flush against its own border is not a card -- so this rule pads 12px
+   on all four sides, and the 26px that costs (12 + 12 of padding, 1 + 1 of
+   border) is PAID FOR BY THE DOCK rather than taken out of the tool. That is
+   the same move ToolPanel.cpp already makes for the panel's own 24px of side
+   margin, and for the same reason: TOOL_CONTENT_WIDTH is a contract that every
+   tool widget has been measured against (the terrain tool asks 194px, the
+   texturing tool's Paint tab 229px) and taking 26px out of a fixed 250px would
+   have put a horizontal scroll bar under the most-used tool in the editor at
+   the dock's smallest size. ToolPanelScroll.ui's scroll area goes 274 -> 300px
+   and ToolPanel's own minimum 289 -> 315px in the same change. The content
+   floor is still exactly 250px and every width measured against it stays
+   valid.
+
+   The title's margin goes 22 -> 21px because the title's line box goes 17px
+   (13px text) to 13px (11px text) and it keeps 3px above and 5px below:
+   3 + 13 + 5 = 21, which is exactly the margin the title has to fit inside or
+   it would overlap the card's top border.
+
+   THE FONT AND COLOUR OF THE BOX ITSELF ARE LEFT ALONE ON PURPOSE. A QGroupBox
+   is a container and QWidget font and colour propagate to children, so moving
+   the box's own 13/700 here would re-rank every child that does not carry a
+   font rule of its own. Only ::title is re-ranked, and a sub-control rule
+   reaches nothing but the sub-control. */
+Noggit--Ui--Tools--ToolPanel QGroupBox {
+	background-color: #292621;
+	border: 1px solid #8A8378;
+	border-radius: 12px;
+	margin-top: 21px;
+	padding: 12px;
+}
+
+/* THE SECTION HEADING TAKES THE LAUNCHER'S RANK, which is the mark that says
+   "same product". QLabel#launcher-heading is 11/700 text.dim with a 3px
+   brand.crimson tick; this is that rule with the padding a group-box title
+   needs. The editor's heading used to be 13/700 text.hi over a 4.018:1
+   full-width rule -- two sizes bigger, one rank brighter and louder than the
+   brand windows' while saying less.
+
+   text.dim rather than text.hi, on the same argument the launcher makes: a
+   heading that names a section is a label for what is under it, and the
+   controls are the objects. On the bg.void ground the title sits on it
+   measures 9.699:1, over the 7:1 prose floor.
+
+   THE TICK IS LEGITIMATE CRIMSON AND IS NOT A STATE. brand.crimson is barred
+   from meaning "selected", "active" or "checked" anywhere in the editor,
+   because it sits 1.318:1 and 16.0 degrees from bad #E86F62 while the gold
+   accent sits 1.389:1 and 34.5 degrees away, and that separation is the whole
+   reason the accent moved off red. This tick is a SECTION MARK -- it is
+   present in every state of the section, it never changes, and it carries no
+   information a user could mistake for "this one is chosen". On the bg.void
+   ground it measures 4.790:1, over the 3:1 graphical floor. On a nested
+   section, where it falls on the card fill instead, it measures 3.746:1 and
+   still clears it.
+
+   NO CAPITALS AND NO TRACKING, and both are refusals with a reason rather than
+   omissions.
+
+   Capitals would have to come from the string, because QSS has no
+   text-transform. The one place to do that centrally is toolSection() in
+   ToolWidgetStyle.hpp, and it reaches 16 of the 59 sections in this dock -- the
+   other 43 are raw `new QGroupBox`, counted per file: LightEditor 10,
+   ObjectEditor 10, Water 7, GroundEffectsTool 4, texturing_tool 3,
+   AreaTriggerEditor 2, ZoneIDBrowser 2, FlattenTool 2, TerrainTool 1,
+   MinimapCreator 1, script_settings 1. Uppercasing the 16 ships a panel
+   carrying two spellings of one rank, which is worse than one spelling of a
+   rank that is merely not capitalised.
+
+   Tracking has to come from a QFont, because QSS has no letter-spacing either,
+   and a QFont set on a QGroupBox propagates to every descendant that has not
+   set its own letter spacing -- so tracking one title tracks every label, spin
+   box and chip inside that section. The launcher can track its headings
+   because they are QLabels, which are leaves. Both fixes are the same sweep
+   across the eleven tool widgets and belong in one pass. */
+Noggit--Ui--Tools--ToolPanel QGroupBox::title {
+	color: #BFB7AA;
+	border-left: 3px solid #E5405C;
+	padding: 3px 8px 5px 10px;
+	font-size: 11px;
+	font-weight: 700;
+}
+
+/* A card inside a card is two nested outlines around one form, which is the
+   exact failure the map window's source names. A nested section keeps its
+   heading and its tick and gives up the box: no fill, no border, no radius and
+   no padding, so it costs the card no width at all. 1 + 1 + 1 = 3 beats both
+   the card rule above (2) and the unscoped "QGroupBox QGroupBox" (2). */
+Noggit--Ui--Tools--ToolPanel QGroupBox QGroupBox {
+	background: transparent;
+	border: none;
+	border-radius: 0px;
+	margin-top: 21px;
+	padding: 0px;
+}
+
+/* --- the segmented chips ------------------------------------------------- */
+
+/* CHECKED AND FOCUSED WERE THE SAME MARK. The QPushButton block near the top
+   of this file states the collision and defers it: QPushButton:checked and
+   QPushButton:focus both declare `1px solid #DFA52E` and nothing else
+   separates them, so a checked-unfocused chip and an unchecked-FOCUSED one
+   carried the identical gold ring and differed only by fill -- bg.void against
+   bg.raised, 1.638:1 -- and by text rank, text.hi against text, 1.165:1.
+   Neither is a difference. With nine chips in one exclusive group in the
+   terrain tool, four in the flatten tool and a third set in the chunk
+   manipulator, that collision is on screen permanently.
+
+   The fix is the pattern already proven on the gizmo bar: the checked face
+   keeps the recess and the ring and turns its GLYPH accent.
+
+     checked            face bg.void, accent glyph  8.772:1, accent ring on the
+                        same face 8.772:1
+     focused, unchecked face bg.raised, text glyph  8.873:1, accent ring 5.356:1
+     the two faces                                  1.638:1 apart
+     the two glyphs                                 1.657:1 apart in luminance
+
+   1.657:1 is not what separates them and this note does not pretend it is:
+   what separates them is CHROMA. accent #DFA52E is 79.4% saturated and text
+   #E4DFD7 is 5.7% saturated -- one is a colour and the other is white. (Hue is
+   the wrong measure here and was quoted wrongly once: the two are 3.4 degrees
+   apart in hue, because the hue of a near-neutral is meaningless.)
+
+   Scoped to the segmented sections by the object name ToolWidgetStyle.hpp
+   already sets on them, so it cannot reach an ordinary push button anywhere
+   else in the application: (1 + 0x100) + (1 + 0x10) = 274 against the base
+   :checked and :focus rules at 17 each. */
+QGroupBox#toolSegments QPushButton:checked {
+	background-color: #100E0B;
+	border: 1px solid #DFA52E;
+	color: #DFA52E;
+}
+
+/* A checked chip still answers the pointer, and it has to say so with the same
+   one-step lift the base rule uses -- bg.alt #1D1916 -- rather than losing the
+   response entirely, which is what would happen if the rule above (274) were
+   left to out-rank the base :checked:hover (33) on its own. accent on bg.alt
+   is 7.947:1. (1 + 0x100) + (1 + 0x10 + 0x10) = 290. */
+QGroupBox#toolSegments QPushButton:checked:hover {
+	background-color: #1D1916;
+	border: 1px solid #DFA52E;
+	color: #DFA52E;
+}
+
+/* NINE CHIPS THAT READ AS ONE CONTROL. Every chip inherited the standalone
+   QPushButton's 6px radius and sat S1 = 4px from its neighbours, so a control
+   the code builds as one exclusive QButtonGroup rendered as nine independent
+   rounded buttons. QSS has no :first-child, so a true segmented control needs
+   the C++ side to tag edge positions; a 3px radius -- the CONTROL tier's
+   smallest step, half the standalone radius -- with the grid gutter dropped
+   from 4px to 1px in segmentGrid() gets most of it for two lines. 1px is
+   deliberately off the 4px spacing scale: it is a seam inside one control, not
+   a gap between siblings, and the scale describes gaps between siblings.
+
+   IT ALSO BUYS WIDTH. The chip arithmetic in ToolWidgetStyle.hpp sums the
+   grid's column maxima plus two gutters; 4px -> 1px returns 6px of the 199px
+   that row was measured at. */
+QGroupBox#toolSegments QPushButton {
+	border-radius: 3px;
+}
+
+
 /* --- texture and asset browsers ----------------------------------------- */
 
 /* Selection here must not fill the cell: the cell IS the texture. An accent
@@ -3500,32 +3840,54 @@ QPushButton#searchButton {
    has no setAlignment and a theme that said nothing would centre a section
    caption.
 
-   It takes the QGroupBox heading treatment verbatim -- now 13/700 text.hi on a
-   stroke rule -- because it IS the same rank. "Custom Brush" heads a section
-   exactly the way "Settings" does, and the only reason the two ever looked
-   different is that one is a QGroupBox and the other is a QPushButton
-   pretending to be one. */
+   IT TAKES THE SECTION-TITLE RANK AND HAS TO MOVE WHENEVER THAT RANK MOVES, or
+   the tool dock ends up with two spellings of "this heads a section" -- which
+   is exactly what happened last time, when the group-box heading was re-ranked
+   and this one was left behind. That rank is now the launcher's: 11/700
+   text.dim with a 3px brand.crimson tick, the same as
+   Noggit--Ui--Tools--ToolPanel QGroupBox::title. On the bg.void ground the
+   tool column now sits on, text.dim measures 9.699:1 and the tick 4.790:1,
+   over the 3:1 graphical floor. The tick is a SECTION MARK and not a state --
+   it is present in every state of this button, which is the test the brand
+   rank sets for crimson appearing in the editor at all.
+
+   THE FULL-WIDTH border-top IS GONE. It was edge #8A8378, 4.018:1 on the old
+   bg.panel ground, and six of these plus a dozen group boxes stacked down one
+   dock is the ladder the card construction was adopted to end.
+
+   REFLOW: the header box goes from 1 (top border) + 8 + 17 (13px line box) + 8
+   = 34px to 3 + 16 + 5 = 24px, where 16px is the base QPushButton rule's own
+   min-height floor on the content rect and is larger than the 13px line box an
+   11px font gives. The caret icon the widget swaps in is drawn at the style's
+   small-icon metric, which this pass did not measure; if it exceeds 16px the
+   content rect follows it and the box grows to match, but it cannot fall below
+   24px.
+
+   THE :checked RULE IS GONE BECAUSE IT COULD NEVER HAVE FIRED, and that is a
+   source fact rather than a sheet one: expanderwidget.cpp has
+   `//m_button->setCheckable(true);` commented out, so the button is not
+   checkable and QPushButton:checked cannot match it. The 2px accent leading
+   bar it declared has never been on screen. Expanded versus collapsed is
+   carried by the caret glyph the widget swaps (FontAwesome caretdown against
+   caretright) and by the stack widget appearing beneath. Reinstating the bar
+   means one line in expanderwidget.cpp, which this pass does not own. */
 QPushButton#__qt__passive_button {
 	background: transparent;
-	color: #F3F0E9;
+	color: #BFB7AA;
 	border: none;
-	border-top: 1px solid #8A8378;
-	border-left: 2px solid transparent;
+	border-left: 3px solid #E5405C;
 	border-radius: 0px;
-	padding: 8px 8px;
-	font-size: 13px;
+	padding: 3px 8px 5px 10px;
+	font-size: 11px;
 	font-weight: 700;
 	text-align: left;
 }
 
+/* It is still a control, so it still answers the pointer. bg.raised on the
+   bg.void ground is a 1.638:1 lift carrying text.hi at 10.339:1. */
 QPushButton#__qt__passive_button:hover {
 	background-color: #3C3732;
 	color: #F3F0E9;
-}
-
-QPushButton#__qt__passive_button:checked {
-	color: #F3F0E9;
-	border-left: 2px solid #DFA52E;
 }
 
 /* --- ground effects tool -------------------------------------------------- */
@@ -4008,8 +4370,15 @@ QWidget#project-card {
 	border-radius: 12px;
 }
 
+/* The hover fill is bg.raised, not the half-step it used to be. #34312C against the resting
+   #292621 measures 1.164:1, which is under the ~1.28 this palette treats as the smallest step a
+   large flat field can carry -- the same threshold that made the previous palette read as one
+   surface wearing four names. bg.raised #3C3732 measures 1.281:1 and is a step the eye actually
+   reports. The border still does most of the work, but the figure is the border's OWN step from
+   #8A8378 to #BFB7AA -- 1.888:1 -- and not the border against the fill it sits on, which is
+   5.922:1. A border alone is a thin cue on a card this large. */
 QWidget#project-card:hover {
-	background-color: #34312C;
+	background-color: #3C3732;
 	border: 1px solid #BFB7AA;
 }
 

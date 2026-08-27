@@ -214,6 +214,17 @@ namespace Noggit::Ui::Widget
     setObjectName ("project-card");
     setAttribute (Qt::WA_StyledBackground, true);
 
+    // WITHOUT THIS THE :hover RULE IN THE SHEET CAN NEVER FIRE. A plain QWidget does not track the
+    // pointer -- it receives no Enter/Leave-driven repaint -- so QStyleSheetStyle has nothing to
+    // re-evaluate and the card sat at its resting fill no matter where the pointer was. Buttons
+    // and other QAbstractButton subclasses set this for themselves, which is why hover worked
+    // everywhere else in the launcher and not on the one widget that was hand-built.
+    //
+    // The child labels are WA_TransparentForMouseEvents (see the loop near the end of this
+    // constructor), so the pointer is always over the CARD and the state does not flicker as it
+    // crosses the name, the path or the artwork.
+    setAttribute (Qt::WA_Hover, true);
+
     setContextMenuPolicy (Qt::CustomContextMenu);
 
     qreal const ratio (devicePixelRatioF());

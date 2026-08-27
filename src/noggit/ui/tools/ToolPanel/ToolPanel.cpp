@@ -51,6 +51,31 @@ namespace
   // 12px the spacing scale describes; the remaining four still carry whatever the style hands
   // them.
   constexpr int PANEL_SIDE_MARGINS = 24;
+
+  // The width one section card spends on its own box, and the reason the dock got wider rather
+  // than the tools getting narrower.
+  //
+  // The tool dock's sections are QGroupBoxes and the theme now draws them as cards -- bg.panel
+  // #292621 on the bg.void #100E0B ground the panel took, 1.279:1 apart, with a 1px edge
+  // #8A8378 border that measures 4.018:1 on the fill and 5.138:1 on the ground, and a 12px
+  // container radius. That is the construction both brand windows already use
+  // (QWidget#project-card, QWidget#map-card) and it is what finally takes the right-hand dock
+  // off the previous revision of the design language.
+  //
+  // A card has to pad its own content, so the theme's QGroupBox rule inside this dock pads 12px
+  // on all four sides where it used to pad 12px top and bottom and nothing left or right. The
+  // horizontal cost is 12 + 12 of padding plus 1 + 1 of border = 26px.
+  //
+  // THAT 26px IS ADDED HERE RATHER THAN TAKEN OUT OF TOOL_CONTENT_WIDTH, for exactly the reason
+  // the paragraph above gives for PANEL_SIDE_MARGINS. TOOL_CONTENT_WIDTH is a contract: it is
+  // the width every tool widget has been measured against, and the two closest are recorded in
+  // ToolWidgetStyle.hpp -- the texturing tool's Paint tab at 229px and the terrain tool at
+  // 194px. Twenty-six pixels taken out of a fixed 250px leaves 224px and puts a horizontal
+  // scroll bar under the texturing tool at the dock's smallest size, which is precisely the
+  // failure TOOL_CONTENT_WIDTH exists to prevent. ToolPanelScroll.ui's scroll area went 274 ->
+  // 300px in the same change and this dock's minimum goes 289 -> 315px. The content floor is
+  // still exactly 250px.
+  constexpr int CARD_BOX_WIDTH = 26;
 }
 
 ToolPanel::ToolPanel(QWidget* parent)
@@ -62,7 +87,11 @@ ToolPanel::ToolPanel(QWidget* parent)
   setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
   layout()->setAlignment(Qt::AlignTop);
   setMinimumWidth
-    (ToolPanelStyle::TOOL_CONTENT_WIDTH + PANEL_SIDE_MARGINS + SCROLL_BAR_ALLOWANCE);
+    ( ToolPanelStyle::TOOL_CONTENT_WIDTH
+    + PANEL_SIDE_MARGINS
+    + CARD_BOX_WIDTH
+    + SCROLL_BAR_ALLOWANCE
+    );
 }
 
 void ToolPanel::setCurrentTool(editing_mode mode)

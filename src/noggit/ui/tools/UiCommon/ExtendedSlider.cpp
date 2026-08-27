@@ -22,6 +22,21 @@ ExtendedSlider::ExtendedSlider(QWidget* parent)
 {
   _ui.setupUi(this);
 
+  // THE MOST REPEATED LABEL IN THE EDITOR HAD NO RANK OF ITS OWN. This is the QLabel setPrefix
+  // writes -- the name of the row, on every ExtendedSlider in every tool -- and with no object
+  // name the only rule that could reach it was the sheet's global 12/400 text, which is exactly
+  // what a check box caption standing next to it renders at. Across the nineteen construction
+  // sites in this tree plus the open-ended expansion in script_settings.cpp, that is the single
+  // most-repeated unranked label in the application.
+  //
+  // The name is all this needs: QLabel#slider-prefix in the sheet drops it to 11px text.dim
+  // #BFB7AA, which measures 7.585:1 on the tool dock's card fill and 9.699:1 on a bg.void
+  // dialog ground -- both over the 7:1 prose floor the sheet sets for itself -- and puts the
+  // NAME of the row below its VALUE, which is the 12/600 text.hi in the spin box at the other
+  // end of the same row. Nothing here can change the row's height: an 11px label has a 13px
+  // line box and the row is set by the 20px slider band and the 20x20 grip.
+  _ui.label->setObjectName(QStringLiteral("slider-prefix"));
+
   // popup
   _tablet_popup = new QWidget(this);
   auto layout = new QVBoxLayout(_tablet_popup);

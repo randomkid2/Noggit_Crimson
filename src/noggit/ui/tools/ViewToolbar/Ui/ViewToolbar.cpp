@@ -17,11 +17,41 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QtCore/QSettings>
+#include <QtCore/QString>
 
 #include <algorithm>
 
 using namespace Noggit::Ui;
 using namespace Noggit::Ui::Tools::ViewToolbar::Ui;
+
+namespace
+{
+  // THE OBJECT NAME EVERY QWidgetAction HOLDER IN THIS FILE CARRIES, and the reason it has to.
+  //
+  // All six QWidgetActions here -- SliderAction, PushButtonAction, CheckBoxAction, IconAction,
+  // SpacerAction and SubToolBarAction -- wrap their content in a bare `new QWidget(NULL)`. A
+  // bare QWidget matches nothing in the shipped sheet except the global QWidget rule, which is
+  // background-color #292621, so every one of them painted an opaque slab of panel colour
+  // inside the bg.overlay #4A4640 floating card these bars are drawn as: a 1.608:1 step,
+  // permanently on the 3D viewport. The contextual second row is five of them side by side --
+  // the climb bar is icon, two check boxes, the maximum-value slider and Reset.
+  //
+  // The sheet already fixed exactly this for the five NAMED layout holders (MapViewOverlay,
+  // leftToolbarHolder, upperToolbarHolder, secondaryToolbarHolder, leftSecondaryToolbarHolder);
+  // these six had no name, so no rule could reach them. With one, an id selector scores
+  // (1 + 0x100) = 257 against the global rule's 1 and wins by cascade rather than by document
+  // order -- which matters, because the global rule is near the top of the sheet.
+  //
+  // A name rather than the theme-only alternative
+  // (`Noggit--Ui--Tools--ViewToolbar--Ui--ViewToolbar > QWidget`): that selector scores 2 and
+  // ties with the QToolButton rules in the same file, so it would have to be placed by hand
+  // above them and would break silently if either moved.
+  //
+  // AGAINST THE VIEWPORT CONSTRAINT: transparent is the only value that is correct over both a
+  // snowfield and a night sky, because it puts the card -- which was measured against both --
+  // back in charge of the contrast rather than adding a second surface inside it.
+  char const* const ACTION_HOLDER_NAME = "toolbar-action-holder";
+}
 
 class SliderAction : public QWidgetAction
 {
@@ -34,6 +64,7 @@ public:
     static_assert (std::is_arithmetic<T>::value, "<T>SliderAction - T must be numeric");
 
     QWidget* _widget = new QWidget(NULL);
+    _widget->setObjectName(QLatin1String(ACTION_HOLDER_NAME));
     QHBoxLayout* _layout = new QHBoxLayout();
     // S1 is the design system's "inside a unit" step; the 3 that was here is off the 4px
     // scale. setMargin has been deprecated since Qt 5.13.
@@ -689,6 +720,7 @@ PushButtonAction::PushButtonAction(const QString& text)
   : QWidgetAction(NULL)
 {
   QWidget* _widget = new QWidget(NULL);
+  _widget->setObjectName(QLatin1String(ACTION_HOLDER_NAME));
   QHBoxLayout* _layout = new QHBoxLayout();
   _layout->setContentsMargins(0, 0, 0, 0);
 
@@ -709,6 +741,7 @@ CheckBoxAction::CheckBoxAction(const QString& text, bool checked)
   : QWidgetAction(NULL)
 {
   QWidget* _widget = new QWidget(NULL);
+  _widget->setObjectName(QLatin1String(ACTION_HOLDER_NAME));
   QHBoxLayout* _layout = new QHBoxLayout();
   _layout->setContentsMargins(0, 0, 0, 0);
 
@@ -730,6 +763,7 @@ IconAction::IconAction(const QIcon& icon)
   : QWidgetAction(NULL)
 {
   QWidget* _widget = new QWidget(NULL);
+  _widget->setObjectName(QLatin1String(ACTION_HOLDER_NAME));
   QHBoxLayout* _layout = new QHBoxLayout();
   _layout->setContentsMargins(0, 0, 0, 0);
 
@@ -750,6 +784,7 @@ SpacerAction::SpacerAction(Qt::Orientation orientation)
   : QWidgetAction(NULL)
 {
   QWidget* _widget = new QWidget(NULL);
+  _widget->setObjectName(QLatin1String(ACTION_HOLDER_NAME));
   QHBoxLayout* _layout = new QHBoxLayout();
   _layout->setContentsMargins(0, 0, 0, 0);
 
@@ -767,6 +802,7 @@ SubToolBarAction::SubToolBarAction()
   : QWidgetAction(NULL)
 {
   QWidget* _widget = new QWidget(NULL);
+  _widget->setObjectName(QLatin1String(ACTION_HOLDER_NAME));
   QHBoxLayout* _layout = new QHBoxLayout();
   _layout->setSpacing(Noggit::Ui::Design::S1);
   // setMargin has been deprecated since Qt 5.13 and is the same call for all four sides.

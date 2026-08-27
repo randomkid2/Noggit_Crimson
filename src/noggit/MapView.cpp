@@ -325,7 +325,26 @@ void MapView::set_editing_mode(editing_mode mode)
   _toolbar->check_tool (mode);
   this->activateWindow();
 
-  _tool_panel_dock->setWindowTitle(activeTool()->name());
+  // THE DOCK TITLE IS THE APPLICATION'S ANSWER TO "WHICH TOOL AM I IN", and the theme ranks it
+  // above every heading inside the panel for that reason. Capitals are the form both brand
+  // windows give their top rank, so it takes them here too and the dock now reads as the same
+  // product as the launcher and the map window.
+  //
+  // IT DELIBERATELY DOES NOT TRACK, which is the other half of that rank in those two windows.
+  // Letter spacing has to come from a QFont, and a QFont set on a QDockWidget propagates to
+  // every child that has not set its own -- and the children here are the entire tool panel,
+  // every label, every spin box and every chip in it. The two brand windows can track because
+  // they track QLabels, which are leaves. Doing it here means a title bar widget, which would
+  // also give up the QDockWidget::title rule that draws this bar.
+  //
+  // Safe to uppercase: nothing reuses this string. QDockWidget::toggleViewAction() would have
+  // carried it into a menu, but this window never builds one -- the View menu hides and shows
+  // these docks through its own hide_widgets lambda. The tool names are ASCII literals returned
+  // by Tool::name() and are not translated, so QString::toUpper -- which is locale-independent
+  // in Qt 5 -- has nothing to get wrong here; a translated name would need the tr() form and a
+  // second look at the Turkish dotted i.
+  _tool_panel_dock->setWindowTitle
+    (QString::fromUtf8(activeTool()->name()).toUpper());
 
   _world->renderer()->markTerrainParamsUniformBlockDirty();
 }

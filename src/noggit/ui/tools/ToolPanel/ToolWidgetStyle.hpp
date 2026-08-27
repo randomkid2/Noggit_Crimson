@@ -64,13 +64,15 @@ namespace Noggit::Ui::Tools::ToolPanelStyle
 {
   //! The width every tool widget in the dock is measured against.
   //!
-  //! ToolPanelScroll.ui does NOT carry this number. Its scroll area asks for 274px, which is
-  //! this floor PLUS the 12px the form insets the scroll content by on each side: the panel's
-  //! margins are ADDED to the floor rather than taken out of it, and ToolPanel does the same
-  //! again with PANEL_SIDE_MARGINS and a scroll-bar allowance. So a tool whose
+  //! ToolPanelScroll.ui does NOT carry this number. Its scroll area asks for 300px, which is
+  //! this floor PLUS the 12px the form insets the scroll content by on each side PLUS the 26px
+  //! a section card costs (12px of padding and a 1px border, twice): every inset around a tool
+  //! is ADDED to the floor rather than taken out of it, and ToolPanel does the same again with
+  //! PANEL_SIDE_MARGINS, CARD_BOX_WIDTH and a scroll-bar allowance. So a tool whose
   //! minimumSizeHint().width() stays at or under this value never gets a horizontal scroll bar
-  //! at the dock's smallest size. (The first revision of this note said the form "carries the
-  //! same floor"; the form carries 274, and ToolPanel.cpp's own second paragraph says so.)
+  //! at the dock's smallest size. (Two earlier revisions of this note are folded in: the first
+  //! said the form "carries the same floor", and the second said 274 -- the form carried 274
+  //! until the tool dock's sections became cards, and it carries 300 now.)
   //!
   //! For reference, rendered with the shipped theme: the terrain tool asks for 194px and the
   //! texturing tool's Paint tab 229px. Both are inherited from the pass that measured them
@@ -147,9 +149,16 @@ namespace Noggit::Ui::Tools::ToolPanelStyle
   }
 
   //! The inside of a section. Margins are zero because the theme already reserves everything a
-  //! section needs: its QGroupBox rule pads 12px top and bottom and, deliberately, NOTHING left
-  //! or right -- a section costs the panel no width at all -- and carries a 22px top margin to
-  //! clear its title. A layout margin on top of that is a second inset inside the first.
+  //! section needs: inside this dock its QGroupBox rule pads 12px on all four sides and carries
+  //! a 21px top margin to clear its title. A layout margin on top of that is a second inset
+  //! inside the first.
+  //!
+  //! THE HORIZONTAL PADDING IS NEW AND IT IS NOT FREE. Until the sections became cards the
+  //! theme padded 12px top and bottom and deliberately nothing left or right, so a section cost
+  //! the panel no width at all; a card cannot do that, because content flush against its own
+  //! border is not a card. The 26px it costs is paid for out of the DOCK -- see CARD_BOX_WIDTH
+  //! in ToolPanel.cpp and the 300px in ToolPanelScroll.ui -- so TOOL_CONTENT_WIDTH is still
+  //! exactly 250px of usable content and every width ever measured against it stays valid.
   //!
   //! No tool ever set one explicitly; the cost was the style default nobody turned off, which
   //! is the same PM_LayoutLeftMargin as the table at the top of this file: 13px a side on this
@@ -214,24 +223,30 @@ namespace Noggit::Ui::Tools::ToolPanelStyle
   //!     2        Quadratic        52     50
   //!
   //! A QGridLayout's minimum is the sum of its COLUMN maxima, not three times the widest chip.
-  //! At the theme's own padding that is (60+26) + (53+26) + (52+26) + 2 x S1 = 251px -- one
-  //! pixel OVER TOOL_CONTENT_WIDTH, so the terrain tool would carry a horizontal scroll bar at
-  //! the dock's smallest size. At 5px side padding and 11px text it is (56+12) + (49+12) +
-  //! (50+12) + 2 x S1 = 199px, 51px inside the floor. Almost nothing between the chips and that
-  //! floor spends any of it: toolColumn zeroes the tool's own margins, the theme's QGroupBox rule
-  //! has no left or right padding, and segmentGrid zeroes its own. The one open question is the
-  //! sheet's `QWidget#scrollAreaWidgetContents { padding: 0px 4px; }` -- whether Qt honours
-  //! padding as a layout inset on a plain QWidget is exactly what that sheet's own HONEST LIMIT
-  //! note declines to claim for its QScrollArea twin, and this pass cannot settle it either. If
-  //! it IS honoured every figure here loses 8px of room: the override still fits with 43px to
-  //! spare, the theme's own padding is 9px over instead of 1px.
+  //! At the theme's own padding that is (60+26) + (53+26) + (52+26) + 2 x SEGMENT_SEAM = 245px.
+  //! At 5px side padding and 11px text it is (56+12) + (49+12) + (50+12) + 2 x SEGMENT_SEAM =
+  //! 193px.
+  //!
+  //! WHAT THOSE HAVE TO FIT INSIDE IS NO LONGER TOOL_CONTENT_WIDTH ITSELF. A segmented section
+  //! is a card now, and a card's content rect is the tool's width less CARD_BOX_WIDTH, so the
+  //! floor for a chip row is 250 - 26 = 224px. 193px leaves 31px of slack; the theme's own
+  //! padding at 245px would be 21px OVER, so the override is no longer merely tidier than the
+  //! default -- it is the thing keeping a horizontal scroll bar out from under the most-used
+  //! tool in the editor. Nothing else between the chips and that floor spends any of it:
+  //! toolColumn zeroes the tool's own margins, dressSectionLayout zeroes the section's, and
+  //! segmentGrid zeroes the grid's. The one open question is unchanged -- the sheet's
+  //! `QWidget#scrollAreaWidgetContents { padding: 0px 4px; }`, and whether Qt honours padding as
+  //! a layout inset on a plain QWidget is exactly what that sheet's own HONEST LIMIT note
+  //! declines to claim for its QScrollArea twin. If it IS honoured every figure here loses 8px
+  //! of room and the override still fits with 23px to spare.
   //!
   //! HOW MUCH TO TRUST THOSE TWO TOTALS. They are arithmetic on measured advances, not a
-  //! screenshot -- this pass cannot run the editor. GDI's hinted advances run 0-3px wider than
-  //! the font's own linear hmtx advances at these sizes; redoing the sum from the linear
-  //! advances gives 249px and 192px instead of 251px and 199px. The conclusion is the same
-  //! either way: the theme's padding puts the row at the floor or just over it, the override
-  //! leaves ~50px of slack.
+  //! screenshot -- this pass cannot run the editor either. GDI's hinted advances run 0-3px wider
+  //! than the font's own linear hmtx advances at these sizes; redoing the sum from the linear
+  //! advances gives 243px and 186px instead of 245px and 193px. The conclusion is the same
+  //! either way: the theme's padding puts the row well over the card's floor and the override
+  //! leaves ~30px of slack. (The figures before the seam dropped from S1 to 1px and before the
+  //! card existed were 251px and 199px against a flat 250px floor.)
   //!
   //! (The first revision of this note derived the same conclusion from "4px 10px", ~82px per
   //! chip and rows of ~254px and ~218px "inside the ~232px the dock has after its own gutters".
@@ -278,14 +293,27 @@ namespace Noggit::Ui::Tools::ToolPanelStyle
     return button;
   }
 
-  //! The grid the chips sit in. S1 is the "inside a unit" step: the chips of one segmented row
-  //! are one control, not a set of siblings.
+  //! The seam between one chip and the next, and it is DELIBERATELY OFF THE 4px SPACING SCALE.
+  //!
+  //! The scale describes the gap between siblings; these chips are not siblings. The code has
+  //! always built them as one exclusive QButtonGroup, but on screen nine of them at S1 = 4px
+  //! apart, each carrying the standalone QPushButton's 6px radius, read as nine independent
+  //! rounded buttons rather than as one control -- which is the thing the group actually is.
+  //! QSS has no :first-child, so a true segmented control (square inner corners, shared edges)
+  //! needs this file to tag the edge positions of every chip; a 1px seam against a 3px radius,
+  //! which the sheet now gives these chips, gets most of that read for one constant.
+  //!
+  //! It also returns 6px of width to the row: 2 x S1 = 8px of gutter becomes 2 x 1 = 2px, which
+  //! is why the arithmetic in segmentedSection above now totals 193px rather than 199px.
+  constexpr int SEGMENT_SEAM = 1;
+
+  //! The grid the chips sit in.
   inline QGridLayout* segmentGrid (QWidget* section)
   {
     auto* const grid (new QGridLayout (section));
     grid->setContentsMargins (0, 0, 0, 0);
-    grid->setHorizontalSpacing (Design::S1);
-    grid->setVerticalSpacing (Design::S1);
+    grid->setHorizontalSpacing (SEGMENT_SEAM);
+    grid->setVerticalSpacing (SEGMENT_SEAM);
     return grid;
   }
 
