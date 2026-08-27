@@ -725,11 +725,20 @@ years.
 
 ## SUBMODULES
 
-To pull the latest version of submodules use the following command at the root directory.
+To check out the submodule commits this repository records — which is what you want after cloning,
+after switching branches, or whenever `git status` reports a submodule as modified:
 
 ```bash
-git submodule update --recursive --remote
+git submodule update --init --recursive
 ```
+
+> **Fork note — do not use `--remote` here.** Upstream documented
+> `git submodule update --recursive --remote`, and in this fork that command is destructive.
+> `--remote` ignores the commit the repository records and takes each submodule's remote tip
+> instead, which **silently discards the patches in `patches/`** — including `0001`, without which
+> `Client ▸ Patch Client` writes MPQ archives the game client ignores without any error. The
+> command exits 0 and prints reassuring "checked out" lines while doing it, so nothing tells you it
+> happened. If you have already run it, reapply the patches as described in `patches/README.md`.
 
 ## CODING GUIDELINES
 

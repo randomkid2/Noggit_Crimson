@@ -2,7 +2,7 @@
 
 #include <noggit/AsyncObject.h>
 #include <noggit/Log.h>
-#include <noggit/MissingPlacementLog.hpp>
+#include <noggit/reports/MissingPlacementLog.hpp>
 
  AsyncObject::AsyncObject(BlizzardArchive::Listfile::FileKey file_key) : _file_key(std::move(file_key)) {}
 

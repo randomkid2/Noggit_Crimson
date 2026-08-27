@@ -53,17 +53,18 @@ namespace Noggit
 
       auto label3 = new QLabel("<hr><font color=red><h2>/!\\ NOT RECOMMENDED</h2>"
         "<h3>USE AT YOUR OWN RISKS</h3></font>"
-        "Same as fix all but it will ignore any model loading error "
-        "resulting in collision and culling issue. "
-        "Any <b>missing or fuckported</b> model will lead to collision and culling issues. "
-        "Don't come complaining if you encounter any of those issues afterward."
+        "Same as Fix all UIDs, but it ignores model loading errors instead of stopping. "
+        "Any model that is <b>missing or badly ported</b> will keep a broken UID, which leads to "
+        "collision and culling problems in the client. Only use this if a normal fix will not "
+        "complete and you understand that the result may need repairing by hand."
         , this
       );
       label3->setWordWrap(true);
       layout->addWidget(label3);
 
-      auto fix_all_fuckporting_edition (new QPushButton("Fix all UIDs but potentially fuck up collisions and culling for models", this));
-      layout->addWidget(fix_all_fuckporting_edition);      
+      auto fix_all_ignore_errors
+        (new QPushButton("Fix all UIDs, ignoring model errors", this));
+      layout->addWidget(fix_all_ignore_errors);      
 
       connect ( get_max, &QPushButton::clicked
               , [=]
@@ -83,11 +84,11 @@ namespace Noggit
                 }
               );
 
-      connect ( fix_all_fuckporting_edition, &QPushButton::clicked
+      connect ( fix_all_ignore_errors, &QPushButton::clicked
               , [=]
                 {
                   hide();
-                  emit fix_uid(pos, camera_pitch, camera_yaw, uid_fix_mode::fix_all_fuckporting_edition);
+                  emit fix_uid(pos, camera_pitch, camera_yaw, uid_fix_mode::fix_all_ignore_errors);
                   deleteLater();
                 }
               );

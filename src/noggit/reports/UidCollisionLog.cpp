@@ -1,6 +1,6 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
-#include <noggit/UidCollisionLog.hpp>
+#include <noggit/reports/UidCollisionLog.hpp>
 
 #include <string>
 #include <utility>

@@ -27,7 +27,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-#include <noggit/ErosionKernel.hpp>
+#include <noggit/terrain/ErosionKernel.hpp>
 
 #include <algorithm>
 #include <cmath>

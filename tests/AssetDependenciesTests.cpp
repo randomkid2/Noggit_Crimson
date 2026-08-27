@@ -2,7 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include <noggit/AssetDependencies.hpp>
+#include <noggit/assets/AssetDependencies.hpp>
 
 #include <algorithm>
 #include <cstddef>

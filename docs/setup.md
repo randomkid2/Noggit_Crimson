@@ -58,6 +58,13 @@ cd src/external/blizzard-archive-library
 git am ../../../patches/0001-blizzard-archive-mpq-backslash-names.patch
 cd ../../..
 
+# Cosmetic, but apply it so the build you run is the build that was tested.
+# revision.h.in defines STRPRODUCTVER twice; the duplicate is a constraint
+# violation a stricter compiler may reject.
+cd cmake
+git am ../patches/0002-revision-h-duplicate-strproductver.patch
+cd ..
+
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 \
   "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" \
   "-DCMAKE_PREFIX_PATH=C:/Qt/5.15.2/msvc2019_64"
@@ -629,6 +636,8 @@ path has not been observed against a live server.
 | `git status` shows `src/external/blizzard-archive-library` modified | Expected after applying `patches/0001`. Leave it. |
 | `git submodule update` fails with `did not contain <sha>` / `not our ref` | The parent records a non-public submodule commit. See the note under [Applying `patches/0001`](#applying-patches0001). |
 | `Invalid CMAKE_POLICY_VERSION_MINIMUM value "3"` | The flag was not quoted; the shell ate the `.5`. |
+| `AutoMoc: moc: Cannot create dep output file ... No such file or directory`, usually naming `QtAdvancedDockingSystem` | **The clone path is too long.** The deepest generated path in a full build is 139 characters, so the clone root must be **119 characters or fewer**. Qt 5.15's `moc.exe` carries no long-path manifest and still fails at MAX_PATH even with `LongPathsEnabled=1` and `core.longpaths=true`. Nothing in the message suggests path length. Clone somewhere shorter. |
+| Client ▸ Patch Client stopped working after a submodule update | `git submodule update --remote` was run. `--remote` takes each submodule's remote tip instead of the recorded commit and silently discards the applied patches, exiting 0 as it does so. Reapply them. Use `git submodule update --init --recursive` (no `--remote`). |
 | `Target "nodes" links to Qt5::OpenGL but the target was not found` | Qt below 5.10, or `CMAKE_PREFIX_PATH` points at the wrong kit. Appears at *generate*, not configure. |
 | `MySQL lib or connector not found` | `-DUSE_SQL=ON` with bad or missing connector paths. Drop `USE_SQL` if you do not need the database features. |
 | `Cannot open include file: 'cppconn/driver.h'` | An old build tree from before the `USE_SQL=OFF` source filter. Delete the build directory and reconfigure. |

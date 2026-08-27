@@ -28,7 +28,7 @@
 #ifndef NOGGIT_UI_TOOLS_MISSINGOBJECTS_MISSINGOBJECTSPANEL_HPP
 #define NOGGIT_UI_TOOLS_MISSINGOBJECTS_MISSINGOBJECTSPANEL_HPP
 
-#include <noggit/MissingPlacementLog.hpp>
+#include <noggit/reports/MissingPlacementLog.hpp>
 
 #include <QtWidgets/QWidget>
 

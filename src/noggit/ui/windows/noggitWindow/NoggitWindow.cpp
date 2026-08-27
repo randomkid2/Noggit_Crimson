@@ -5,7 +5,7 @@
 #include <noggit/DBCFile.h>
 #include <noggit/Log.h>
 #include <noggit/MapView.h>
-#include <noggit/PatchAssetPacker.hpp>
+#include <noggit/assets/PatchAssetPacker.hpp>
 #include <noggit/project/ApplicationProject.h>
 #include <noggit/ui/FontAwesome.hpp>
 #include <noggit/ui/FramelessWindow.hpp>

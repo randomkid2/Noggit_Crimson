@@ -1,6 +1,6 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
-#include <noggit/AlphaIntegrity.hpp>
+#include <noggit/terrain/AlphaIntegrity.hpp>
 
 #include <algorithm>
 #include <cmath>

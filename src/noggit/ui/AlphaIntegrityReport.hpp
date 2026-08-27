@@ -3,7 +3,7 @@
 #ifndef NOGGIT_UI_ALPHAINTEGRITYREPORT_HPP
 #define NOGGIT_UI_ALPHAINTEGRITYREPORT_HPP
 
-#include <noggit/AlphaIntegrity.hpp>
+#include <noggit/terrain/AlphaIntegrity.hpp>
 
 #include <QtWidgets/QDialog>
 

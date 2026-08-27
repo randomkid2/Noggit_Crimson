@@ -3,7 +3,7 @@
 #pragma once
 #include <noggit/ModelInstance.h>
 #include <noggit/Selection.h>
-#include <noggit/UidCollisionLog.hpp>
+#include <noggit/reports/UidCollisionLog.hpp>
 #include <noggit/WMOInstance.h>
 #include <opengl/scoped.hpp>
 #include <atomic>

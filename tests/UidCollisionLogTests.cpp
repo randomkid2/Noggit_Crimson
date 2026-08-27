@@ -15,7 +15,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include <noggit/UidCollisionLog.hpp>
+#include <noggit/reports/UidCollisionLog.hpp>
 
 #include <cstddef>
 #include <cstdint>

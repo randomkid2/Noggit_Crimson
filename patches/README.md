@@ -51,12 +51,23 @@ git ls-tree HEAD src/external/blizzard-archive-library
 git ls-tree HEAD cmake
 ```
 
-That must print the last public commit, `6cac3304b272ee6688e88573057e94e085d35caf`. If it prints
-anything else — in particular `f2b1716…`, the local commit this patch was exported from — reset it
-before publishing:
+**These are two different repositories and they have two different expected commits.** An earlier
+revision of this file gave a single SHA for both, which was wrong in a way that would have caused
+the exact failure the check exists to prevent: `6cac330` does not exist in the `cmake` submodule at
+all — that submodule is `T1ti/build-dependencies`, not `T1ti/blizzard-archive-library` — so a
+maintainer comparing `cmake` against it would conclude the pointer had been re-recorded by
+accident and "fix" it to a commit on no remote, breaking `git submodule update --init --recursive`
+for everyone who clones.
+
+| Path | Expected commit | Local commit the patch was exported from |
+|---|---|---|
+| `src/external/blizzard-archive-library` | `6cac3304b272ee6688e88573057e94e085d35caf` | `f2b1716…` |
+| `cmake` | `7a5741a…` | whatever `git am` produced locally |
+
+If either prints its local commit instead of its expected one, reset that ONE path:
 
 ```
-git update-index --cacheinfo 160000,6cac3304b272ee6688e88573057e94e085d35caf,src/external/blizzard-archive-library
+git update-index --cacheinfo 160000,<expected sha>,<path>
 ```
 
 then commit that change alone. Your working tree keeps the applied patch either way.

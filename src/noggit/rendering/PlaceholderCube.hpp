@@ -33,7 +33,7 @@
 #define NOGGIT_RENDERING_PLACEHOLDERCUBE_HPP
 
 #include <noggit/ContextObject.hpp>
-#include <noggit/MissingPlacementLog.hpp>
+#include <noggit/reports/MissingPlacementLog.hpp>
 #include <opengl/scoped.hpp>
 #include <opengl/shader.hpp>
 

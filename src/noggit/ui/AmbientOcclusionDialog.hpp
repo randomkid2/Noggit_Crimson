@@ -3,7 +3,7 @@
 #ifndef NOGGIT_UI_AMBIENTOCCLUSIONDIALOG_HPP
 #define NOGGIT_UI_AMBIENTOCCLUSIONDIALOG_HPP
 
-#include <noggit/AmbientOcclusion.hpp>
+#include <noggit/terrain/AmbientOcclusion.hpp>
 
 #include <QtWidgets/QDialog>
 
@@ -24,7 +24,7 @@ namespace Noggit::Ui
 {
   // Bakes horizon-sampled ambient occlusion into terrain vertex colour (MCCV).
   //
-  // Everything numerical lives in noggit/AmbientOcclusion.hpp, which is deliberately free of Qt,
+  // Everything numerical lives in noggit/terrain/AmbientOcclusion.hpp, which is deliberately free of Qt,
   // glm and MapChunk so it can be unit tested standalone. This class is the other half: scope
   // selection, the undo action, progress, and the one hazard the pure layer cannot see -- that
   // MCCV is frequently hand-painted and that a bake can destroy it.

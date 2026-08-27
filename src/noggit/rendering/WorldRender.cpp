@@ -14,7 +14,7 @@
 #include <noggit/TileIndex.hpp>
 #include <noggit/MinimapRenderSettings.hpp>
 #include <noggit/Misc.h>
-#include <noggit/MissingPlacementLog.hpp>
+#include <noggit/reports/MissingPlacementLog.hpp>
 #include <noggit/Model.h>
 #include <noggit/ModelInstance.h>
 #include <noggit/rendering/PlaceholderCube.hpp>

@@ -3,8 +3,8 @@
 #ifndef NOGGIT_PATCHASSETPACKER_HPP
 #define NOGGIT_PATCHASSETPACKER_HPP
 
-#include <noggit/AssetDependencies.hpp>
-#include <noggit/AssetScan.hpp>
+#include <noggit/assets/AssetDependencies.hpp>
+#include <noggit/assets/AssetScan.hpp>
 
 #include <cstddef>
 #include <cstdint>

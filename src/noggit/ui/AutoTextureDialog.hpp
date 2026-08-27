@@ -3,7 +3,7 @@
 #ifndef NOGGIT_UI_AUTOTEXTUREDIALOG_HPP
 #define NOGGIT_UI_AUTOTEXTUREDIALOG_HPP
 
-#include <noggit/TerrainRules.hpp>
+#include <noggit/terrain/TerrainRules.hpp>
 #include <noggit/TileIndex.hpp>
 
 #include <QtWidgets/QDialog>

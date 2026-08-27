@@ -3,7 +3,7 @@
 #include <noggit/ui/ErosionToolSettings.hpp>
 
 #include <noggit/ActionManager.hpp>
-#include <noggit/ErosionKernel.hpp>
+#include <noggit/terrain/ErosionKernel.hpp>
 #include <noggit/MapChunk.h>
 #include <noggit/MapHeaders.h>
 #include <noggit/World.h>

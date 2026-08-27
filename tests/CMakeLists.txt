@@ -80,13 +80,13 @@ noggit_add_if_present(NOGGIT_DB_SOURCES
   # Under src/noggit/, not src/noggit/database/, unlike everything else here: both are
   # pure STL with no Qt, no archive and no database, so they belong in the group that
   # builds on a bare machine even though they do not live in the database directory.
-  "${NOGGIT_SRC_DIR}/noggit/AssetScan.cpp"
-  "${NOGGIT_SRC_DIR}/noggit/AssetDependencies.cpp"
-  "${NOGGIT_SRC_DIR}/noggit/UidCollisionLog.cpp"
-  "${NOGGIT_SRC_DIR}/noggit/TerrainRules.cpp"
-  "${NOGGIT_SRC_DIR}/noggit/ErosionKernel.cpp"
-  "${NOGGIT_SRC_DIR}/noggit/AmbientOcclusion.cpp"
-  "${NOGGIT_SRC_DIR}/noggit/AlphaIntegrity.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/assets/AssetScan.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/assets/AssetDependencies.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/reports/UidCollisionLog.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/terrain/TerrainRules.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/terrain/ErosionKernel.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/terrain/AmbientOcclusion.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/terrain/AlphaIntegrity.cpp"
 )
 
 set(NOGGIT_DB_TESTS "")

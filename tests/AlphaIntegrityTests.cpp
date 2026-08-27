@@ -13,7 +13,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include <noggit/AlphaIntegrity.hpp>
+#include <noggit/terrain/AlphaIntegrity.hpp>
 
 #include <algorithm>
 #include <array>

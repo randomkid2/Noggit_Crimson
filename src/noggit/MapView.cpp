@@ -1,7 +1,7 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
-#include <noggit/AssetScan.hpp>
-#include <noggit/MissingPlacementLog.hpp>
-#include <noggit/UidCollisionLog.hpp>
+#include <noggit/assets/AssetScan.hpp>
+#include <noggit/reports/MissingPlacementLog.hpp>
+#include <noggit/reports/UidCollisionLog.hpp>
 #include <noggit/ui/tools/MissingObjects/MissingObjectsPanel.hpp>
 #include <noggit/database/ChangesetBuilder.hpp>
 #include <noggit/database/DatabaseSettings.hpp>
@@ -4933,7 +4933,7 @@ void MapView::initializeGL()
       return;
     }
   }
-  else if (_uid_fix == uid_fix_mode::fix_all_fuckporting_edition)
+  else if (_uid_fix == uid_fix_mode::fix_all_ignore_errors)
   {
     auto result = _world->mapIndex.fixUIDs (_world.get(), false);
 

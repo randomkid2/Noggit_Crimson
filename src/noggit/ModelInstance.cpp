@@ -3,7 +3,7 @@
 #include <noggit/ContextObject.hpp>
 #include <noggit/MapHeaders.h> // ENTRY_MDDF
 #include <noggit/Misc.h> // checkinside
-#include <noggit/MissingPlacementLog.hpp>
+#include <noggit/reports/MissingPlacementLog.hpp>
 #include <noggit/Model.h> // Model, etc.
 #include <noggit/ModelInstance.h>
 #include <noggit/rendering/Primitives.hpp>

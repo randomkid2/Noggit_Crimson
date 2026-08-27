@@ -158,7 +158,7 @@ void selected_chunk_type::updateDetails(Noggit::Ui::detail_infos* detail_widget)
   std::array<float, 4> unit_texture_weights = chunk->getTextureSet()->get_textures_weight_for_unit(unit_index.x, unit_index.y);
   if (chunk->getTextureSet()->num())
   {
-      select_info << "\n<br><b>DEBUG Chunk Unit texture weights:</b>"
+      select_info << "\n<br><b>Texture weights</b>"
           << "<br>0:" << unit_texture_weights[0] << "%";
   }
   if (chunk->getTextureSet()->num()>1)

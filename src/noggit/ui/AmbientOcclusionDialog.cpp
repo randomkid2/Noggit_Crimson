@@ -4,7 +4,7 @@
 
 #include <noggit/Action.hpp>
 #include <noggit/ActionManager.hpp>
-#include <noggit/AmbientOcclusion.hpp>
+#include <noggit/terrain/AmbientOcclusion.hpp>
 #include <noggit/Log.h>
 #include <noggit/MapChunk.h>
 #include <noggit/MapTile.h>

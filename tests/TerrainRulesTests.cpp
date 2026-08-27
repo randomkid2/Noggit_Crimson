@@ -15,7 +15,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-#include <noggit/TerrainRules.hpp>
+#include <noggit/terrain/TerrainRules.hpp>
 
 #include <algorithm>
 #include <cmath>

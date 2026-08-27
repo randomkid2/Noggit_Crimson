@@ -3,7 +3,7 @@
 #include <noggit/ui/tools/MissingObjects/MissingObjectsPanel.hpp>
 
 #include <noggit/application/NoggitApplication.hpp>
-#include <noggit/AssetScan.hpp>
+#include <noggit/assets/AssetScan.hpp>
 #include <noggit/AsyncObject.h>
 #include <noggit/map_index.hpp>
 #include <noggit/MapTile.h>

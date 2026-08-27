@@ -35,8 +35,17 @@ namespace Noggit::Application {
             {
               noggitApplicationConfiguration.ApplicationNoggitDefinitionsPath = noggitConfiguration["ApplicationNoggitDefinitionsPath"].toString().toStdString();
             }
-            else
 
+            // A DANGLING `else` USED TO STAND HERE, and it silently chained onto the next `if`,
+            // so this line read `else if (contains("ApplicationListFilePath"))`. The listfile path
+            // was therefore only read from the configuration when ApplicationNoggitDefinitionsPath
+            // was ABSENT -- which it never is in a file this application writes, because the writer
+            // always emits it. Every normal run left ApplicationListFilePath as an empty string.
+            //
+            // It went unnoticed because the only consumer was a log line that announced
+            // "Listfile found! : " unconditionally and printed the empty value after the colon,
+            // and because nothing else in the tree reads this field. Fixing the parse and fixing
+            // that log line are the same defect seen from two ends.
             if (noggitConfiguration.contains("ApplicationListFilePath"))
                 noggitApplicationConfiguration.ApplicationListFilePath = noggitConfiguration["ApplicationListFilePath"].toString().toStdString();
 

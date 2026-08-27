@@ -14,7 +14,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include <noggit/AssetScan.hpp>
+#include <noggit/assets/AssetScan.hpp>
 
 #include <algorithm>
 #include <set>

@@ -3,7 +3,7 @@
 #ifndef NOGGIT_ASSETDEPENDENCIES_HPP
 #define NOGGIT_ASSETDEPENDENCIES_HPP
 
-#include <noggit/AssetScan.hpp>
+#include <noggit/assets/AssetScan.hpp>
 
 #include <cstddef>
 #include <string>

@@ -105,7 +105,8 @@ namespace Noggit::Application
 	  if(!std::filesystem::exists(nogginConfigurationPath))
 	  {
 		  //Create Default config file
-		  Log << "Noggit Configuration File Not Found! Creating New File: " << nogginConfigurationPath << std::endl;
+		  Log << "Noggit Configuration File Not Found! Creating New File: "
+		      << nogginConfigurationPath.string() << std::endl;
 
 		  auto configurationFileStream = QFile(QString::fromStdString(nogginConfigurationPath.generic_string()));
 		  auto configurationFileWriter = NoggitApplicationConfigurationWriter();
@@ -120,7 +121,7 @@ namespace Noggit::Application
 
 	  configurationFileStream.close();
 
-	  Log << "Noggit Configuration File Loaded! Creating New File: " << nogginConfigurationPath << std::endl;
+	  Log << "Noggit Configuration File Loaded: " << nogginConfigurationPath.string() << std::endl;
 
 	  auto noggitProjectPath = applicationConfiguration.ApplicationProjectPath;
 	  if (!std::filesystem::exists(noggitProjectPath))
@@ -129,13 +130,23 @@ namespace Noggit::Application
 		  // Log << "Noggit Project Folder Not Loaded! Creating..." << std::endl;
 	  }
 
+	  // Reported honestly, and the shape deliberately matches the database-definitions check below.
+	  // The previous revision had the failure branch COMMENTED OUT and then logged "Listfile found!"
+	  // unconditionally -- so a missing listfile produced a log that positively asserted the thing
+	  // that was wrong. docs/setup.md tells a user whose window never appears to read this log first
+	  // and that it "names the missing piece", which made this the one line most likely to be read
+	  // by somebody it was actively misleading.
 	  auto& listFilePath = applicationConfiguration.ApplicationListFilePath;
 	  if (!std::filesystem::exists(listFilePath))
 	  {
-		  // LogError << "Unable to find listfile! please reinstall Noggit Crimson, or download from wow.tools" << std::endl;
+		  LogError << "Unable to find listfile at '" << listFilePath
+		           << "'. Copy dist/listfile/listfile.csv next to the executable -- see docs/setup.md."
+		           << std::endl;
 	  }
-
-	  Log << "Listfile found! : " << listFilePath << std::endl;
+	  else
+	  {
+		  Log << "Listfile found! : " << listFilePath << std::endl;
+	  }
 
 	  auto& databaseDefinitionPath = applicationConfiguration.ApplicationDatabaseDefinitionsPath;
 	  if (!std::filesystem::exists(databaseDefinitionPath))

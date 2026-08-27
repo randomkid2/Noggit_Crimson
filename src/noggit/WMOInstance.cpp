@@ -4,7 +4,7 @@
 #include <noggit/application/NoggitApplication.hpp>
 #include <noggit/MapHeaders.h>
 #include <noggit/MapTile.h>
-#include <noggit/MissingPlacementLog.hpp>
+#include <noggit/reports/MissingPlacementLog.hpp>
 #include <noggit/ModelInstance.h>
 #include <noggit/rendering/Primitives.hpp>
 #include <noggit/scoped_blp_texture_reference.hpp>
