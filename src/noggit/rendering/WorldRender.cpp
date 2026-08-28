@@ -14,6 +14,7 @@
 #include <noggit/TileIndex.hpp>
 #include <noggit/MinimapRenderSettings.hpp>
 #include <noggit/Misc.h>
+#include <noggit/rendering/DetailDoodadRender.hpp>
 #include <noggit/reports/MissingPlacementLog.hpp>
 #include <noggit/Model.h>
 #include <noggit/ModelInstance.h>
@@ -45,7 +46,15 @@ WorldRender::WorldRender(World* world)
 , directional_lightning(world->_settings->value("directional_lightning", true).toBool())
 , local_lightning(world->_settings->value("local_lightning", true).toBool())
 {
+  // Constructed here rather than in upload() so that the settings the Ground Effects tool writes
+  // into it survive an unload/upload cycle. It holds no OpenGL object of its own, so building it
+  // outside a bound context is safe; only clearing it is not.
+  _detail_doodad_render = std::make_unique<DetailDoodadRender>(world->_context);
 }
+
+// Defaulted, but it has to live here: DetailDoodadRender is only forward-declared in the header,
+// and destroying a unique_ptr needs the complete type.
+Noggit::Rendering::WorldRender::~WorldRender() = default;
 
 void WorldRender::draw (glm::mat4x4 const& model_view
     , glm::mat4x4 const& projection
@@ -459,6 +468,10 @@ void WorldRender::draw (glm::mat4x4 const& model_view
   {
     frame++;
   }
+
+  // Detail doodads are gathered inside the tile loop below, so the batches have to be reset
+  // before it starts. Costs nothing when the preview is off: gatherTile returns on its first line.
+  _detail_doodad_render->beginFrame();
 
   for (auto const& pair : _world->_loaded_tiles_buffer)
   {
@@ -884,6 +897,17 @@ void WorldRender::draw (glm::mat4x4 const& model_view
         }
       }
     }
+
+    // Ground effect detail doodads, gathered inside the tile loop for the same reason the database
+    // spawns are: it inherits the occlusion and distance culling applied at the top of it. Its own
+    // draw distance is much shorter than the terrain view distance, so on a normal frame this
+    // returns after one distance test for all but a handful of tiles.
+    //
+    // Deliberately NOT gated on render_settings.draw_models. Hiding doodads is how a mapper looks
+    // at terrain, and the ground effect preview is a terrain overlay -- it answers "what does the
+    // set I just painted look like", which is a question about the ground, not about the M2s
+    // placed on it. Its own toggle in the Ground Effects tool is what turns it off.
+    _detail_doodad_render->gatherTile(tile, camera_pos, frustum);
   }
 
   // WMOs / map objects
@@ -1272,6 +1296,25 @@ void WorldRender::draw (glm::mat4x4 const& model_view
             box_entry->second = spawn_group.second.transforms.size();
           }
         }
+
+        // Ground effect detail doodads: one instanced call per distinct model, reusing this
+        // program, this render state and the same ModelRender::draw entry point the two passes
+        // above use. Last of the three on purpose -- it draws far more instances than either, and
+        // going last means the depth buffer is already populated with the models that matter when
+        // the grass starts rejecting fragments.
+        //
+        // It records no box counts, so it cannot disturb the correction the database spawn pass
+        // just made: hidden models never reach its batches at all.
+        _detail_doodad_render->draw( model_view
+            , m2_shader
+            , model_render_state
+            , frustum
+            , _cull_distance
+            , camera_pos
+            , _world->animtime
+            , model_boxes_to_draw
+            , render_settings.display_mode
+        );
 
         /*
         if (draw_doodads_wmo)
@@ -1941,6 +1984,11 @@ void WorldRender::unload()
 
   _liquid_texture_manager.unload();
 
+  // Before the shader and buffer teardown below only because it is the one member here that holds
+  // model references: clearing it can run ~Model, which needs the context this function is called
+  // inside. The object itself stays alive so the user's preview settings survive an unload.
+  _detail_doodad_render->clear();
+
   _skies->unload();
 
   _buffers.unload();
@@ -2045,6 +2093,11 @@ std::unique_ptr<Skies>& Noggit::Rendering::WorldRender::skies()
 float Noggit::Rendering::WorldRender::cullDistance() const
 {
   return _cull_distance;
+}
+
+Noggit::Rendering::DetailDoodadRender& Noggit::Rendering::WorldRender::detailDoodads()
+{
+  return *_detail_doodad_render;
 }
 
 void WorldRender::setupChunkVAO(OpenGL::Scoped::use_program& mcnk_shader)

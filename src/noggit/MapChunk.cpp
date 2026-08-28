@@ -2168,7 +2168,26 @@ void MapChunk::initMCCV()
 void MapChunk::registerChunkUpdate(unsigned flags)
 {
   _chunk_update_flags |= flags;
+
+  // VERTEX and HOLES only. These are the two updates that move the surface a cached detail doodad
+  // was placed on: VERTEX because the doodad's height and the slope filter both come off the
+  // heightmap, HOLES because a hole suppresses a whole 2x2 block of doodad cells.
+  //
+  // NORMALS, MCCV, SHADOW and AREA_ID are all excluded on purpose -- none of them is an input to
+  // placement, so vertex painting and shadow recalculation cost the preview nothing. ALPHAMAP is
+  // excluded for the reason given on the member: TileRender re-registers it every frame while
+  // textures stream.
+  if (flags & (ChunkUpdateFlags::VERTEX | ChunkUpdateFlags::HOLES))
+  {
+    ++_detail_doodad_surface_revision;
+  }
+
   mt->registerChunkUpdate(flags);
+}
+
+std::uint32_t MapChunk::detailDoodadSurfaceRevision() const
+{
+  return _detail_doodad_surface_revision;
 }
 
 void MapChunk::endChunkUpdates()

@@ -103,6 +103,18 @@ map_horizon::map_horizon(const std::string& basename, const MapIndex * const ind
   if (!Application::NoggitApplication::instance()->clientData()->exists(_filename))
   {
     LogError << "file \"World\\Maps\\" << basename << "\\" << basename << ".wdl\" does not exist." << std::endl;
+
+    // The minimap image is allocated even on this path, and it has to be: the original returned
+    // here leaving _qt_minimap default-constructed, i.e. 0x0 with a null data pointer. Every
+    // subsequent update_minimap_tile then called QImage::setPixel on it, which bounds-checks
+    // against width()/height() and answers with a qWarning per pixel rather than a crash -- 256
+    // of them per tile. "Generate new WDL" on a map that has none walks every flagged tile, so
+    // on a full 64x64 map that is up to 64 * 64 * 256 = 1048576 formatted warnings written to
+    // stderr, which is where the operation appears to hang. set_minimap does exactly what the
+    // successful path does at the end of this constructor, and with no _tiles loaded it paints
+    // every existing ADT in the "tile exists but the WDL has no data for it" colour, which is a
+    // true description of a map with no WDL.
+    set_minimap(index);
     return;
   }
 
@@ -416,44 +428,65 @@ void map_horizon::save_wdl(World* world, bool regenerate)
         {
             TileIndex index(x, y);
 
-            bool has_tile = world->mapIndex.hasTile(index);
-            // write offset in MAOF entry
-            *(wdlFile.GetPointer<uint>(curPos)) = has_tile ? mareoffset : 0;
+            // The horizon data is resolved BEFORE anything is written for this tile, which is a
+            // change of order from the original and the reason the failure cases below can be
+            // handled at all. Writing the MAOF offset and the MARE header first commits the file
+            // to containing a MARE for this tile, so a later "we have no data" has nowhere to go
+            // but out of the function -- which is what the original did, abandoning the whole
+            // WDL, silently, several hundred tiles in.
+            Noggit::map_horizon_tile* horizon_tile = nullptr;
 
-            if (has_tile)
+            if (world->mapIndex.hasTile(index))
+            {
+                // May legitimately be null: the map had no WDL to read one from.
+                horizon_tile = get_horizon_tile(y, x);
+
+                // load tile and extract WDL data
+                if (!horizon_tile || regenerate)
+                {
+                    bool unload = !world->mapIndex.tileLoaded(index) && !world->mapIndex.tileAwaitingLoading(index);
+                    MapTile* mTile = world->mapIndex.loadTile(index, false, false, false);
+
+                    // THE crash. MapIndex::hasTile only reads bit 0 of the WDT's MAIN entry for
+                    // this tile (map_index.cpp:599-602); it does not check that the ADT behind it
+                    // exists. MapIndex::loadTile does check, and returns nullptr when the file is
+                    // missing (map_index.cpp:426-430). The original guarded only the
+                    // wait_until_loaded call with "if (mTile)" and then passed the same pointer
+                    // straight into update_horizon_tile, whose first statement is
+                    // "auto tile_index = mTile->index" (map_horizon.cpp:325). A WDT that lists a
+                    // tile whose ADT is not there is exactly the shape of the broken map somebody
+                    // reaches for "Generate new WDL" to repair, so the repair tool crashed on the
+                    // maps that needed it.
+                    if (mTile)
+                    {
+                        mTile->wait_until_loaded();
+                        update_horizon_tile(mTile);
+
+                        if (unload)
+                            world->mapIndex.unloadTile(index);
+
+                        horizon_tile = get_horizon_tile(y, x);
+                    }
+                    else
+                    {
+                        LogError << "WDL generation: tile " << x << "_" << y << " is flagged in the"
+                                    " WDT but its ADT could not be loaded; writing it as empty."
+                                 << std::endl;
+                    }
+                }
+            }
+
+            // write offset in MAOF entry
+            *(wdlFile.GetPointer<uint>(curPos)) = horizon_tile ? mareoffset : 0;
+            curPos += 4;
+
+            if (horizon_tile)
             {
                 // MARE Header
                 //  {
                 wdlFile.Extend(8);
                 SetChunkHeader(wdlFile, mareoffset, 'MARE', (2 * (17 * 17)) + (2 * (16 * 16))); // outer heights+inner heights
                 mareoffset += 8;
-
-                // this might be invalid if map had no WDL
-                Noggit::map_horizon_tile* horizon_tile = get_horizon_tile(y, x);
-
-                // laod tile and extract WDL data
-                if (!horizon_tile || regenerate)
-                {
-                    bool unload = !world->mapIndex.tileLoaded(index) && !world->mapIndex.tileAwaitingLoading(index);
-                    MapTile* mTile = world->mapIndex.loadTile(index, false, false, false);
-
-                    auto nloadedtiles = world->mapIndex.getNLoadedTiles();
-
-                    if (mTile)
-                        mTile->wait_until_loaded();
-
-                    update_horizon_tile(mTile);
-                    if (unload)
-                        world->mapIndex.unloadTile(index);
-
-                    auto test = get_horizon_tile(y, x);
-                    horizon_tile = get_horizon_tile(y, x);
-                }
-                if (!horizon_tile)
-                {
-                    return; // failed to generate data somehow
-                    LogError << "Failed to generate the WDL file." << std::endl;
-                }
 
                 wdlFile.Insert(mareoffset, sizeof(Noggit::map_horizon_tile::height_17), reinterpret_cast<char*>(&horizon_tile->height_17));
                 mareoffset += sizeof(Noggit::map_horizon_tile::height_17);
@@ -472,7 +505,10 @@ void map_horizon::save_wdl(World* world, bool regenerate)
                     mareoffset += 2;
                 }
             }
-            curPos += 4;
+            // A zero MAOF offset is how a WDL says "no terrain here" -- our own reader skips those
+            // entries (map_horizon.cpp:188-191) and so does the client. Emitting one for a tile we
+            // could not read is therefore a well-formed answer, and the file stays valid and
+            // complete instead of not being written at all.
         }
     }
     BlizzardArchive::ClientFile f(filename.str(), Noggit::Application::NoggitApplication::instance()->clientData(),

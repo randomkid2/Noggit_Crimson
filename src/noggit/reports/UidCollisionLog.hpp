@@ -2,15 +2,27 @@
 
 // A record of every uid collision that world_model_instances_storage repaired.
 //
-// Noggit does NOT ignore duplicate uids: it renumbers them in memory as instances load, in
-// world_model_instances_storage.cpp:58-62 (M2) and :107-111 (WMO). That repair works and must not
-// change -- the renumbered uid is what the tile is then saved with, so altering it moves real
+// Noggit renumbers colliding uids in memory as instances load, in
+// world_model_instances_storage.cpp:119-125 (M2) and :186-189 (WMO). That repair works and must
+// not change -- the renumbered uid is what the tile is then saved with, so altering it moves real
 // object placements. The problem it leaves behind is diagnostic, not functional: the entire
-// collision set is compressed into the single `_uid_duplicates_found` bool that MapView.cpp:3902
+// collision set is compressed into the single `_uid_duplicates_found` bool that MapView.cpp:5156
 // turns into one modal warning naming nothing. A mapper is told that "a" uid was in use, and has
 // no way to learn which objects were affected, in which tile, or how many. Duplicate uids arrive
 // through uid.ini desync between mappers sharing a map, and the damage they do to object
 // placement is what actually kills projects.
+//
+// WHAT THIS LOG DOES NOT COUNT, and the reason the count is worth trusting: one uid legitimately
+// appears in more than one tile's MDDF/MODF whenever an object's bounding box crosses a tile
+// border. Those repeats are not collisions and never were. Rows that agree on the transform are
+// matched by SceneObject::isDuplicateOf and never reach the renumber. Rows that disagree because
+// the user moved the object during this session are matched by its wasTransformedThisSession flag
+// (world_model_instances_storage.cpp:101 and :168) and are likewise dropped rather than
+// renumbered -- before that check existed, every such row was renumbered into a ghost copy of the
+// object at its pre-move transform AND counted here, so the number this log reported was mostly
+// self-inflicted. What is left is the real thing: a uid held by two different objects, or by an
+// object nothing has touched. That is a uid.ini problem, which is what the report tells the user
+// to go and fix.
 //
 // This header is deliberately free of noggit, Qt, glm and database includes -- STL only. That is
 // what lets the recorder be compiled into the standalone Catch2 target, and it is why the tile is

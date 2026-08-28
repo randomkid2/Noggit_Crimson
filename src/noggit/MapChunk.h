@@ -12,6 +12,7 @@
 #include <QImage>
 
 #include <array>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <unordered_set>
@@ -114,6 +115,23 @@ public:
 private:
 
   unsigned _chunk_update_flags;
+
+  // Bumped by registerChunkUpdate every time the terrain surface itself moves. Read by the detail
+  // doodad preview, which caches a chunk's placements and has to know when the ground it computed
+  // them against is no longer the ground being drawn.
+  //
+  // Deliberately NOT bumped for ALPHAMAP, and that is the whole point of it being a counter rather
+  // than a read of _chunk_update_flags. TileRender re-registers ALPHAMAP at the end of every
+  // upload pass for as long as a tile's textures are still streaming or an alphamap upload was
+  // skipped -- per chunk at TileRender.cpp:274-275 and for the whole tile at :325-326 -- so the
+  // flag is set again on the very next frame. A cache keyed on that flag would rebuild every
+  // frame for as long as terrain is loading -- which is exactly when the frame budget is tightest.
+  // The placement does not read alphamap bytes anyway: the only texture-derived input is the MCLY
+  // doodad mapping, and the preview watches that by content instead.
+  //
+  // 32 bits is not a wrap risk worth guarding: at one bump per terrain edit and 60 edits a second
+  // held down continuously, 2^32 bumps is over two years of unbroken sculpting.
+  std::uint32_t _detail_doodad_surface_revision = 0;
 
   Noggit::NoggitRenderContext _context;
 
@@ -241,4 +259,8 @@ public:
   void registerChunkUpdate(unsigned flags);
   void endChunkUpdates();
   unsigned getUpdateFlags() const;
+
+  // See _detail_doodad_surface_revision. Changes when, and only when, the heights or the holes of
+  // this chunk have been edited since the caller last looked.
+  std::uint32_t detailDoodadSurfaceRevision() const;
 };

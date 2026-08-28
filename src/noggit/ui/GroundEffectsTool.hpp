@@ -35,6 +35,11 @@ namespace Noggit
 {
   class Action;
 
+  namespace Rendering
+  {
+    class DetailDoodadRender;
+  }
+
   namespace Ui
   {
     namespace Tools
@@ -165,6 +170,18 @@ namespace Noggit
       void change_radius(float change);
 
     private:
+      // The viewport preview of detail doodads, or null when there is no world to draw into.
+      // Returned as a pointer rather than a reference for exactly that case: this window outlives
+      // a map being closed.
+      Noggit::Rendering::DetailDoodadRender* detailDoodads() const;
+
+      // Pushes the three preview controls into the renderer. Called from each control and once at
+      // construction, so the renderer never has to ask the UI for anything.
+      void applyDoodadPreviewSettings();
+
+      // Refreshes the measured cost read-out from the last drawn frame.
+      void updateDoodadPreviewCost();
+
       std::optional<ground_effect_set> getSelectedGroundEffect();
       std::optional<glm::vec3> getSelectedEffectColor();
       void setActiveGroundEffect(ground_effect_set const& effect);
@@ -227,6 +244,20 @@ namespace Noggit
       QRadioButton* _render_exclusion_map;
       QCheckBox* _chkbox_highlight_unassigned;
       QLabel* _coverage_label;
+
+      // Detail doodad preview. Three controls and a measured read-out; none of them changes what
+      // any ground effect control DOES, they only decide whether and how far the result is drawn.
+      QCheckBox* _chkbox_preview_doodads;
+      QSpinBox* _spin_preview_density;
+      QSpinBox* _spin_preview_distance;
+      QLabel* _preview_cost_label;
+
+      // Drives the cost read-out. Separate from _refresh_timer, which coalesces edits and runs a
+      // full tile rescan -- this one only reads three counters off the renderer, and it must keep
+      // ticking while nothing is being edited, which is precisely when a user is judging the frame
+      // rate.
+      QTimer* _preview_cost_timer;
+
       QCheckBox* _chkbox_merge_duplicates;
       QLineEdit* _set_filter;
       QListWidget* _effect_sets_list;

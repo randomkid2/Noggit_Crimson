@@ -143,6 +143,20 @@ public:
   void reset_selection();
   void delete_selected_models();
   glm::vec3 get_ground_height(glm::vec3 pos);
+
+  //! Ground height under `pos`, distinguishing "no terrain there" from a real answer.
+  //!
+  //! get_ground_height above returns `pos` unchanged on a miss, which is exactly right for a snap
+  //! -- a failed snap must not move the object. It is exactly WRONG for a caller that adds an
+  //! offset to the result, because `pos.y + offset` every frame is an unbounded climb rather than
+  //! a no-op. The camera does that, so the camera uses this instead. Silent on failure: the caller
+  //! that needs it runs once per frame, and a message there would fill log.txt while flying.
+  [[nodiscard]] bool try_get_ground_height(glm::vec3 const& pos, float& out_height);
+
+private:
+  //! Shared body. `missed` is optional and set true when no loaded chunk answered.
+  glm::vec3 get_ground_height_impl(glm::vec3 pos, bool* missed);
+public:
   void range_add_to_selection(glm::vec3 const& pos, float radius, bool remove);
   Noggit::world_model_instances_storage& getModelInstanceStorage();;
 

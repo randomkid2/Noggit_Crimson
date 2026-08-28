@@ -409,6 +409,14 @@ unsigned Noggit::Action::handleObjectTransformed(unsigned uid, bool redo)
 
      _map_view->getWorld()->updateTilesEntry(obj, model_update::remove);
 
+     // Undo and redo write pos/dir/scale straight onto the instance instead of going back through
+     // registerObjectTransformed, so the flag has to be set here as well. A redo in particular
+     // moves the object away from what the unloaded tiles on disk still say about it, which is
+     // exactly the state the flag exists to describe. Setting it on a plain undo, which may put
+     // the object back where disk has it, costs nothing: an incoming row that agrees is caught by
+     // the isDuplicateOf branch in world_model_instances_storage before the flag is ever read.
+     obj->markTransformedThisSession();
+
      obj->pos = pair.second.pos;
      obj->dir = pair.second.dir;
      obj->scale = pair.second.scale;
@@ -757,6 +765,15 @@ void Noggit::Action::registerChunkVertexColorChange(MapChunk* chunk)
 void Noggit::Action::registerObjectTransformed(SceneObject* obj)
 {
   _flags |= ActionFlags::eOBJECTS_TRANSFORMED;
+
+  // Marked before the early return below, which skips objects this action has already recorded a
+  // pre-image for. Every path in the editor that moves, rotates or rescales an instance funnels
+  // through here first -- 11 call sites in World.cpp, 2 in the viewport gizmo and 3 in the node
+  // editor's object nodes, 16 in total -- so this is the one place that sees the whole set, and a
+  // seventeenth transform tool cannot forget it. See SceneObject.hpp for what the flag prevents:
+  // the object's own stale rows in neighbouring tiles being mistaken for a uid collision and
+  // resurrected at the transform it was moved away from.
+  obj->markTransformedThisSession();
 
   for (auto& pair : _transformed_objects_pre)
   {

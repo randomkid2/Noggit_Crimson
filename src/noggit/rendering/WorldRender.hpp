@@ -33,6 +33,16 @@ namespace Noggit::Database
   class SpawnSceneCache;
 }
 
+// Forward-declared for weight, not for layering. World holds a WorldRender by value
+// (World.h:493), so every translation unit that reaches World.h reaches this header, and pulling
+// DetailDoodadRender.hpp in here would drag ModelManager.h, Model.h, ModelRender.hpp and
+// Listfile.hpp behind it into all of them. The one cost is that WorldRender now needs an
+// out-of-line destructor, since a unique_ptr to an incomplete type cannot be destroyed inline.
+namespace Noggit::Rendering
+{
+  class DetailDoodadRender;
+}
+
 
 struct WorldRenderParams 
 {
@@ -92,6 +102,10 @@ namespace Noggit::Rendering
   public:
     WorldRender(World* world);
 
+    // Out-of-line and defined as defaulted in the .cpp: _detail_doodad_render is a unique_ptr to a
+    // type this header only forward-declares. See the note on that forward declaration.
+    ~WorldRender();
+
     void upload() override;
     void unload() override;
 
@@ -116,6 +130,17 @@ namespace Noggit::Rendering
     void markTerrainParamsUniformBlockDirty();;
 
     [[nodiscard]] std::unique_ptr<Skies>& skies();;
+
+    // The in-viewport preview of a chunk's ground effect doodads. Never null.
+    //
+    // Reached this way rather than through WorldRenderParams because the control that drives it is
+    // the Ground Effects tool itself, which already talks to the renderer directly for the
+    // overlay uniforms (GroundEffectsTool::updateTerrainUniformParams). A second copy of the same
+    // three settings in the per-frame parameter block would just be something else to keep in
+    // sync.
+    //
+    // > [!warning] detailDoodads().clear() requires a bound OpenGL context. See the class comment.
+    [[nodiscard]] DetailDoodadRender& detailDoodads();;
 
     float _view_distance;
     float cullDistance() const;
@@ -203,6 +228,12 @@ namespace Noggit::Rendering
     GLuint const& _occluder_vao = _vertex_arrays[2];
 
     LiquidTextureManager _liquid_texture_manager;
+
+    // Constructed once, in the constructor, and never reset -- unload() clears its contents
+    // instead. Keeping the object alive across an unload/upload cycle is what lets the user's
+    // enable/density/draw-distance choices survive ViewportManager handing the GL context to
+    // another viewport and back.
+    std::unique_ptr<DetailDoodadRender> _detail_doodad_render;
 
     bool _need_terrain_params_ubo_update = false;
   };

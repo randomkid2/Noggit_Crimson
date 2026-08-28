@@ -5364,18 +5364,31 @@ void MapView::tick (float dt)
 
     if (_camera_moved_since_last_draw)
     {
+      // BOTH BRANCHES ADD AN OFFSET TO THE RESULT, so neither may use get_ground_height, which
+      // returns the position it was given when no terrain answered. `pos.y + 3` every frame is not
+      // a no-op, it is a climb: fly past the loaded region with FPS mode on and the camera gains
+      // three units per frame, roughly 180 a second at 60 fps, and never comes back because there
+      // is nothing above it to intersect. The collision branch has the same shape through a test
+      // that is always true when h == position.y, since y < y + 3 always holds.
+      //
+      // try_get_ground_height distinguishes the miss, and the miss is now what it should always
+      // have been: leave the camera exactly where it is.
+      float ground_height (0.f);
+
       if (_fps_mode.get())
       {
         // there is a also hack to update camera when entering mode in void ViewToolbar::add_tool_icon()
-        float h = _world->get_ground_height(_camera.position).y;
-        _camera.position.y = h + 3.f;
+        if (_world->try_get_ground_height(_camera.position, ground_height))
+        {
+          _camera.position.y = ground_height + 3.f;
+        }
       }
       else if (_camera_collision.get())
       {
-        float h = _world.get()->get_ground_height(_camera.position).y;
-        if (_camera.position.y < h + 3.f)
+        if (_world->try_get_ground_height(_camera.position, ground_height)
+            && _camera.position.y < ground_height + 3.f)
         {
-          _camera.position.y = h + 3.f;
+          _camera.position.y = ground_height + 3.f;
         }
       }
     }

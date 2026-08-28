@@ -10,6 +10,7 @@
 #include <noggit/MapTile.h>
 #include <noggit/MapView.h>
 #include <noggit/map_index.hpp>
+#include <noggit/rendering/DetailDoodadRender.hpp>
 #include <noggit/texture_set.hpp>
 #include <noggit/ui/CurrentTexture.h>
 #include <noggit/ui/FontAwesome.hpp>
@@ -168,6 +169,72 @@ this is determined by which has the highest opacity.");
                 _coverage_label = new QLabel("Select a texture, then scan.", this);
                 _coverage_label->setWordWrap(true);
                 render_layout->addWidget(_coverage_label, 2, 0, 1, 2);
+            }
+
+            // Detail doodad preview.
+            //
+            // This panel could already build a set, assign four doodads, weight them, set density
+            // and terrain type, paint the set onto chunks and paint exclusions -- and then the only
+            // way to find out what any of it looked like was to launch the game. The overlays above
+            // answer "where is this set", never "what does it look like". This closes that.
+            //
+            // It is a preview and nothing else. Nothing in this group writes to a chunk, a DBC or
+            // an undo action; the three controls decide whether the doodads are drawn, how many the
+            // generator picks and how far out they are drawn, exactly as the client's own
+            // groundEffectDensity and groundEffectDist CVars do.
+            {
+                auto preview_group = new QGroupBox("Detail Doodad Preview", this);
+                preview_group->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
+                left_side_layout->addWidget(preview_group);
+
+                auto preview_layout(new QFormLayout(preview_group));
+
+                _chkbox_preview_doodads = new QCheckBox("Draw detail doodads in the viewport", this);
+                _chkbox_preview_doodads->setChecked(false);
+                _chkbox_preview_doodads->setToolTip
+                  ("Draw the grass and foliage this chunk's ground effect sets produce, placed the "
+                   "way the client places them. Respects the exclusion map.");
+                preview_layout->addRow(_chkbox_preview_doodads);
+
+                _spin_preview_density = new QSpinBox(this);
+                _spin_preview_density->setRange(16, 256);
+                _spin_preview_density->setSingleStep(16);
+                _spin_preview_density->setValue(32);
+                _spin_preview_density->setToolTip
+                  ("The client's groundEffectDensity: how many of a chunk's 64 cells get doodads. "
+                   "Changing it re-rolls the placement, not just its count.");
+                preview_layout->addRow("Density : ", _spin_preview_density);
+
+                _spin_preview_distance = new QSpinBox(this);
+                _spin_preview_distance->setRange(0, 500);
+                _spin_preview_distance->setSingleStep(10);
+                _spin_preview_distance->setValue(120);
+                _spin_preview_distance->setSuffix(" yd");
+                _spin_preview_distance->setToolTip
+                  ("How far out detail doodads are drawn. This is the control that decides the cost: "
+                   "a chunk is 33.3 yards across, so the number of chunks drawn grows with its "
+                   "square.");
+                preview_layout->addRow("Draw distance : ", _spin_preview_distance);
+
+                // Measured, not estimated. The doodad count a given draw distance costs depends
+                // entirely on what the sets under the camera look like, so the only honest answer
+                // is the one from the frame that just drew.
+                _preview_cost_label = new QLabel("Preview off.", this);
+                _preview_cost_label->setWordWrap(true);
+                preview_layout->addRow(_preview_cost_label);
+
+                _preview_cost_timer = new QTimer(this);
+                _preview_cost_timer->setInterval(500);
+
+                connect(_preview_cost_timer, &QTimer::timeout, this
+                       , [this] { updateDoodadPreviewCost(); });
+
+                connect(_chkbox_preview_doodads, &QCheckBox::toggled, this
+                       , [this] { applyDoodadPreviewSettings(); });
+                connect(_spin_preview_density, qOverload<int>(&QSpinBox::valueChanged), this
+                       , [this] { applyDoodadPreviewSettings(); });
+                connect(_spin_preview_distance, qOverload<int>(&QSpinBox::valueChanged), this
+                       , [this] { applyDoodadPreviewSettings(); });
             }
 
             _chkbox_merge_duplicates = new QCheckBox("Ignore duplicates", this);
@@ -1170,6 +1237,64 @@ this is determined by which has the highest opacity.");
           world->renderer()->markTerrainParamsUniformBlockDirty();
         }
 
+        Noggit::Rendering::DetailDoodadRender* GroundEffectsTool::detailDoodads() const
+        {
+          World* world = _map_view && _map_view->_world ? _map_view->getWorld() : nullptr;
+
+          return world ? &world->renderer()->detailDoodads() : nullptr;
+        }
+
+        void GroundEffectsTool::applyDoodadPreviewSettings()
+        {
+          auto* const preview = detailDoodads();
+
+          if (!preview)
+          {
+            return;
+          }
+
+          // Gated on _preview_armed as well as on the checkbox, for the same reason the three
+          // shader overlays are: a Qt::Tool window hidden because its owner was minimised must not
+          // be treated as a user switching the preview off, and a window the user genuinely
+          // dismissed must not keep costing frame time.
+          bool const active = _preview_armed && _chkbox_preview_doodads->isChecked();
+
+          preview->setEnabled(active);
+          preview->setDensity(static_cast<unsigned>(_spin_preview_density->value()));
+          preview->setDrawDistance(static_cast<float>(_spin_preview_distance->value()));
+
+          if (active)
+          {
+            _preview_cost_timer->start();
+          }
+          else
+          {
+            _preview_cost_timer->stop();
+            _preview_cost_label->setText("Preview off.");
+          }
+        }
+
+        void GroundEffectsTool::updateDoodadPreviewCost()
+        {
+          auto* const preview = detailDoodads();
+
+          if (!preview || !preview->enabled())
+          {
+            return;
+          }
+
+          // Rebuilds are the only expensive part, and they are budgeted, so a non-zero count here
+          // while standing still means the cache is being invalidated every frame by something --
+          // worth showing rather than hiding.
+          _preview_cost_label->setText
+            (QString("%1 doodads across %2 chunks last frame. %3 chunk(s) rebuilt, %4 cached.")
+              .arg(preview->lastFrameInstanceCount())
+              .arg(preview->lastFrameChunkCount())
+              .arg(preview->lastFrameRebuildCount())
+              .arg(preview->cachedChunkCount())
+            );
+        }
+
         bool GroundEffectsTool::hiddenByWindowManager() const
         {
           if (isMinimized())
@@ -1198,6 +1323,7 @@ this is determined by which has the highest opacity.");
         {
           _preview_armed = false;
           clearOverlayUniforms();
+          applyDoodadPreviewSettings();
           hide();
         }
 
@@ -1213,6 +1339,7 @@ this is determined by which has the highest opacity.");
           {
             _preview_armed = false;
             clearOverlayUniforms();
+            applyDoodadPreviewSettings();
           }
 
           QWidget::hideEvent(event);
@@ -1223,6 +1350,7 @@ this is determined by which has the highest opacity.");
           QWidget::showEvent(event);
           _preview_armed = true;
           updateTerrainUniformParams();
+          applyDoodadPreviewSettings();
           refreshOverlay();
         }
 
@@ -1287,6 +1415,23 @@ this is determined by which has the highest opacity.");
 
         GroundEffectsTool::~GroundEffectsTool()
         {
+            // Releases the detail doodad preview's model references while an OpenGL context is
+            // still bound.
+            //
+            // ~MapView takes makeCurrent() plus an OpenGL::context::scoped_setter at the top of its
+            // body and only then resets _tools[editing_mode::paint], which owns the texturing tool,
+            // which owns this window (texturing_tool.cpp:240) -- so this destructor runs inside that
+            // context. WorldRender's own destructor does not: _world is a MapView member, destroyed
+            // after the body returns and after the scoped_setter is gone. Releasing the last
+            // reference to a Model there would destroy its vertex arrays with no context, and
+            // OpenGL::Scoped's destructor throws in that case, which from a destructor terminates
+            // the process. This is the reachable release point, and WorldRender::unload is the
+            // other.
+            if (auto* const preview = detailDoodads())
+            {
+                preview->clear();
+            }
+
             delete _preview_renderer;
             _preview_renderer = nullptr;
         }

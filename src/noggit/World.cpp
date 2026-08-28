@@ -450,24 +450,28 @@ void World::rotate_model_to_ground_normal(SceneObject* obj, bool smoothNormals)
 
 
     selection_result results;
-    for_chunk_at(rayPos, [&](MapChunk* chunk)
+    // Same ray, same fix as World::get_ground_height below: the origin goes one unit above this
+    // chunk's highest vertex instead of sitting at the object's own position. The old
+    // "we shouldn't end up with empty ever (but we do, on completely flat ground)" TODO that used
+    // to sit under this block was that bug describing itself -- an object resting on flat terrain
+    // put the ray origin in the plane of the triangle it was standing on, where the intersection
+    // is degenerate, and the upward retry had nothing above it to hit either.
+    for_maybe_chunk_at(rayPos, [&](MapChunk* chunk)
         {
-            {
-                math::ray intersect_ray(rayPos, glm::vec3(0.f, -1.f, 0.f));
-                chunk->intersect(intersect_ray, &results, true);
-            }
-            // object is below ground
-            if (results.empty())
-            {
-                math::ray intersect_ray(rayPos, glm::vec3(0.f, 1.f, 0.f));
-                chunk->intersect(intersect_ray, &results, true);
-            }
+            float const ray_height (std::max(rayPos.y, chunk->getMaxHeight()) + 1.0f);
+            math::ray intersect_ray
+                ( glm::vec3(rayPos.x, ray_height, rayPos.z)
+                , glm::vec3(0.f, -1.f, 0.f)
+                );
+            chunk->intersect(intersect_ray, &results, true);
+
+            return true;
         });
 
-    // !\ todo We shouldn't end up with empty ever (but we do, on completely flat ground)
     if (results.empty())
     {
-        // just to avoid models disappearing when this happens
+        // Still reachable, for an unloaded tile. Leaving the rotation alone is the right answer:
+        // there is no ground normal to align to, so there is nothing to align.
         updateTilesEntry(obj, model_update::add);
         return;
     }
@@ -754,29 +758,99 @@ void World::delete_selected_models()
   reset_selection();
 }
 
+bool World::try_get_ground_height(glm::vec3 const& pos, float& out_height)
+{
+  glm::vec3 const ground (get_ground_height_impl(pos, nullptr));
+
+  // The impl reports a miss by handing back the input, and that is unambiguous here because a hit
+  // returns the intersection point, whose y is the SURFACE -- never the caller's own y except by
+  // a coincidence that costs one frame of camera adjustment and self-corrects.
+  if (ground == pos)
+  {
+    return false;
+  }
+
+  out_height = ground.y;
+  return true;
+}
+
 glm::vec3 World::get_ground_height(glm::vec3 pos)
 {
+  bool missed (false);
+  glm::vec3 const ground (get_ground_height_impl(pos, &missed));
+
+  if (missed)
+  {
+    // Reported here and not in the impl, because this overload is the object-snap path: it runs on
+    // a user gesture, so one line per failed snap is useful. try_get_ground_height is the camera's
+    // path and runs every frame, where the same line would be a flood.
+    LogError << "Snap to ground: no loaded terrain at (" << pos.x << ", " << pos.z
+             << "), leaving the position unchanged" << std::endl;
+  }
+
+  return ground;
+}
+
+glm::vec3 World::get_ground_height_impl(glm::vec3 pos, bool* missed)
+{
     selection_result hits;
-    
-    for_chunk_at(pos, [&](MapChunk* chunk)
+
+    // for_maybe_chunk_at, not for_chunk_at: the latter calls mapIndex.setChanged(tile) on entry
+    // (World.inl:53), and this function is a pure query. Two of its callers are the FPS camera and
+    // camera collision in MapView::tick, which run it on every frame the camera moved -- so with
+    // for_chunk_at, merely flying across the map marked every tile it passed over as needing a
+    // save, and "Save changed tiles" then rewrote terrain nobody had edited. Everything that
+    // actually MOVES something after asking for the height marks its own tiles: World::
+    // updateTilesEntry reaches MapIndex::update_model_tile, which sets adt->changed on both the
+    // remove and the add (map_index.cpp:353).
+    for_maybe_chunk_at(pos, [&](MapChunk* chunk)
     {
-        {
-            math::ray intersect_ray(pos, glm::vec3(0.f, -1.f, 0.f));
-            chunk->intersect(intersect_ray, &hits, true);
-        }
-        // object is below ground
-        if (hits.empty())
-        {
-            math::ray intersect_ray(pos, glm::vec3(0.f, 1.f, 0.f));
-            chunk->intersect(intersect_ray, &hits, true);
-        }
+        // The ray starts ABOVE the terrain, not at the caller's own y, and that is the whole fix.
+        //
+        // Every caller but the camera passes the position of the object being snapped, and an
+        // object that is already standing on the ground puts the origin of a downward ray exactly
+        // on -- or a float's width below -- the surface it is trying to find. The old code then
+        // found nothing, retried upwards, found nothing there either because there is no terrain
+        // above an object sitting on terrain, and reported no ground at all. On perfectly flat
+        // ground the origin lies IN the triangle's plane, where ray/triangle intersection is
+        // degenerate, which is why the identical ray in rotate_model_to_ground_normal above
+        // carried a "we do end up empty on completely flat ground" note for years.
+        //
+        // getMaxHeight() is the chunk's own vmax.y (MapChunk.cpp:436-439), so one unit above it is
+        // above all 145 of this chunk's vertices, at any terrain height, including below sea level
+        // where y is negative. It is combined with pos.y rather than used alone because vmax is
+        // not recomputed at the moment a vertex moves: MapChunk::changeTerrain and friends only
+        // raise ChunkUpdateFlags::VERTEX, and vmin/vmax are rebuilt later in
+        // MapChunk::updateVerticesData (MapChunk.cpp:639-663). The flatten and terrain tools call
+        // this function immediately after a brush tick, so vmax can lag the terrain by a frame,
+        // and taking the higher of the two starts the ray above both the stale bound and the
+        // caller -- which can never be worse than either on its own.
+        float const ray_height (std::max(pos.y, chunk->getMaxHeight()) + 1.0f);
+        math::ray intersect_ray
+            (glm::vec3(pos.x, ray_height, pos.z), glm::vec3(0.f, -1.f, 0.f));
+        chunk->intersect(intersect_ray, &hits, true);
+
+        // The upward retry the old code did here is gone with the reason for it. It existed to
+        // catch "the object is below ground"; from above every vertex, below-ground is not a state
+        // the ray can be in. MapChunk::intersect tests all 256 triangles of the chunk with no hole
+        // check (MapChunk.cpp:617-636), so the column is covered wherever pos lands inside the
+        // chunk -- and where an upward ray would have missed, so would this one.
+        return true;
     });
 
-    // this should never happen
     if (hits.empty())
     {
-        LogError << "Snap to ground ray intersection failed" << std::endl;
-        return glm::vec3(0);
+        // A miss now means the tile is not loaded, so there is no terrain to answer with. Return
+        // what we were given. This half matters more than the ray origin: the old code returned
+        // glm::vec3(0), and since callers take only .y from it, a failed snap did not decline to
+        // move the object -- it moved it to world y = 0, which on most maps is under the sea or
+        // under the terrain, and the object was gone. A failed snap must be a no-op.
+        if (missed)
+        {
+            *missed = true;
+        }
+
+        return pos;
     }
 
     return std::get<selected_chunk_type>(hits[0].second).position;

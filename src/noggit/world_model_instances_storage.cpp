@@ -11,6 +11,32 @@
 #include <string>
 #include <string_view>
 
+namespace
+{
+  // Model identity on its own, with the transform deliberately left out.
+  //
+  // SceneObject::isDuplicateOf answers "same model AND same placement", which is the right test
+  // for the ordinary multi-tile case where every tile's row agrees. This is its first half, and it
+  // is needed for the case where the rows do NOT agree, where the question stops being "is this
+  // the same placement" and becomes "is this the same object, moved".
+  //
+  // Two instances that both have no AsyncObject bound count as a match, for the same reason
+  // isDuplicateOf treats them as one: neither carries any evidence about which model it is, so the
+  // file key cannot decide anything and the caller's other test has to.
+  bool same_model_as(SceneObject const& lhs, SceneObject const& rhs)
+  {
+    AsyncObject const* lhs_model = lhs.instance_model();
+    AsyncObject const* rhs_model = rhs.instance_model();
+
+    if (static_cast<bool>(lhs_model) != static_cast<bool>(rhs_model))
+    {
+      return false;
+    }
+
+    return !lhs_model || lhs_model->file_key() == rhs_model->file_key();
+  }
+}
+
 namespace Noggit
 {
   world_model_instances_storage::world_model_instances_storage(World* world)
@@ -45,6 +71,44 @@ namespace Noggit
     {
       // instance already loaded
       if (existing_instance.value()->isDuplicateOf(instance))
+      {
+        _instance_count_per_uid[uid]++;
+        return uid;
+      }
+
+      // The stale row of an object that straddles a tile border and has since been moved.
+      //
+      // Such an object is written into the MDDF of every tile its bounding box touches, under one
+      // uid. Move it, then let one of those neighbouring tiles load for the first time, and the
+      // row that tile still holds carries the OLD transform. On the transform alone that is
+      // indistinguishable from two different objects sharing a uid, and the renumber below -- the
+      // correct answer for a real collision -- re-creates the object at the position the user
+      // dragged it away from, then saves it there. The user gets a duplicate of something they
+      // moved, sitting where it used to be, with no undo step to blame.
+      //
+      // Three things must all hold before the row is treated as a leftover, and the third is the
+      // one that keeps this from being a cure worse than the disease. "Same model and I moved
+      // this session" ALONE would swallow a genuine collision between two instances of the same
+      // model as soon as the user had nudged either of them -- and a swallowed instance is not
+      // merely unrendered, it is erased: MapTile::saveTile resolves the tile's uid list through
+      // World::get_model (MapTile.cpp:582-584) and writes one MDDF row per uid, so the object
+      // that lost the race is gone from disk on the next save, with no undo step and no warning.
+      // Requiring the incoming row to carry the transform this instance was LOADED at makes the
+      // test positive evidence rather than an absence of it: a leftover row is by definition the
+      // row we were built from, so it matches exactly, whereas a different object would have to
+      // sit at another object's former placement to within the isDuplicateOf epsilons to be
+      // mistaken for one. Anything else -- different model, untouched object, or a transform that
+      // is neither the current one nor the loaded one -- still falls through to the renumber.
+      //
+      // The count MUST be incremented on this path, exactly as on the isDuplicateOf path above.
+      // MapTile::load registers this uid against the loading tile via MapTile::add_model
+      // (MapTile.cpp:361), and World::remove_models_if_needed decrements once per registered uid
+      // when that tile unloads. Returning without incrementing would let the neighbour's unload
+      // take the count to zero and destroy the object the user had just moved -- the same data
+      // loss by a different route.
+      if (existing_instance.value()->wasTransformedThisSession()
+       && same_model_as(*existing_instance.value(), instance)
+       && existing_instance.value()->matchesTransformAtLoad(instance))
       {
         _instance_count_per_uid[uid]++;
         return uid;
@@ -100,6 +164,20 @@ namespace Noggit
     {
       // instance already loaded
       if (existing_instance.value()->isDuplicateOf(instance))
+      {
+        _instance_count_per_uid[uid]++;
+
+        return uid;
+      }
+
+      // Same reasoning as the M2 path above, and it bites harder here: a WMO is large enough that
+      // straddling a tile border is the normal case rather than the exception, so nearly every
+      // moved WMO had a stale row waiting in a neighbouring tile. See the comment there for why
+      // all three tests are required and what the transform test in particular prevents, and
+      // SceneObject.hpp for why the flag is never cleared.
+      if (existing_instance.value()->wasTransformedThisSession()
+       && same_model_as(*existing_instance.value(), instance)
+       && existing_instance.value()->matchesTransformAtLoad(instance))
       {
         _instance_count_per_uid[uid]++;
 

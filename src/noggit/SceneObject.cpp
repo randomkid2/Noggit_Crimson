@@ -52,6 +52,26 @@ bool SceneObject::isDuplicateOf(SceneObject const& other)
          && misc::float_equals(scale, other.scale);
 }
 
+void SceneObject::markTransformedThisSession()
+{
+  if (_transformed_this_session)
+  {
+    return;
+  }
+
+  _transform_at_load_pos = pos;
+  _transform_at_load_dir = dir;
+  _transform_at_load_scale = scale;
+  _transformed_this_session = true;
+}
+
+bool SceneObject::matchesTransformAtLoad(SceneObject const& other) const
+{
+  return misc::vec3d_equals(_transform_at_load_pos, other.pos)
+         && misc::deg_vec3d_equals(_transform_at_load_dir, other.dir)
+         && misc::float_equals(_transform_at_load_scale, other.scale);
+}
+
 void SceneObject::updateTransformMatrix()
 {
   glm::mat4x4 matrix = glm::mat4x4(1.0f);
