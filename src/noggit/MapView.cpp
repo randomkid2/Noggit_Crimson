@@ -23,6 +23,7 @@
 #include <noggit/MapTile.h>
 #include <noggit/map_index.hpp>
 #include <noggit/TabletManager.hpp>
+#include <noggit/terrain/LiveAutoTexture.hpp>
 #include <opengl/texture.hpp>
 #include <noggit/Tool.hpp>
 #include <noggit/uid_storage.hpp>
@@ -5280,6 +5281,21 @@ void MapView::tick (float dt)
   action_modality |= activeTool()->actionModality();
   // if (keyx != 0 || keyy != 0 || keyz != 0)
   //   action_modality |= Noggit::ActionModalityControllers::eTRANSLATE;
+
+  // LIVE AUTO TEXTURE. This has to run BEFORE the line below, and this is the only place in the
+  // tree where it can. A sculpting stroke is ONE action spanning many ticks -- the terrain tools
+  // call beginAction inside their onTick on every frame the button is held, and beginAction hands
+  // back the running action rather than opening a second one (ActionManager.cpp:64) -- so the
+  // stroke has no end of its own to hook. endActionOnModalityMismatch below IS its end: the frame
+  // after Shift or the left button is released, action_modality stops containing the controllers
+  // the action was opened with and the action is finished. Finishing it takes the redo snapshot of
+  // every registered chunk (Action.cpp:425), so a texture change registered afterwards would have
+  // a before-image and no after-image and redo would restore the terrain without the paint.
+  //
+  // Costs one bool read per frame while the feature is off, which it is until somebody ticks the
+  // box in the Automatic Texturing dialog and until Noggit is next started. See
+  // LiveAutoTexture.hpp.
+  Noggit::LiveAutoTexture::runIfStrokeEnding(this, action_modality);
 
   NOGGIT_ACTION_MGR->endActionOnModalityMismatch(action_modality);
 

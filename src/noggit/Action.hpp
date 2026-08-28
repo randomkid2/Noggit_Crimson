@@ -134,6 +134,16 @@ namespace Noggit
 
         float* getChunkTerrainOriginalData(MapChunk* chunk);
 
+        // The chunks whose terrain this action recorded, in registration order.
+        //
+        // Read-only, and it exists for Live Auto Texture (LiveAutoTexture.hpp): the set of chunks a
+        // sculpting stroke modified is not derivable from the brush -- radius, inner radius, the
+        // image mask, a vertex selection and the erosion kernel each decide it differently -- but
+        // every path in the tree that moves a vertex calls registerChunkTerrainChange to record its
+        // undo image first. So this list IS the stroke's footprint, exactly, by construction, and
+        // for every terrain tool at once rather than for the two that happened to be wired up.
+        std::vector<MapChunk*> terrainChangedChunks() const;
+
         // Registrators
         void registerChunkTerrainChange(MapChunk* chunk);
         void registerChunkTextureChange(MapChunk* chunk);

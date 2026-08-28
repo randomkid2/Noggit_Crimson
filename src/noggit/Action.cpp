@@ -614,6 +614,19 @@ float* Noggit::Action::getChunkTerrainOriginalData(MapChunk* chunk)
   return nullptr;
 }
 
+std::vector<MapChunk*> Noggit::Action::terrainChangedChunks() const
+{
+  std::vector<MapChunk*> chunks;
+  chunks.reserve(_chunk_terrain_pre.size());
+
+  for (auto const& pair : _chunk_terrain_pre)
+  {
+    chunks.push_back(pair.first);
+  }
+
+  return chunks;
+}
+
 void Noggit::Action::setDelta(float delta)
 {
   _delta = delta;

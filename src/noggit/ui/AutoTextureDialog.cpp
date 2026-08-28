@@ -5,16 +5,14 @@
 
 #include <noggit/Action.hpp>
 #include <noggit/ActionManager.hpp>
-#include <noggit/Alphamap.hpp>
-#include <noggit/Brush.h>
 #include <noggit/Log.h>
 #include <noggit/MapChunk.h>
-#include <noggit/MapHeaders.h>
 #include <noggit/MapTile.h>
 #include <noggit/MapView.h>
 #include <noggit/World.h>
 #include <noggit/map_index.hpp>
-#include <noggit/scoped_blp_texture_reference.hpp>
+#include <noggit/terrain/TerrainRulePainter.hpp>
+#include <noggit/terrain/TerrainRuleStore.hpp>
 #include <noggit/texture_set.hpp>
 #include <opengl/context.hpp>
 #include <opengl/scoped.hpp>
@@ -42,13 +40,9 @@
 #include <QtWidgets/QVBoxLayout>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
-#include <cstring>
 #include <exception>
-#include <map>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -60,40 +54,13 @@ namespace
 {
   namespace Collector = Noggit::TerrainRuleCollector;
 
-  constexpr int UNITS_PER_CHUNK = Collector::CHUNK_INNER_SIDE * Collector::CHUNK_INNER_SIDE;
-
   // An MCNK holds at most four texture layers. Not a tunable; it is the width of the MCLY array.
   constexpr std::size_t MAX_CHUNK_LAYERS = 4;
 
-  // The MCAL planes behind those layers: one fewer, because layer 0 is whatever the other three
-  // leave over. MAX_ALPHAMAPS is an int (Alphamap.hpp:13) and every use here indexes with a
-  // std::size_t.
-  constexpr std::size_t ALPHA_PLANES = static_cast<std::size_t>(MAX_ALPHAMAPS);
-
-  // Hardness just short of 1, and the reason is arithmetic rather than aesthetic: Brush::getValue
-  // computes `1 - (dist - iradius) / oradius` (Brush.cpp:43), and hardness 1 makes oradius exactly
-  // 0, so a texel landing precisely on the radius divides zero by zero and writes NaN into an
-  // alpha map. At 0.98 the falloff band is 2% of the radius -- under a tenth of a texel at the
-  // sizes used here -- so every texel that is touched is still touched at full strength.
-  constexpr float BRUSH_HARDNESS = 0.98f;
-
-  // Radius of the per-unit brush, in world units.
-  //
-  // A unit is 8x8 alphamap texels, so half a unit across is UNITSIZE/2. That is NOT enough: the
-  // brush measures the shortest distance to each texel's SQUARE, and the corner texel of a unit
-  // sits 3*TEXDETAILSIZE*sqrt(2) = 0.53*UNITSIZE from the unit centre, so a radius of half a unit
-  // leaves the four corners of every unit unpainted -- speckle, in whatever was there before.
-  // Rounded up to 0.56 to clear that with margin.
-  //
-  // The cost is about one texel of bleed into the neighbouring unit on each side, which no
-  // circular brush can avoid and which does not matter: neighbours that agree on a texture
-  // overwrite each other with the same value, and at a boundary the seam moves by half a metre.
-  constexpr float UNIT_BRUSH_RADIUS = UNITSIZE * 0.56f;
-
-  // Covers every texel of one chunk with room to spare -- the corner texel is 22.8 units from the
-  // centre against a chunk 33.3 across -- and, because the paint is issued on the chunk directly
-  // rather than through World::paintTexture, reaches nothing outside it.
-  constexpr float CHUNK_BRUSH_RADIUS = CHUNKSIZE;
+  // The brush geometry, the alphamap fingerprint and the per-chunk paint that used to live here
+  // are now TerrainRulePainter, because Live Auto Texture paints the same rules onto the same
+  // chunks at the end of a sculpting stroke and the two must not be able to disagree. See the note
+  // above the painter's construction in onApply.
 
   // Exact text of the one validate() complaint that is advisory rather than fatal
   // (TerrainRules.cpp:449). A rule set that paints only cliffs is a legitimate thing to want and
@@ -128,57 +95,6 @@ namespace
         && lhs.strength == rhs.strength
         && lhs.priority == rhs.priority
         && lhs.enabled == rhs.enabled;
-  }
-
-  // Everything about a chunk's texturing that this tool can move: which layers exist, in which
-  // order, and the committed alpha behind them.
-  //
-  // Taken before the first edit to a chunk and again after the last one, because "did this paint
-  // change anything" cannot be answered any other way. TextureSet::paintTexture reports true for a
-  // texel it rewrote with the value it already held (texture_set.cpp:955 sets `changed` for every
-  // texel inside the radius, whether or not the alpha moved), and its other early return reports
-  // true for a chunk it did not touch at all (texture_set.cpp:832, `return nTextures == 1`). So the
-  // paint's own answer cannot be used to decide whether the tile is now unsaved.
-  struct ChunkTextureFingerprint
-  {
-    std::vector<std::string> layers;
-    std::array<std::array<std::uint8_t, 64 * 64>, ALPHA_PLANES> alpha{};
-    // An absent plane and an all-zero plane are different states of the chunk, and the difference
-    // survives a save, so it is not safe to fold them together.
-    std::array<bool, ALPHA_PLANES> alpha_present{};
-  };
-
-  bool operator== (ChunkTextureFingerprint const& lhs, ChunkTextureFingerprint const& rhs)
-  {
-    return lhs.layers == rhs.layers
-        && lhs.alpha_present == rhs.alpha_present
-        && lhs.alpha == rhs.alpha;
-  }
-
-  void captureTextureFingerprint(TextureSet* texture_set, ChunkTextureFingerprint& out)
-  {
-    out.layers.clear();
-
-    for (std::size_t layer = 0; layer < texture_set->num(); ++layer)
-    {
-      out.layers.push_back(texture_set->filename(layer));
-    }
-
-    auto const& maps = *texture_set->getAlphamaps();
-
-    for (std::size_t i = 0; i < ALPHA_PLANES; ++i)
-    {
-      out.alpha_present[i] = maps[i] != nullptr;
-
-      if (maps[i])
-      {
-        std::memcpy(out.alpha[i].data(), maps[i]->getAlpha(), out.alpha[i].size());
-      }
-      else
-      {
-        out.alpha[i].fill(0);
-      }
-    }
   }
 
   QString shortTextureName(QString const& path)
@@ -257,15 +173,6 @@ namespace
     }
   }
 
-  // World position of the inner vertex of one unit.
-  //
-  // The inner vertex IS the unit centre, so this is a lookup rather than a derivation -- and it is
-  // the same vertex TerrainRuleCollector::sampleChunkUnit read the slope from, which is what keeps
-  // the decision and the paint at the same place.
-  glm::vec3 unitCentre(MapChunk* chunk, int unit_row, int unit_col)
-  {
-    return chunk->mVertices[Collector::chunkInnerVertexIndex(unit_row, unit_col)];
-  }
 }
 
 AutoTextureDialog::AutoTextureDialog(MapView* map_view, QWidget* parent)
@@ -354,6 +261,27 @@ AutoTextureDialog::AutoTextureDialog(MapView* map_view, QWidget* parent)
   _status->setWordWrap(true);
   right->addWidget(_status);
 
+  // LIVE AUTO TEXTURE, the opt-in surface.
+  //
+  // It lives HERE, in the window where the rules are authored and previewed, and nowhere else. The
+  // feature repaints chunks as a side effect of a sculpting gesture, which overwrites hand-painted
+  // alpha; the only person who should be able to arm that is one who has already written a rule
+  // set, run a preview and read the unclaimed count. A toolbar button or a menu entry would let it
+  // be switched on by somebody who has never seen what these rules would do.
+  //
+  // Unchecked at every application start. TerrainRuleStore deliberately does not persist the flag;
+  // see the note above that class.
+  _live_auto = new QCheckBox("Live: retexture terrain as I sculpt", this);
+  _live_auto->setChecked(Noggit::TerrainRuleStore::instance()->liveAutoEnabled());
+  _live_auto->setToolTip
+    ("When on, the chunks a Raise/Lower or Flatten/Blur stroke moves are retextured against these\n"
+     "rules the moment the stroke ends, together with one ring of neighbouring chunks so the\n"
+     "result does not stop at a chunk border. The paint joins the stroke's own undo step, so one\n"
+     "Ctrl+Z reverts the shape and the texture together.\n"
+     "\n"
+     "This OVERWRITES painting already on those chunks. It is off every time Noggit starts.");
+  right->addWidget(_live_auto);
+
   auto apply_row (new QHBoxLayout());
   apply_row->addStretch(1);
 
@@ -375,6 +303,30 @@ AutoTextureDialog::AutoTextureDialog(MapView* map_view, QWidget* parent)
 
   connect(_rule_list, &QListWidget::currentRowChanged, this, [this] (int) { showSelectedRule(); });
 
+  connect( _live_auto, &QCheckBox::toggled, this
+         , [this] (bool on)
+           {
+             Noggit::TerrainRuleStore::instance()->setLiveAutoEnabled(on);
+
+             // Said out loud rather than left to the tooltip. The one thing a user has to
+             // understand before arming this is that it writes over painting they did by hand, and
+             // a tooltip is only read by someone already unsure.
+             _status->setText
+               ( on
+               ? "Live retexturing is ON. Terrain strokes will repaint the chunks they move, plus "
+                 "one ring of neighbours, using these rules. That overwrites painting already "
+                 "there; one Ctrl+Z reverts the shape and the paint together."
+               : "Live retexturing is off."
+               );
+           }
+         );
+
+  // The rules are the store's, not this dialog's. Seeded from it here so a rule set survives the
+  // window being closed and the application being restarted, and pushed back to it on every edit
+  // (see publishRules) so the live stroke path paints the rules the user is actually looking at
+  // rather than a copy taken when the dialog opened.
+  _rules = Noggit::TerrainRuleStore::instance()->rules();
+
   // Every widget exists from here on, so the write-back path is safe to arm.
   _updating_ui = false;
 
@@ -382,6 +334,15 @@ AutoTextureDialog::AutoTextureDialog(MapView* map_view, QWidget* parent)
   rebuildRuleList();
   showSelectedRule();
   invalidatePreview();
+}
+
+void AutoTextureDialog::publishRules() const
+{
+  // A no-op when nothing moved: TerrainRuleStore::setRules compares the lists before it writes
+  // QSettings, and this is called from every path that can touch a rule -- including the ones that
+  // turn out not to have. There is nothing to notify; the store is not a QObject and has no change
+  // signal, deliberately (TerrainRuleStore.hpp).
+  Noggit::TerrainRuleStore::instance()->setRules(_rules);
 }
 
 QGroupBox* AutoTextureDialog::buildRuleBox()
@@ -712,6 +673,10 @@ bool AutoTextureDialog::commitSelectedRuleEdits()
     item->setText(describeRule(static_cast<std::size_t>(index)));
   }
 
+  // Published on the one path that knows a rule actually moved. The live stroke path reads the
+  // store, so a rule edited here and not published would be previewed one way and painted another.
+  publishRules();
+
   return true;
 }
 
@@ -742,6 +707,8 @@ void AutoTextureDialog::onAddRule()
 
   _rules.push_back(rule);
 
+  publishRules();
+
   rebuildRuleList();
   _rule_list->setCurrentRow(static_cast<int>(_rules.size()) - 1);
   showSelectedRule();
@@ -759,6 +726,8 @@ void AutoTextureDialog::onDuplicateRule()
 
   _rules.push_back(_rules[static_cast<std::size_t>(index)]);
 
+  publishRules();
+
   rebuildRuleList();
   _rule_list->setCurrentRow(static_cast<int>(_rules.size()) - 1);
   showSelectedRule();
@@ -775,6 +744,8 @@ void AutoTextureDialog::onRemoveRule()
   }
 
   _rules.erase(_rules.begin() + index);
+
+  publishRules();
 
   rebuildRuleList();
   showSelectedRule();
@@ -794,6 +765,8 @@ void AutoTextureDialog::moveSelectedRule(int offset)
   }
 
   std::swap(_rules[static_cast<std::size_t>(index)], _rules[static_cast<std::size_t>(target)]);
+
+  publishRules();
 
   rebuildRuleList();
   _rule_list->setCurrentRow(target);
@@ -1189,65 +1162,40 @@ void AutoTextureDialog::onApply()
     }
   }
 
-  World* world = _map_view->getWorld();
-
   // Adding a layer constructs a scoped_blp_texture_reference, which loads and uploads a BLP.
   // Action::undo makes the context current before doing the same thing (Action.cpp:55-56); this
   // path has the same requirement.
   _map_view->context()->makeCurrent(_map_view->context()->surface());
   OpenGL::context::scoped_setter const context_setter (::gl, _map_view->context());
 
-  std::map<std::string, scoped_blp_texture_reference> texture_refs;
+  // The paint itself is TerrainRulePainter, and this dialog no longer owns a line of it.
+  //
+  // THE REASON IS LIVE AUTO TEXTURE. The same rules are now painted from a second place -- the end
+  // of a terrain sculpting stroke, see LiveAutoTexture.hpp -- and two implementations of "turn a
+  // TerrainRuleSet into alpha on a chunk" would drift the first time either was touched. The drift
+  // would surface as "the live pass paints something different from the preview I approved", which
+  // is not falsifiable from outside the editor. One implementation, called from two places.
+  //
+  // What stays here is what only this dialog can do: the preview gate, the pinned scope, the layer
+  // report, and the one action that brackets the whole run.
+  Noggit::TerrainRulePainter painter (_map_view, rules);
 
-  try
   {
-    // One reference per distinct texture rather than one per paint call: a tile-sized scope is
-    // tens of thousands of calls and each construction is a lookup in the async object map.
-    for (std::string const& path : rules.distinctTextures())
-    {
-      if (path.empty())
-      {
-        continue;
-      }
+    std::string texture_error;
 
-      texture_refs.emplace(path, scoped_blp_texture_reference(path, _map_view->getRenderContext()));
+    if (!painter.prepareTextures(texture_error))
+    {
+      LogError << "Auto-texturing could not load a texture: " << texture_error << std::endl;
+
+      QMessageBox::critical
+        ( this
+        , "Automatic Texturing"
+        , QString("A texture named by the rules could not be loaded.\n\n%1")
+            .arg(QString::fromStdString(texture_error))
+        );
+      return;
     }
   }
-  catch (std::exception const& e)
-  {
-    LogError << "Auto-texturing could not load a texture: " << e.what() << std::endl;
-
-    QMessageBox::critical
-      ( this
-      , "Automatic Texturing"
-      , QString("A texture named by the rules could not be loaded.\n\n%1").arg(e.what())
-      );
-    return;
-  }
-
-  Brush unit_brush;
-  unit_brush.init();
-  unit_brush.setHardness(BRUSH_HARDNESS);
-  unit_brush.setRadius(UNIT_BRUSH_RADIUS);
-
-  Brush chunk_brush;
-  chunk_brush.init();
-  chunk_brush.setHardness(BRUSH_HARDNESS);
-  chunk_brush.setRadius(CHUNK_BRUSH_RADIUS);
-
-  std::size_t chunks_painted = 0;
-  std::size_t chunks_uniform = 0;
-  // Chunks the run brushed over and left byte-identical. Counted separately from chunks_painted
-  // because the difference is the whole question of whether the tile is now unsaved.
-  std::size_t chunks_unchanged = 0;
-  std::size_t units_painted = 0;
-  std::size_t units_refused = 0;
-  std::size_t units_unchanged = 0;
-
-  // Reused across chunks rather than declared inside the walk: 3 KiB of alpha each, and a tile is
-  // 256 chunks.
-  ChunkTextureFingerprint before;
-  ChunkTextureFingerprint after;
 
   QApplication::setOverrideCursor(Qt::WaitCursor);
 
@@ -1257,260 +1205,14 @@ void AutoTextureDialog::onApply()
   // ONE action for the whole run. beginAction/endAction bracket the entire scope rather than each
   // chunk, so undo takes the map back to before the run in a single press;
   // registerChunkTextureChange is what accumulates the per-chunk before-state inside it, and it
-  // already ignores a chunk it has seen (Action.cpp:671-675).
+  // already ignores a chunk it has seen (Action.cpp:701-705).
   NOGGIT_ACTION_MGR->beginAction(_map_view, Noggit::ActionFlags::eCHUNKS_TEXTURE);
 
   try
   {
     forEachChunkInScope
       ( _preview.tiles
-      , [&] (MapTile* tile, MapChunk* chunk)
-        {
-          TextureSet* texture_set = chunk->texture_set.get();
-
-          if (!texture_set)
-          {
-            return;
-          }
-
-          std::array<Noggit::TerrainRuleResult, UNITS_PER_CHUNK> decisions{};
-
-          Collector::collectChunkUnits
-            ( chunk
-            , rules
-            , [&decisions] ( MapChunk*
-                           , int unit_row
-                           , int unit_col
-                           , Noggit::TerrainSample const&
-                           , Noggit::TerrainRuleResult const& unit_result
-                           )
-              {
-                decisions[unit_row * Collector::CHUNK_INNER_SIDE + unit_col] = unit_result;
-              }
-            );
-
-          // A chunk every rule agrees on is one brush pass instead of 64. Flat ground is most of
-          // most maps, so this is the difference between a tile taking a moment and taking most of
-          // a second, and it costs one comparison per unit to find out.
-          bool uniform = decisions[0].matched;
-
-          for (auto const& decision : decisions)
-          {
-            if ( !decision.matched
-              || decision.texture != decisions[0].texture
-              || decision.alpha != decisions[0].alpha
-               )
-            {
-              uniform = false;
-              break;
-            }
-          }
-
-          // Registered on the first operation that will really touch the chunk -- a paint, or the
-          // layer eviction resolve() may have to do to make room -- so a chunk the rules do not
-          // move does not put a copy of its three alpha maps into the undo step. The before-image
-          // is taken at the same instant, which is the last moment at which it is still the
-          // chunk's original state.
-          bool touched = false;
-
-          // Set once this chunk has proved it has no layer to spare; see resolve().
-          bool eviction_failed = false;
-
-          auto const ensure_registered = [&]
-          {
-            if (touched)
-            {
-              return;
-            }
-
-            captureTextureFingerprint(texture_set, before);
-            NOGGIT_CUR_ACTION->registerChunkTextureChange(chunk);
-            touched = true;
-          };
-
-          // A chunk that is already nothing but the winning texture has nothing to paint, and
-          // paintTexture agrees -- it returns early on nTextures == 1 (texture_set.cpp:830), with
-          // no alpha map in existence for the strength to be written into. Caught here so the
-          // commonest no-op costs nothing at all; the general case is caught after the fact by
-          // comparing the two fingerprints, because a chunk with two or more layers can be
-          // repainted with exactly the values it already holds and neither paintTexture nor
-          // apply_alpha_changes will say so.
-          auto const already_done = [&] (Noggit::TerrainRuleResult const& decision)
-          {
-            return texture_set->num() == 1
-                && std::string_view(texture_set->filename(0)) == decision.texture;
-          };
-
-          // The texture reference to paint a decision with, or null when this chunk cannot take
-          // it. Not an error: four MCLY slots is a hard limit and the preview already counted the
-          // chunks that hit it. Re-asked per unit because a paint can free or fill a slot.
-          auto const resolve = [&] (Noggit::TerrainRuleResult const& decision)
-            -> scoped_blp_texture_reference*
-          {
-            auto const found = texture_refs.find(std::string(decision.texture));
-
-            if (found == texture_refs.end())
-            {
-              return nullptr;
-            }
-
-            if (texture_set->canPaintTexture(found->second))
-            {
-              return &found->second;
-            }
-
-            // canPaintTexture answers "already here, or is there a spare slot" and stops there
-            // (texture_set.cpp:271-286). The paint does not stop there: get_texture_index_or_add
-            // drops layers that paint nothing before it gives up (texture_set.cpp:396). Mirroring
-            // that is what makes the preview's promise -- "layers painting nothing are dropped
-            // there to make room" -- true. Without it the preview counts the chunk under
-            // chunks_needing_eviction, says the unused layer will go, and then every unit on that
-            // chunk is refused with no way to find it afterwards.
-            //
-            // Asked once per chunk, not once per unit. A chunk whose four layers are all in use
-            // fails this for every one of its 64 units, and each failed attempt still walks every
-            // texel of every layer (texture_set.cpp:308-346). Nothing between two units can turn a
-            // failure into a success either: the only thing that frees a slot is paintTexture's
-            // own trailing eraseUnusedTextures, and after that canPaintTexture answers true above
-            // without ever reaching here.
-            if (eviction_failed)
-            {
-              return nullptr;
-            }
-
-            // Registered first: eraseUnusedTextures rewrites the layer list in place, so the undo
-            // entry has to exist before it runs.
-            ensure_registered();
-
-            if (!texture_set->eraseUnusedTextures())
-            {
-              eviction_failed = true;
-              return nullptr;
-            }
-
-            return texture_set->canPaintTexture(found->second) ? &found->second : nullptr;
-          };
-
-          // The one place a texture layer weight is written, and paintTexture owns all of it:
-          // adding or evicting the layer (get_texture_index_or_add), creating the in-flight float
-          // alpha maps, and rescaling the other layers so the texel still sums to 255. Strength is
-          // on the same 0-255 scale as the Texturing tool's brush level (texturing_tool.cpp:816),
-          // and pressure is 1 because a rule is an assignment rather than a stroke that builds up.
-          auto const paint = [&] ( Noggit::TerrainRuleResult const& decision
-                                 , scoped_blp_texture_reference& texture
-                                 , glm::vec3 const& position
-                                 , Brush& brush
-                                 )
-          {
-            chunk->paintTexture
-              (position, &brush, static_cast<float>(decision.alpha), 1.0f, texture);
-          };
-
-          // Held per chunk and only added to the run's totals once the chunk is known to have
-          // really moved. A chunk that ends where it started contributes to units_unchanged
-          // instead, so the closing message never claims work that did not happen.
-          std::size_t chunk_units_painted = 0;
-          bool one_brush_pass = false;
-
-          if (uniform)
-          {
-            if (already_done(decisions[0]))
-            {
-              units_unchanged += UNITS_PER_CHUNK;
-              return;
-            }
-
-            if (scoped_blp_texture_reference* texture = resolve(decisions[0]))
-            {
-              glm::vec3 const centre
-                (chunk->xbase + CHUNKSIZE * 0.5f, chunk->ybase, chunk->zbase + CHUNKSIZE * 0.5f);
-
-              ensure_registered();
-              paint(decisions[0], *texture, centre, chunk_brush);
-
-              chunk_units_painted += UNITS_PER_CHUNK;
-              one_brush_pass = true;
-            }
-            else
-            {
-              units_refused += UNITS_PER_CHUNK;
-            }
-          }
-          else
-          {
-            for (int unit_row = 0; unit_row < Collector::CHUNK_INNER_SIDE; ++unit_row)
-            {
-              for (int unit_col = 0; unit_col < Collector::CHUNK_INNER_SIDE; ++unit_col)
-              {
-                auto const& decision
-                  = decisions[unit_row * Collector::CHUNK_INNER_SIDE + unit_col];
-
-                // Unmatched units are the ones the preview counted as unclaimed. Leaving them
-                // untouched is the documented behaviour, not an oversight.
-                if (!decision.matched)
-                {
-                  continue;
-                }
-
-                if (already_done(decision))
-                {
-                  ++units_unchanged;
-                  continue;
-                }
-
-                scoped_blp_texture_reference* texture = resolve(decision);
-
-                if (!texture)
-                {
-                  ++units_refused;
-                  continue;
-                }
-
-                ensure_registered();
-
-                paint(decision, *texture, unitCentre(chunk, unit_row, unit_col), unit_brush);
-
-                ++chunk_units_painted;
-              }
-            }
-          }
-
-          if (!touched)
-          {
-            return;
-          }
-
-          // Committed per chunk rather than left for the save path. An uncommitted stroke keeps a
-          // tmp_edit_alpha_values alive -- 4 planes of 4096 floats, 64 KiB -- and the Action
-          // caches a copy of it for both the before and the after state, so deferring across a
-          // tile would cost about 48 MiB for nothing. apply_alpha_changes also raises the ALPHAMAP
-          // update flag and the lod-map dirty bit (texture_set.cpp:1676).
-          texture_set->apply_alpha_changes();
-
-          // The after-image, and the only trustworthy answer to "did this chunk actually move".
-          // Re-applying a rule set that has already been applied repaints every multi-layer chunk
-          // with the values it is already holding: paintTexture reports that as a change, and
-          // taking its word for it marks the tile unsaved and tells the user thousands of units
-          // were painted when the file on disk would come out identical.
-          captureTextureFingerprint(texture_set, after);
-
-          if (after == before)
-          {
-            units_unchanged += chunk_units_painted;
-            ++chunks_unchanged;
-            return;
-          }
-
-          units_painted += chunk_units_painted;
-          chunks_uniform += one_brush_pass ? 1 : 0;
-          ++chunks_painted;
-
-          // registerChunkUpdate is a render-refresh flag and cannot mean "unsaved" -- every chunk
-          // that loads sets the same bits. The save path tests MapTile::changed instead
-          // (map_index.cpp:555), so without this the ADT is skipped by saveChanged and the whole
-          // run is lost on unload.
-          world->mapIndex.setChanged(tile);
-        }
+      , [&painter] (MapTile* tile, MapChunk* chunk) { painter.paintChunk(tile, chunk); }
       );
   }
   catch (std::exception const& e)
@@ -1538,14 +1240,20 @@ void AutoTextureDialog::onApply()
 
   qint64 const elapsed_ms = timer.elapsed();
 
+  // Counted by the painter, one chunk at a time, and restated here unaltered. Whether a chunk
+  // belongs under chunks_painted or under chunks_unchanged is decided by its before/after alphamap
+  // fingerprint rather than by how many paint calls this dialog issued, and that distinction is
+  // the whole question of whether the tile is now unsaved.
+  Noggit::TerrainPaintStats const& stats = painter.stats();
+
   QApplication::restoreOverrideCursor();
 
-  if (chunks_painted == 0)
+  if (stats.chunks_painted == 0)
   {
     QString message
-      ( units_unchanged > 0
+      ( stats.units_unchanged > 0
       ? QString("Nothing to do: the %1 unit(s) the rules claimed already carry exactly what the "
-                "rules ask for. No tile was marked changed.").arg(units_unchanged)
+                "rules ask for. No tile was marked changed.").arg(stats.units_unchanged)
       : QString("Nothing changed. Either no rule claimed anything in scope, or every chunk that "
                 "would have been painted already holds four textures that are all in use.")
       );
@@ -1554,11 +1262,11 @@ void AutoTextureDialog::onApply()
     // chunk's before-image has to be cached before it is painted, and whether the paint moved
     // anything is only knowable afterwards -- so the honest thing is to warn that the next undo
     // press will look broken.
-    if (chunks_unchanged > 0)
+    if (stats.chunks_unchanged > 0)
     {
       message += QString(" An undo step was still recorded for the %1 chunk(s) the run brushed "
                          "over; undoing it will appear to do nothing, because nothing changed.")
-                   .arg(chunks_unchanged);
+                   .arg(stats.chunks_unchanged);
     }
 
     _status->setText(message);
@@ -1573,24 +1281,24 @@ void AutoTextureDialog::onApply()
   QString message
     ( QString("Painted %1 unit(s) across %2 chunk(s) in %3 ms; %4 chunk(s) were a single texture "
               "and took one brush pass. One undo press reverts the whole run.")
-        .arg(units_painted).arg(chunks_painted).arg(elapsed_ms).arg(chunks_uniform));
+        .arg(stats.units_painted).arg(stats.chunks_painted).arg(elapsed_ms).arg(stats.chunks_uniform));
 
-  if (units_unchanged > 0)
+  if (stats.units_unchanged > 0)
   {
     message += QString(" %1 unit(s) already carried the texture the rules ask for.")
-                 .arg(units_unchanged);
+                 .arg(stats.units_unchanged);
   }
 
-  if (chunks_unchanged > 0)
+  if (stats.chunks_unchanged > 0)
   {
     message += QString(" %1 chunk(s) came out byte-identical and were not marked changed.")
-                 .arg(chunks_unchanged);
+                 .arg(stats.chunks_unchanged);
   }
 
-  if (units_refused > 0)
+  if (stats.units_refused > 0)
   {
     message += QString(" %1 unit(s) were refused: their chunk holds four textures and every one "
-                       "of them is in use.").arg(units_refused);
+                       "of them is in use.").arg(stats.units_refused);
   }
 
   message += " Save the ADTs to keep it.";

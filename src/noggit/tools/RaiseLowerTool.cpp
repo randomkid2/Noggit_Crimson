@@ -5,6 +5,7 @@
 #include <noggit/ActionManager.hpp>
 #include <noggit/Input.hpp>
 #include <noggit/MapView.h>
+#include <noggit/terrain/LiveAutoTexture.hpp>
 #include <noggit/ui/TerrainTool.hpp>
 #include <noggit/ui/tools/ToolPanel/ToolPanel.hpp>
 #include <noggit/ui/tools/UiCommon/ImageMaskSelector.hpp>
@@ -26,6 +27,15 @@ namespace Noggit
             .onPress = [this] {
                 NOGGIT_ACTION_MGR->beginAction(this->mapView(), Noggit::ActionFlags::eCHUNKS_TERRAIN);
                 _terrainTool->flattenVertices(this->mapView()->getWorld());
+
+                // Live Auto Texture, run explicitly because this edit is not a drag. It opens and
+                // closes its own action inside this one call, so it never reaches the modality
+                // mismatch in MapView::tick that every held-button stroke ends on, and the hook
+                // there would never see it. Called before endAction for the same reason that hook
+                // is placed before endActionOnModalityMismatch: endAction takes the redo snapshot.
+                // A no-op unless the user has turned the feature on. See LiveAutoTexture.hpp.
+                Noggit::LiveAutoTexture::runNow(this->mapView());
+
                 NOGGIT_ACTION_MGR->endAction();
             },
             .condition = [mapView] { return mapView->get_editing_mode() == editing_mode::ground && !NOGGIT_CUR_ACTION; },

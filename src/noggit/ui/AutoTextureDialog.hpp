@@ -50,6 +50,12 @@ namespace Noggit::Ui
   // exactly those, and it refuses outright if the scope has resolved to something else in the
   // meantime -- because the unmatched-unit count the user agreed to was computed for the old one.
   //
+  // THIS WINDOW IS ALSO WHERE LIVE AUTO TEXTURE IS ARMED. That feature reruns the same rules over
+  // the chunks a terrain stroke moved, at the moment the stroke ends (LiveAutoTexture.hpp). Its
+  // switch is here, and only here, because arming it should require having written a rule set and
+  // read a preview: it repaints chunks as a side effect of sculpting, and that overwrites painting
+  // done by hand. The rules themselves live in TerrainRuleStore so both paths read one list.
+  //
   // RULES ARE EVALUATED PER 8x8 CHUNK UNIT, not per alphamap texel. That is the resolution the
   // chunk's own texture weighting and doodad mapping already work at (texture_set.cpp:1475), the
   // inner vertex of a unit carries the averaged normal for free (see
@@ -91,7 +97,16 @@ namespace Noggit::Ui
       // Rules as authored. TerrainRuleSet is rebuilt from this on demand rather than held, because
       // it recomputes its precedence order on every mutation and the list is edited keystroke by
       // keystroke.
+      //
+      // A WORKING COPY of TerrainRuleStore's list, not the master. It is seeded from the store in
+      // the constructor and pushed back by publishRules on every path that changes it, which is
+      // what lets the live stroke path (LiveAutoTexture.hpp) paint the same rules this window is
+      // showing without holding a pointer to the window.
       std::vector<Noggit::TerrainRule> _rules;
+
+      // Writes _rules through to TerrainRuleStore. Cheap and idempotent: the store compares before
+      // it stores, so calling it from a path that turned out to change nothing costs a comparison.
+      void publishRules() const;
 
       Noggit::TerrainRuleSet buildRuleSet() const;
 
@@ -187,6 +202,12 @@ namespace Noggit::Ui
       QCheckBox* _enabled;
 
       QComboBox* _scope;
+
+      // The Live Auto Texture opt-in. Reflects TerrainRuleStore::liveAutoEnabled, which is false at
+      // every application start; see LiveAutoTexture.hpp for what the switch actually arms and why
+      // the surface for it is in this window rather than on a toolbar.
+      QCheckBox* _live_auto;
+
       QPushButton* _apply_button;
       QPlainTextEdit* _report;
       QLabel* _status;
