@@ -16,7 +16,7 @@ stand on.
 | | |
 |---|---|
 | Product | **Noggit Crimson** — this fork, this repository |
-| Upstream | **Noggit Red** — [Marlamin/noggit-red](https://github.com/Marlamin/noggit-red) |
+| Upstream | **Noggit Red** — gitlab.com/prophecy-rp/noggit-red |
 | Forked at | `6f0776d4` (2025-01-17) |
 | Licence | **GPL-3.0**, inherited and unchangeable — see [COPYING](COPYING) |
 | Target | TrinityCore 3.3.5a only, client build `3.3.5a.12340` |
