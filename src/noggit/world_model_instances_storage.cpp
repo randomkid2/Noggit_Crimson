@@ -57,7 +57,17 @@ namespace Noggit
 
     if (from_reloading || uid_after != uid)
     {
-      _world->updateTilesModel(&_m2s.at(uid_after), model_update::add);
+    // bookkeeping, NOT user_edit, and this is the line that closes the leak.
+    //
+    // Both conditions here fire from inside MapTile::finishLoading -- `from_reloading` on every
+    // reloadTile, and `uid_after != uid` for every model on a map that has duplicate UIDs, which
+    // is the ordinary state of a custom map before a uid fix. Marking the tile dirty for either
+    // meant MapIndex::unloadTiles refused to release it ever again, so streaming across such a map
+    // retained every tile it touched until memory ran out. Renumbering a uid at load time is
+    // bookkeeping about what is already on disk; it is not an edit the user made and there is
+    // nothing here for them to save.
+      _world->updateTilesModel
+        (&_m2s.at(uid_after), model_update::add, tile_dirty_intent::bookkeeping);
     }
 
     return uid_after;
@@ -150,7 +160,17 @@ namespace Noggit
 
     if (from_reloading || uid_after != uid)
     {
-      _world->updateTilesWMO(&_wmos.at(uid_after), model_update::add);
+    // bookkeeping, NOT user_edit, and this is the line that closes the leak.
+    //
+    // Both conditions here fire from inside MapTile::finishLoading -- `from_reloading` on every
+    // reloadTile, and `uid_after != uid` for every model on a map that has duplicate UIDs, which
+    // is the ordinary state of a custom map before a uid fix. Marking the tile dirty for either
+    // meant MapIndex::unloadTiles refused to release it ever again, so streaming across such a map
+    // retained every tile it touched until memory ran out. Renumbering a uid at load time is
+    // bookkeeping about what is already on disk; it is not an edit the user made and there is
+    // nothing here for them to save.
+      _world->updateTilesWMO
+        (&_wmos.at(uid_after), model_update::add, tile_dirty_intent::bookkeeping);
     }
 
     return uid_after;

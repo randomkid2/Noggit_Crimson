@@ -32,7 +32,11 @@ namespace Noggit
 
     void wait_for_all_update();
 
-    void queue_update(SceneObject* instance, model_update type);
+    void queue_update
+      ( SceneObject* instance
+      , model_update type
+      , tile_dirty_intent intent = tile_dirty_intent::user_edit
+      );
 
   private:
     void process_queue();

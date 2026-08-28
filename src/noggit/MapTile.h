@@ -15,6 +15,7 @@
 #include <external/tsl/robin_map.h>
 
 #include <array>
+#include <atomic>
 #include <map>
 #include <string>
 #include <vector>
@@ -92,7 +93,31 @@ public:
   const TileIndex index;
   float xbase, zbase;
 
+  // Three different questions used to be answered by this one flag, and MapIndex::unloadTiles
+  // (map_index.cpp) could not tell them apart, so any of the three kept the tile in memory for
+  // the rest of the session. `changed` now means exactly one of them: THIS TILE HOLDS EDITS THAT
+  // ARE NOT ON DISK. That is what "save changed tiles" writes out (MapIndex::saveChanged) and
+  // what the minimap paints in its own colour (minimap_widget.cpp:468).
+  //
+  // The other two have their own homes now:
+  //   - "an operation is holding raw MapTile*/MapChunk* pointers into this tile across something
+  //     that pumps the event loop" is a lifetime, not an edit. Use pin()/unpin() below.
+  //   - "a model was re-attached to this tile while it streamed in" is neither. See
+  //     tile_dirty_intent in map_index.hpp.
   std::atomic<bool> changed;
+
+  // A count and not a bool, because two operations can legitimately hold the same tile at the same
+  // time -- the ambient occlusion bake and the ground effect set editor both take whole-tile
+  // scopes -- and the second one to finish must not release the first one's tile.
+  //
+  // A pinned tile is NOT dirty: nothing is written for it and the minimap does not mark it. It is
+  // only undeletable, which is the entire requirement. Every pin() must be matched by an unpin()
+  // on every exit path, including the ones taken when the user cancels.
+  void pin();
+  void unpin();
+
+  [[nodiscard]]
+  bool pinned() const;
 
   bool _was_rendered_last_frame = false;
 
@@ -177,6 +202,10 @@ private:
 
   tile_mode _mode;
   bool _tile_is_being_reloaded;
+
+  // Read by MapIndex::unloadTiles from the main thread while pin()/unpin() can be called from a
+  // dialog that is pumping the event loop, so it is atomic for the same reason `changed` is.
+  std::atomic<int> _pin_count {0};
 
   bool _extents_dirty = true;
   bool _combined_extents_dirty = true;

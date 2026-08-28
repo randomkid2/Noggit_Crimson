@@ -15,6 +15,7 @@ namespace Noggit
         struct tileset_chooser;
         class texture_picker;
         class texture_palette_small;
+        class TextureLayerManager;
     }
 
     class TexturingTool final : public Tool
@@ -69,6 +70,16 @@ namespace Noggit
         Ui::texture_palette_small* _texturePalette = nullptr;
         QDockWidget* _texturePaletteDock = nullptr;
         QDockWidget* _texturePickerDock = nullptr;
+
+        // The layer budget window: layer replacement, prepare area, and the duplicate and
+        // threshold purges. Built on first use and kept, so the palette the user assembled is
+        // still there the next time they open it.
+        //
+        // NOT deleted in the destructor and NOT given WA_DeleteOnClose, unlike the docks above:
+        // it is parented to the MapView, which is the only owner it needs. The docks carry both a
+        // delete here and a deleteLater on the view's destruction, which is a race this does not
+        // need to join.
+        Ui::TextureLayerManager* _textureLayerManager = nullptr;
         bool _texturePickerNeedUpdate = false;
         Noggit::BoolToggleProperty _show_texture_browser_window = { false };
         Noggit::BoolToggleProperty _show_texture_palette_window = { false };
@@ -78,5 +89,7 @@ namespace Noggit
         void setupTextureBrowser(MapView* mv);
         void setupTexturePalette(MapView* mv);
         void setupTexturePicker(MapView* mv);
+
+        void showTextureLayerManager();
     };
 }

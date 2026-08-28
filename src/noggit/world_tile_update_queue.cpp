@@ -16,9 +16,10 @@ namespace Noggit
     instance_update& operator= (instance_update const&) = delete;
     instance_update& operator= (instance_update&&) = default;
 
-    instance_update(SceneObject* obj, model_update type)
+    instance_update(SceneObject* obj, model_update type, tile_dirty_intent dirty_intent)
       : instance(obj)
       , update_type(type)
+      , intent(dirty_intent)
     {
 
     }
@@ -33,13 +34,21 @@ namespace Noggit
       {
         for (size_t x = start.x; x <= end.x; ++x)
         {
-          world->mapIndex.update_model_tile(TileIndex(x, z), update_type, instance);
+          world->mapIndex.update_model_tile(TileIndex(x, z), update_type, instance, intent);
         }
       }
     }
 
     SceneObject* instance;
     model_update update_type;
+
+    //! Whether the tiles this update touches should be marked as carrying unsaved edits.
+    //!
+    //! Defaulted nowhere: every producer states it, because getting this wrong in either direction
+    //! is expensive. Marking too eagerly is the leak this field exists to close -- a tile that is
+    //! dirty is never unloaded, so a map that marks on load never releases memory. Marking too
+    //! little loses a user's work.
+    tile_dirty_intent intent;
   };
 
   world_tile_update_queue::world_tile_update_queue(World* world)
@@ -74,12 +83,13 @@ namespace Noggit
     );
   }
 
-  void world_tile_update_queue::queue_update(SceneObject* instance, model_update type)
+  void world_tile_update_queue::queue_update(SceneObject* instance, model_update type,
+                                             tile_dirty_intent intent)
   {
     {
       std::lock_guard<std::mutex> const lock(_mutex);
 
-      _update_queue.emplace(new instance_update(instance, type));
+      _update_queue.emplace(new instance_update(instance, type, intent));
       _state_changed.notify_one();
     }
     // make sure deletion are done here

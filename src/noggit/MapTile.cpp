@@ -1111,6 +1111,36 @@ bool MapTile::tile_is_being_reloaded() const
   return _tile_is_being_reloaded;
 }
 
+void MapTile::pin()
+{
+  ++_pin_count;
+}
+
+void MapTile::unpin()
+{
+  // Clamped rather than allowed to go negative, because an unbalanced unpin() is a bug in the
+  // caller and a negative count would then make pinned() answer false for a tile that another,
+  // correctly balanced, caller is still holding -- turning one caller's bug into the other
+  // caller's use-after-free. Refuse to go below zero and say so in the log instead.
+  int expected = _pin_count.load();
+
+  while (expected > 0 && !_pin_count.compare_exchange_weak(expected, expected - 1))
+  {
+    // compare_exchange_weak reloads `expected` on failure; loop until it takes or the count is 0.
+  }
+
+  if (expected <= 0)
+  {
+    LogError << "MapTile " << index.x << "-" << index.z
+             << " was unpinned more often than it was pinned" << std::endl;
+  }
+}
+
+bool MapTile::pinned() const
+{
+  return _pin_count.load() > 0;
+}
+
 std::vector<uint32_t>* MapTile::get_uids()
 {
   return &uids;

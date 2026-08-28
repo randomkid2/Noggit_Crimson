@@ -1376,7 +1376,21 @@ bool MapChunk::replaceTexture(glm::vec3 const& pos, float radius, scoped_blp_tex
 
 bool MapChunk::canPaintTexture(scoped_blp_texture_reference texture)
 {
-  return texture_set->canPaintTexture(texture);
+  // STRICT, ON PURPOSE, and this is the one caller of the texture set's admission test that must
+  // NOT see the user's Smart Paint policy.
+  //
+  // This function has exactly two consumers and both of them are diagnostics rather than edits:
+  // TileRender.cpp:115 computes the per-chunk `cant_paint` flag that drives the red paintability
+  // overlay in terrain_frag.glsl, and the ChunkCanPaintTexture node reports the same thing to a
+  // script. What the overlay means is "this chunk is at the four-layer ceiling and cannot take
+  // your texture as it stands" -- and that stays true whether or not Smart Paint is armed to
+  // rescue it. Making the overlay go dark the moment the user picks a replacement mode would
+  // remove the only way to see which chunks are full, which is precisely the information needed
+  // to decide where to run Prepare Area.
+  //
+  // A default-constructed TextureLayerAdmission is the Skip policy, so this is byte for byte the
+  // answer TextureSet::canPaintTexture gave before Smart Paint existed.
+  return texture_set->canAdmitTexture(texture, Noggit::TextureLayerAdmission());
 }
 
 void MapChunk::update_shadows()

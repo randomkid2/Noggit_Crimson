@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 
 
@@ -160,12 +161,25 @@ public:
   void enterTile(const TileIndex& tile);
   MapTile *loadTile(const TileIndex& tile, bool reloading = false, bool load_models = true, bool load_textures = true);
 
-  void update_model_tile(const TileIndex& tile, model_update type, SceneObject* instance);
+  // `intent` defaults to user_edit so that every existing caller keeps the behaviour it had. Only
+  // the streaming paths described on tile_dirty_intent should pass bookkeeping.
+  void update_model_tile( const TileIndex& tile
+                        , model_update type
+                        , SceneObject* instance
+                        , tile_dirty_intent intent = tile_dirty_intent::user_edit
+                        );
 
   void setChanged(const TileIndex& tile);
   void setChanged(MapTile* tile);
 
   void unsetChanged(const TileIndex& tile);
+
+  // Keeps a loaded tile alive without claiming it has unsaved edits. See MapTile::pin().
+  void pinTile(const TileIndex& tile);
+  void unpinTile(const TileIndex& tile);
+
+  [[nodiscard]]
+  bool isTilePinned(const TileIndex& tile) const;
   void setFlag(bool to, glm::vec3 const& pos, uint32_t flag);
   bool has_unsaved_changes(const TileIndex& tile) const;
 
@@ -205,6 +219,11 @@ public:
   void saveMaxUID();
   void loadMaxUID();
 
+  // Number of tiles the last searchMaxUID()/fixUIDs() had to skip because the WDT flags an ADT
+  // that is not there. Non-zero means the highest uid was computed from an incomplete scan.
+  [[nodiscard]]
+  unsigned uidScanSkippedTiles() const;
+
   void addGlobalWmo(std::string path, ENTRY_MODF entry);
   void removeGlobalWmo();
 
@@ -222,9 +241,13 @@ public:
   void saveMinimapMD5translate();
 
 private:
-	uint32_t getHighestGUIDFromFile(const std::string& pFilename) const;
+  // std::nullopt means the ADT could not be read at all -- almost always because the WDT flags a
+  // tile whose file was never written. Callers must skip such a tile, not abort the scan.
+	std::optional<uint32_t> getHighestGUIDFromFile(const std::string& pFilename) const;
 
   bool _uid_fix_all_in_progress = false;
+
+  unsigned _uid_scan_skipped_tiles = 0;
 
   std::string basename;
 

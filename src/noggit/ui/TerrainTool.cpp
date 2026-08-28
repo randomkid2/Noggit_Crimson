@@ -186,11 +186,32 @@ namespace Noggit
       _snap_wmo_objects_chkbox = new QCheckBox("Snap WMO objects", this);
       _snap_wmo_objects_chkbox->setChecked(true);
 
+      // THE SECOND HALF OF "OBJECTS FOLLOW THE GROUND".
+      //
+      // The two boxes above keep a prop the same distance above a surface that is moving under
+      // it. They say nothing about which way it is pointing, so decorating a hillside and then
+      // carving the hill leaves every prop perpendicular to the slope it USED to sit on. The
+      // repair is to select them all and use the Object Editor's "rotate along ground"; this box
+      // runs the identical operation on every object the snap already touched, on every tick of
+      // the stroke, so there is nothing left to repair.
+      //
+      // Off by default and never written to QSettings, for the same reason Live Auto Texture is
+      // (LiveAutoTexture.hpp): it overwrites hand-authored work -- here the placed rotation --
+      // and that is not a thing to have quietly survive a restart.
+      _follow_ground_normals_chkbox = new QCheckBox("Rotate objects to ground normal", this);
+      _follow_ground_normals_chkbox->setChecked(false);
+      _follow_ground_normals_chkbox->setToolTip
+        (tr ("Re-align snapped objects to the slope as it changes under them.\n"
+             "Uses the same alignment as the Object Editor, so it replaces the object's placed\n"
+             "rotation with one derived from the ground normal. Has no effect unless at least\n"
+             "one of the snap boxes above is ticked."));
+
       settings_layout->addWidget(_radius_slider);
       settings_layout->addWidget(_inner_radius_slider);
       settings_layout->addWidget(_speed_slider);
       settings_layout->addWidget(_snap_m2_objects_chkbox);
       settings_layout->addWidget(_snap_wmo_objects_chkbox);
+      settings_layout->addWidget(_follow_ground_normals_chkbox);
 
       _image_mask_group = new Noggit::Ui::Tools::ImageMaskSelector(map_view, this);
       _mask_image = _image_mask_group->getPixmap()->toImage();
@@ -367,20 +388,16 @@ namespace Noggit
           world->stamp(pos, dt * _speed_slider->value(), &_mask_image, radius,
                        _inner_radius_slider->value(),  _edit_type, _image_mask_group->getBrushMode());
 
-          // re apply the ground height diff to the objects
-          for (auto pair : objects_ground_distance)
-          {
-              auto obj = pair.first;
-              auto new_ground_height = world->get_ground_height(obj->pos).y;
-              world->set_model_pos(obj, glm::vec3(obj->pos.x, new_ground_height + pair.second, obj->pos.z));
-          }
+          // re apply the ground height diff to the objects, and re-tilt them if asked
+          world->reseatObjectsOnGround(objects_ground_distance, _follow_ground_normals_chkbox->isChecked());
         }
         else
         {
           world->changeTerrain(pos, dt * _speed_slider->value(), radius, _edit_type, _inner_radius_slider->value());
 
           world->changeObjectsWithTerrain(pos, dt * _speed_slider->value(), radius, _edit_type, _inner_radius_slider->value()
-              , _snap_wmo_objects_chkbox->isChecked(), _snap_m2_objects_chkbox->isChecked());
+              , _snap_wmo_objects_chkbox->isChecked(), _snap_m2_objects_chkbox->isChecked()
+              , _follow_ground_normals_chkbox->isChecked());
         }
       }
       else

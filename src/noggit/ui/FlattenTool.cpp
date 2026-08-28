@@ -1,10 +1,13 @@
 // This file is part of Noggit3, licensed under GNU General Public License (version 3).
 
 #include <noggit/ui/FlattenTool.hpp>
+#include <noggit/ui/DesignTokens.hpp>
 #include <noggit/ui/FontNoggit.hpp>
 #include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 #include <noggit/ui/tools/UiCommon/ExtendedSlider.hpp>
 #include <noggit/World.h>
+
+#include <math/trig.hpp>
 
 #include <util/qt/overload.hpp>
 
@@ -16,9 +19,14 @@
 #include <QtWidgets/QFormLayout>
 #include <QtWidgets/QGridLayout>
 #include <QtWidgets/QGroupBox>
+#include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QSlider>
+#include <QtWidgets/QVBoxLayout>
+
+#include <algorithm>
+#include <cmath>
 
 namespace Noggit
 {
@@ -29,6 +37,10 @@ namespace Noggit
       , _angle(45.0f)
       , _orientation(0.0f)
       , _flatten_type(eFlattenType_Linear)
+      , _ramp_start(0.0f, 0.0f, 0.0f)
+      , _ramp_end(0.0f, 0.0f, 0.0f)
+      , _has_ramp_start(false)
+      , _has_ramp_end(false)
       , _flatten_mode(true, true)
     {
       // The dock's shared shell -- zero margins, S3 between sections, 250px floor. This layout
@@ -119,10 +131,126 @@ namespace Noggit
       _snap_wmo_objects_chkbox = new QCheckBox("Snap WMO objects", this);
       _snap_wmo_objects_chkbox->setChecked(true);
 
+      // THE SECOND HALF OF "OBJECTS FOLLOW THE GROUND", the same box TerrainTool grew and for the
+      // same reason: the two boxes above keep a prop the right distance above a surface that is
+      // moving under it and say nothing about which way it points, so flattening a decorated
+      // hillside leaves every prop perpendicular to the slope it used to sit on.
+      //
+      // Off by default and not serialised into a brush preset, so it cannot arrive switched on:
+      // re-tilting overwrites a rotation somebody placed by hand.
+      _follow_ground_normals_chkbox = new QCheckBox("Rotate objects to ground normal", this);
+      _follow_ground_normals_chkbox->setChecked(false);
+      _follow_ground_normals_chkbox->setToolTip
+        (tr ("Re-align snapped objects to the slope as it changes under them.\n"
+             "Uses the same alignment as the Object Editor, so it replaces the object's placed\n"
+             "rotation with one derived from the ground normal. Has no effect unless at least\n"
+             "one of the snap boxes above is ticked."));
+
       settings_layout->addWidget(_radius_slider);
       settings_layout->addWidget(_speed_slider);
       settings_layout->addWidget(_snap_m2_objects_chkbox);
       settings_layout->addWidget(_snap_wmo_objects_chkbox);
+      settings_layout->addWidget(_follow_ground_normals_chkbox);
+
+      // THE RAMP TOOL. Why it is a checkable group beside the Type picker instead of a fifth chip
+      // inside it is on the declaration in FlattenTool.hpp; the geometry is on World::buildRamp.
+      //
+      // Added straight to the tool column rather than wrapped in a toolSection, because a
+      // checkable QGroupBox IS the section header here -- the same shape "Angled mode" and "Lock
+      // mode" already take below, and it buys the affordance that matters: Qt disables every
+      // child of an unchecked checkable group, so the width and falloff controls grey out
+      // whenever the ramp is not the thing the mouse buttons are doing.
+      _ramp_group = new QGroupBox("Ramp mode", this);
+      _ramp_group->setCheckable(true);
+      _ramp_group->setChecked(false);
+      _ramp_group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+      _ramp_group->setToolTip
+        (tr ("Grade a constant slope between two points instead of flattening under the brush.\n"
+             "While this is on, shift + left and shift + right set the two ends and shift +\n"
+             "right also builds. Ctrl + left still blurs, with the falloff type chosen above."));
+
+      auto* const ramp_layout (new QVBoxLayout (_ramp_group));
+      Tools::ToolPanelStyle::dressSectionLayout (ramp_layout);
+
+      ramp_layout->addWidget
+        ( Tools::ToolPanelStyle::keybindRow
+            (_ramp_group, FontNoggit::shift, FontNoggit::lmb, tr ("Set ramp start"))
+        );
+
+      ramp_layout->addWidget
+        ( Tools::ToolPanelStyle::keybindRow
+            (_ramp_group, FontNoggit::shift, FontNoggit::rmb, tr ("Set ramp end and build"))
+        );
+
+      _ramp_width_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider(_ramp_group);
+      _ramp_width_slider->setPrefix("Width:");
+      _ramp_width_slider->setRange (1, 200);
+      _ramp_width_slider->setDecimals (2);
+      _ramp_width_slider->setValue (12.0f);
+
+      _ramp_falloff_slider = new Noggit::Ui::Tools::UiCommon::ExtendedSlider(_ramp_group);
+      _ramp_falloff_slider->setPrefix("Falloff width:");
+      _ramp_falloff_slider->setRange (0, 200);
+      _ramp_falloff_slider->setDecimals (2);
+      _ramp_falloff_slider->setValue (8.0f);
+
+      ramp_layout->addWidget(_ramp_width_slider);
+      ramp_layout->addWidget(_ramp_falloff_slider);
+
+      // The falloff curve, as the same segmented control the Type picker above uses, because it
+      // is the same kind of choice. segmentedSection takes the column it is appended to and
+      // parents the new group to that column's widget, so passing ramp_layout nests it inside the
+      // ramp group and it inherits the enable/disable with everything else in there.
+      _ramp_curve_button_box = new QButtonGroup (this);
+
+      QPushButton* ramp_curve_linear
+        (Tools::ToolPanelStyle::segmentButton (_ramp_group, tr ("Linear")));
+      QPushButton* ramp_curve_smooth
+        (Tools::ToolPanelStyle::segmentButton (_ramp_group, tr ("Smooth")));
+
+      _ramp_curve_button_box->addButton (ramp_curve_linear, RAMP_CURVE_LINEAR);
+      _ramp_curve_button_box->addButton (ramp_curve_smooth, RAMP_CURVE_SMOOTH);
+
+      // Smooth is the default because the linear band leaves a slope discontinuity where it meets
+      // the untouched terrain, and a visible fold down both sides of a road is the exact seam
+      // this tool exists to get rid of. See rampFalloff in World.cpp.
+      ramp_curve_smooth->toggle();
+
+      auto* const ramp_curve_group
+        (Tools::ToolPanelStyle::segmentedSection (ramp_layout, tr ("Falloff curve")));
+      auto* const ramp_curve_layout
+        (Tools::ToolPanelStyle::segmentGrid (ramp_curve_group));
+      ramp_curve_layout->addWidget (ramp_curve_linear, 0, 0);
+      ramp_curve_layout->addWidget (ramp_curve_smooth, 0, 1);
+      ramp_curve_layout->setColumnStretch (0, 1);
+      ramp_curve_layout->setColumnStretch (1, 1);
+
+      // The read-out is the only place the run and the grade are ever stated, and the grade is
+      // the number the tool exists to hold constant, so it is worth the two lines it costs.
+      _ramp_readout = new QLabel(_ramp_group);
+      _ramp_readout->setWordWrap(true);
+      _ramp_readout->setTextInteractionFlags(Qt::TextSelectableByMouse);
+      ramp_layout->addWidget(_ramp_readout);
+
+      _ramp_build_button = new QPushButton(tr ("Build ramp"), _ramp_group);
+      _ramp_build_button->setAutoDefault(false);
+      _ramp_build_button->setToolTip
+        (tr ("Grade the ramp again with the current width and falloff.\n"
+             "Each build blends from the terrain as it is NOW, so building twice over the same\n"
+             "ramp pulls the falloff band further toward the ramp plane a second time. Undo the\n"
+             "first build before rebuilding if that is not what you want."));
+
+      _ramp_clear_button = new QPushButton(tr ("Clear points"), _ramp_group);
+      _ramp_clear_button->setAutoDefault(false);
+
+      auto* const ramp_button_layout (new QHBoxLayout);
+      ramp_button_layout->setContentsMargins (0, 0, 0, 0);
+      ramp_button_layout->setSpacing (Design::S1);
+      ramp_button_layout->addWidget(_ramp_build_button);
+      ramp_button_layout->addWidget(_ramp_clear_button);
+      ramp_layout->addLayout(ramp_button_layout);
+
+      layout->addWidget(_ramp_group);
 
       auto* const flatten_blur_group
         (Tools::ToolPanelStyle::toolSection (layout, tr ("Flatten/Blur")));
@@ -203,6 +331,14 @@ namespace Noggit
 
       flatten_only_layout->addWidget(_lock_group);
 
+      connect ( _ramp_clear_button, &QPushButton::clicked
+              , [this] { clearRampPoints(); }
+              );
+
+      // Build is wired by the tool that owns the action stack, not here: this widget has no
+      // MapView and must not open an action of its own, or the ramp would land in a different
+      // undo step depending on which of the two ways it was started. FlattenBlurTool connects it.
+
       connect ( _type_button_box, qOverload<int> (&QButtonGroup::idClicked)
               , [&] (int id)
                 {
@@ -260,6 +396,11 @@ namespace Noggit
                     _lock_pos.z = v;
                   }
               );
+
+      // Last, because it reads _ramp_readout and _ramp_build_button and both have to exist. It
+      // is what puts "No points set." in the label and leaves Build disabled at startup, rather
+      // than an empty label and a button that does nothing when pressed.
+      updateRampReadout();
     }
 
     void flatten_blur_tool::flatten (World* world, glm::vec3 const& cursor_pos, float dt)
@@ -280,13 +421,8 @@ namespace Noggit
                             , math::degrees (angled_mode() ? _orientation : 0.0f)
                             );
 
-      // re apply the ground height diff to the objects
-      for (auto pair : objects_ground_distance)
-      {
-          auto obj = pair.first;
-          auto new_ground_height = world->get_ground_height(obj->pos).y;
-          world->set_model_pos(obj, glm::vec3(obj->pos.x, new_ground_height + pair.second, obj->pos.z));
-      }
+      // re apply the ground height diff to the objects, and re-tilt them if asked
+      world->reseatObjectsOnGround(objects_ground_distance, _follow_ground_normals_chkbox->isChecked());
     }
 
     void flatten_blur_tool::blur (World* world, glm::vec3 const& cursor_pos, float dt)
@@ -303,13 +439,195 @@ namespace Noggit
                          , _flatten_mode
                          );
 
-      // re apply the ground height diff to the objects
-      for (auto pair : objects_ground_distance)
+      // re apply the ground height diff to the objects, and re-tilt them if asked
+      world->reseatObjectsOnGround(objects_ground_distance, _follow_ground_normals_chkbox->isChecked());
+    }
+
+    bool flatten_blur_tool::rampMode() const
+    {
+      return _ramp_group->isChecked();
+    }
+
+    void flatten_blur_tool::setRampStart (glm::vec3 const& pos)
+    {
+      _ramp_start = pos;
+      _has_ramp_start = true;
+      updateRampReadout();
+    }
+
+    void flatten_blur_tool::setRampEnd (glm::vec3 const& pos)
+    {
+      _ramp_end = pos;
+      _has_ramp_end = true;
+      updateRampReadout();
+    }
+
+    void flatten_blur_tool::clearRampPoints()
+    {
+      _has_ramp_start = false;
+      _has_ramp_end = false;
+      updateRampReadout();
+    }
+
+    bool flatten_blur_tool::hasRampStart() const
+    {
+      return _has_ramp_start;
+    }
+
+    bool flatten_blur_tool::hasRampEnd() const
+    {
+      return _has_ramp_end;
+    }
+
+    glm::vec3 flatten_blur_tool::rampStart() const
+    {
+      return _ramp_start;
+    }
+
+    glm::vec3 flatten_blur_tool::rampEnd() const
+    {
+      return _ramp_end;
+    }
+
+    float flatten_blur_tool::rampHalfWidth() const
+    {
+      return _ramp_width_slider->value() * 0.5f;
+    }
+
+    float flatten_blur_tool::rampFalloffWidth() const
+    {
+      return _ramp_falloff_slider->value();
+    }
+
+    bool flatten_blur_tool::buildRamp (World* world)
+    {
+      if (!_has_ramp_start || !_has_ramp_end)
       {
-          auto obj = pair.first;
-          auto new_ground_height = world->get_ground_height(obj->pos).y;
-          world->set_model_pos(obj, glm::vec3(obj->pos.x, new_ground_height + pair.second, obj->pos.z));
+        return false;
       }
+
+      float const width (_ramp_width_slider->value());
+      float const falloff (_ramp_falloff_slider->value());
+
+      float const dx (_ramp_end.x - _ramp_start.x);
+      float const dz (_ramp_end.z - _ramp_start.z);
+      float const run (std::sqrt (dx * dx + dz * dz));
+
+      // The objects are measured before the terrain moves and put back after, which is the same
+      // two-step the flatten and blur strokes above use and the reason getObjectsGroundDistance
+      // exists. The radius is the ramp's own bounding CIRCLE -- half the run, plus the half width,
+      // plus the falloff band -- because a circle is all getObjectsGroundDistance can search.
+      std::vector<std::pair<SceneObject*, float>> objects_ground_distance
+        ( world->getObjectsGroundDistance
+            ( (_ramp_start + _ramp_end) * 0.5f
+            , run * 0.5f + width * 0.5f + falloff
+            , _snap_wmo_objects_chkbox->isChecked()
+            , _snap_m2_objects_chkbox->isChecked()
+            )
+        );
+
+      // AND THEN NARROWED TO THE RAMP ITSELF, because a long thin ramp is nothing like its own
+      // bounding circle: a 200 yard run at the default 12 yard width and 8 yard band has a search
+      // radius of 100 + 6 + 8 = 114 yards, so it hands back every object within 114 yards of the
+      // midpoint to grade a strip 28 yards across. Re-SEATING those is harmless -- the
+      // ground under them has not moved, so the height they are given back is the height they
+      // had -- but re-TILTING them is not, and "rotate objects to ground normal" would spin every
+      // prop on the hillside to a slope the ramp never graded under it.
+      //
+      // World::projectOntoRamp is the same footprint the grading itself uses, called per object
+      // instead of per vertex, so "inside the ramp" cannot come to mean two different things.
+      // The kept condition mirrors rampFalloff exactly: inside the core, or inside the band.
+      objects_ground_distance.erase
+        ( std::remove_if
+            ( objects_ground_distance.begin()
+            , objects_ground_distance.end()
+            , [&] (std::pair<SceneObject*, float> const& entry)
+              {
+                float const distance
+                  ( World::projectOntoRamp (_ramp_start, _ramp_end, width, entry.first->pos)
+                      .distance_to_core
+                  );
+
+                return distance > 0.0f && (falloff <= 0.0f || distance >= falloff);
+              }
+            )
+        , objects_ground_distance.end()
+        );
+
+      bool const built
+        ( world->buildRamp
+            ( _ramp_start
+            , _ramp_end
+            , width
+            , falloff
+            , _ramp_curve_button_box->checkedId() == RAMP_CURVE_SMOOTH
+            )
+        );
+
+      if (built)
+      {
+        world->reseatObjectsOnGround
+          (objects_ground_distance, _follow_ground_normals_chkbox->isChecked());
+      }
+
+      return built;
+    }
+
+    QPushButton* flatten_blur_tool::rampBuildButton()
+    {
+      return _ramp_build_button;
+    }
+
+    void flatten_blur_tool::updateRampReadout()
+    {
+      _ramp_build_button->setEnabled(_has_ramp_start && _has_ramp_end);
+
+      if (!_has_ramp_start && !_has_ramp_end)
+      {
+        _ramp_readout->setText(tr ("No points set."));
+        return;
+      }
+
+      if (!_has_ramp_start || !_has_ramp_end)
+      {
+        glm::vec3 const& point (_has_ramp_start ? _ramp_start : _ramp_end);
+
+        _ramp_readout->setText
+          ( tr ("%1 at %2, %3, %4. Set the other end to build.")
+              .arg (_has_ramp_start ? tr ("Start") : tr ("End"))
+              .arg (point.x, 0, 'f', 2)
+              .arg (point.y, 0, 'f', 2)
+              .arg (point.z, 0, 'f', 2)
+          );
+        return;
+      }
+
+      float const dx (_ramp_end.x - _ramp_start.x);
+      float const dz (_ramp_end.z - _ramp_start.z);
+      float const run (std::sqrt (dx * dx + dz * dz));
+      float const rise (_ramp_end.y - _ramp_start.y);
+
+      // The same thousandth of a unit World::buildRamp refuses, stated here so the user finds
+      // out before pressing Build rather than by nothing happening.
+      if (run < 0.001f)
+      {
+        _ramp_readout->setText(tr ("The two ends are on top of each other."));
+        _ramp_build_button->setEnabled(false);
+        return;
+      }
+
+      float const grade (rise / run);
+
+      // Percentage and angle both, because a grade is quoted both ways and neither reads as the
+      // other at a glance. The percent sign is concatenated rather than left in the format
+      // string, so QString::arg can never mistake it for a placeholder.
+      _ramp_readout->setText
+        ( tr ("Run %1 yd, rise %2 yd. Grade %3 (%4 deg).")
+            .arg (run, 0, 'f', 2)
+            .arg (rise, 0, 'f', 2)
+            .arg (QString::number (grade * 100.0f, 'f', 1) + QLatin1String ("%"))
+            .arg (math::degrees (math::radians (std::atan (grade)))._, 0, 'f', 1)
+        );
     }
 
     void flatten_blur_tool::nextFlattenMode()
@@ -473,6 +791,14 @@ namespace Noggit
       json["lock_z"] = _lock_z->value();
       json["lock_h"] = _lock_h->value();
 
+      // The ramp's two points are deliberately absent: they are a transient aim, not a setting,
+      // and a preset that restored somebody else's endpoints would build a ramp across terrain
+      // that has nothing to do with them. Its shape IS a setting, so that travels.
+      json["ramp_mode"] = _ramp_group->isChecked();
+      json["ramp_width"] = _ramp_width_slider->rawValue();
+      json["ramp_falloff_width"] = _ramp_falloff_slider->rawValue();
+      json["ramp_curve"] = _ramp_curve_button_box->checkedId();
+
       return json;
     }
 
@@ -494,6 +820,21 @@ namespace Noggit
       _lock_x->setValue(json["lock_x"].toDouble());
       _lock_z->setValue(json["lock_z"].toDouble());
       _lock_h->setValue(json["lock_h"].toDouble());
+
+      // Guarded with contains(), because every preset written before the ramp existed has none of
+      // these keys and QJsonValue::toInt on a missing key returns 0 -- which is a valid button id
+      // here (RAMP_CURVE_LINEAR) and would silently flip the falloff curve of an old preset.
+      if (json.contains("ramp_mode"))
+      {
+        _ramp_group->setChecked(json["ramp_mode"].toBool());
+        _ramp_width_slider->setValue(json["ramp_width"].toDouble());
+        _ramp_falloff_slider->setValue(json["ramp_falloff_width"].toDouble());
+
+        if (auto* const curve = _ramp_curve_button_box->button(json["ramp_curve"].toInt()))
+        {
+          curve->setChecked(true);
+        }
+      }
     }
   }
 }

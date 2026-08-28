@@ -1546,7 +1546,7 @@ auto World::stamp(glm::vec3 const& pos, float dt, QImage const* img, float radiu
 }
 
 
-void World::changeObjectsWithTerrain(glm::vec3 const& pos, float change, float radius, int BrushType, float inner_radius, bool iter_wmos_, bool iter_m2s)
+void World::changeObjectsWithTerrain(glm::vec3 const& pos, float change, float radius, int BrushType, float inner_radius, bool iter_wmos_, bool iter_m2s, bool follow_normals)
 {
     // applies the terrain brush to the terrain objects hit
     ZoneScoped;
@@ -1616,6 +1616,25 @@ void World::changeObjectsWithTerrain(glm::vec3 const& pos, float change, float r
     {
         move_model(obj, 0.0f, dt, 0.0f);
         // set_model_pos(obj, glm::vec3(obj->pos.x, obj->pos.y + dt, obj->pos.z));
+
+        // OBJECTS FOLLOW THE GROUND NORMAL, on the same opt-in switch that governs the height
+        // snap above. This runs AFTER World::changeTerrain has already moved the vertices -- the
+        // caller in TerrainTool::changeTerrain does the terrain first and this second -- so the
+        // ray inside rotate_model_to_ground_normal reads the slope the object is standing on
+        // NOW, not the one it was standing on when the stroke began.
+        //
+        // Safe to repeat every tick of a held stroke: rotate_model_to_ground_normal recomputes
+        // `dir` from the measured normal rather than adding to it, so sixty calls a second
+        // converge on the same answer instead of accumulating a spin.
+        //
+        // `true` for smooth normals, matching the default of the manual repair this replaces --
+        // the Object Editor's "rotate along ground" starts with its smooth box ticked
+        // (ObjectTool.hpp:82). A face normal makes a doodad step between the two triangles of a
+        // terrain quad as the ground moves under it; the barycentric blend does not.
+        if (follow_normals)
+        {
+            rotate_model_to_ground_normal(obj, true);
+        }
     }
   }
 }
@@ -1732,6 +1751,211 @@ std::vector<std::pair<SceneObject*, float>> World::getObjectsGroundDistance(glm:
     }
 
     return objects_ground_distance;
+}
+
+void World::reseatObjectsOnGround(std::vector<std::pair<SceneObject*, float>> const& ground_distances, bool follow_normals)
+{
+    ZoneScoped;
+
+    for (auto const& pair : ground_distances)
+    {
+        SceneObject* obj = pair.first;
+
+        // get_ground_height returns `pos` unchanged when no loaded chunk answers, so a miss here
+        // re-seats the object at the height it already has -- a no-op, which is the right answer
+        // for a snap. See the long note on World::try_get_ground_height for why that matters.
+        float const new_ground_height (get_ground_height(obj->pos).y);
+        set_model_pos(obj, glm::vec3(obj->pos.x, new_ground_height + pair.second, obj->pos.z));
+
+        // The re-tilt goes after the move, not before, only because that is the order the two
+        // operations are independent in: rotate_model_to_ground_normal casts its ray from above
+        // the chunk's highest vertex straight down, so the object's own y does not enter into
+        // which triangle it finds. Doing it second keeps the object's final position and final
+        // rotation derived from the same terrain state.
+        if (follow_normals)
+        {
+            rotate_model_to_ground_normal(obj, true);
+        }
+    }
+}
+
+namespace
+{
+    //! How much of the ramp's target height a vertex takes.
+    //!
+    //! `outside` is the shortest distance, in the XZ plane and in yards, from the vertex to the
+    //! ramp's flat core -- zero anywhere inside it. 1 in the core, 0 at and beyond the falloff
+    //! band, and the chosen curve in between.
+    float rampFalloff(float outside, float falloff_width, bool smooth)
+    {
+        if (outside <= 0.0f)
+        {
+            return 1.0f;
+        }
+
+        // A zero-width band is a cliff by request: the core takes the full height and everything
+        // outside it keeps the terrain it had. Guarded before the division rather than clamped
+        // after it, because outside/0 is inf and inf compares its way into neither branch.
+        if (falloff_width <= 0.0f || outside >= falloff_width)
+        {
+            return 0.0f;
+        }
+
+        float const s (1.0f - outside / falloff_width);
+
+        // Smoothstep, 3s^2 - 2s^3. Its derivative is 0 at both s = 0 and s = 1, so the surface
+        // meets the untouched terrain at the outer edge of the band AND the flat core at the
+        // inner edge with no crease at either. The straight line has a slope discontinuity at
+        // both, which is the visible fold along the side of a road and the whole reason there are
+        // two curves to pick from rather than one.
+        return smooth ? s * s * (3.0f - 2.0f * s) : s;
+    }
+}
+
+World::RampProjection World::projectOntoRamp(glm::vec3 const& start, glm::vec3 const& end, float width, glm::vec3 const& pos)
+{
+    // THE RAMP'S FOOTPRINT, in one paragraph. Everything is in the XZ plane, against the segment
+    // from `start` to `end`. `t` is how far along that segment the point projects and `side` how
+    // far it lies off the centre line. The flat core is the rectangle t in [0, length] and
+    // side <= width/2; the distance returned is the exact 2-D distance from the point to that
+    // rectangle, which is the hypotenuse of the two overshoots -- the standard point-to-box
+    // distance. That is what gives the falloff ROUNDED corners at the ramp's four corners. Square
+    // corners would put two folds meeting at a point, which is exactly the seam a mapper building
+    // a road is trying to get away from.
+    //
+    // `along` is clamped, so past either end the ramp aims at that end's height rather than
+    // extrapolating. Both ends are terrain picks, so the ramp already meets the ground exactly at
+    // its two ends along the centre line; the falloff band -- which extends PAST each end as well
+    // as to each side, because the box distance treats the rectangle's short edges no differently
+    // from its long ones -- carries that join outward across the full width.
+    float const dx (end.x - start.x);
+    float const dz (end.z - start.z);
+    float const length (std::sqrt(dx * dx + dz * dz));
+
+    RampProjection projection;
+
+    if (length < 0.001f)
+    {
+        // A degenerate ramp reports every point as infinitely far OUTSIDE it, not as sitting in
+        // the middle of it. The struct's own default is zero, which reads as "in the core", and a
+        // caller that got that would treat the whole world as inside a ramp with no length.
+        // buildRamp refuses this case before it ever calls here, but the object filter in
+        // flatten_blur_tool::buildRamp calls it first, so the safe answer has to be the one here.
+        projection.distance_to_core = std::numeric_limits<float>::max();
+        return projection;
+    }
+
+    float const ux (dx / length);
+    float const uz (dz / length);
+
+    float const ox (pos.x - start.x);
+    float const oz (pos.z - start.z);
+
+    float const t (ox * ux + oz * uz);
+    float const side (std::abs(ox * uz - oz * ux));
+
+    float const over_end (std::max(0.0f, std::max(-t, t - length)));
+    float const over_side (std::max(0.0f, side - std::max(0.0f, width) * 0.5f));
+
+    projection.along = std::clamp(t / length, 0.0f, 1.0f);
+    projection.distance_to_core = std::sqrt(over_end * over_end + over_side * over_side);
+
+    return projection;
+}
+
+bool World::buildRamp(glm::vec3 const& start, glm::vec3 const& end, float width, float falloff_width, bool smooth_falloff)
+{
+    ZoneScoped;
+
+    // The grade is fixed by the two picks: the target height is linear in `along` over the whole
+    // run, which is the property a sequence of flatten-at-angle strokes cannot hold and the reason
+    // this tool is defined by two points rather than by a brush position.
+    float const dx (end.x - start.x);
+    float const dz (end.z - start.z);
+    float const length (std::sqrt(dx * dx + dz * dz));
+
+    // A thousandth of a world unit. Below that the direction of the ramp is numerical noise and
+    // the projection along it is meaningless, so nothing is touched at all. The same threshold
+    // guards projectOntoRamp above, and FlattenBlurTool checks it before opening an action.
+    if (length < 0.001f)
+    {
+        LogError << "buildRamp: the two ramp points are " << length
+                 << " yards apart horizontally; there is no direction to grade along." << std::endl;
+        return false;
+    }
+
+    float const half_width (std::max(0.0f, width) * 0.5f);
+    float const falloff (std::max(0.0f, falloff_width));
+
+    // The search circle is centred on the midpoint and reaches the furthest corner of the falloff
+    // rectangle: half the run, plus the half width, plus the band. for_all_chunks_in_range tests
+    // a chunk's square against this circle (MapTile::chunks_in_range), so it hands back a superset
+    // of the chunks the ramp touches -- never a subset, which is the direction that would matter.
+    // The per-vertex test below is what actually decides, and a chunk where it finds nothing
+    // returns false without ever being registered on the action.
+    glm::vec3 const centre ((start + end) * 0.5f);
+    float const search_radius (length * 0.5f + half_width + falloff);
+
+    return for_all_chunks_in_range
+      ( centre, search_radius
+      , [&] (MapChunk* chunk)
+        {
+            // Value-initialised, not left indeterminate. `target` is only ever read where the
+            // matching weight is positive and only ever written there too, but that correlation
+            // is not something a compiler can see, and two 580-byte arrays (145 floats each)
+            // zeroed once per chunk of a one-shot operation is not worth a suppressed warning.
+            std::array<float, mapbufsize> weight{};
+            std::array<float, mapbufsize> target{};
+            bool any_affected (false);
+
+            // Measured first, applied second, and that order is load-bearing:
+            // registerChunkTerrainChange has to run before the first vertex of this chunk moves,
+            // and it must not run at all for a chunk the ramp misses. A chunk registered but
+            // unchanged costs 145 * 3 floats of pre-image plus the same again in post at
+            // Action::finish (Action.cpp:437-445) -- 3.4 KB each, and a 200 yard diagonal ramp
+            // has a search circle covering hundreds of chunks it never reaches.
+            for (int i = 0; i < mapbufsize; ++i)
+            {
+                RampProjection const projection
+                    (projectOntoRamp(start, end, width, chunk->mVertices[i]));
+
+                weight[i] = rampFalloff(projection.distance_to_core, falloff, smooth_falloff);
+
+                if (weight[i] > 0.0f)
+                {
+                    any_affected = true;
+                    target[i] = start.y + (end.y - start.y) * projection.along;
+                }
+            }
+
+            if (!any_affected)
+            {
+                return false;
+            }
+
+            NOGGIT_CUR_ACTION->registerChunkTerrainChange(chunk);
+
+            for (int i = 0; i < mapbufsize; ++i)
+            {
+                if (weight[i] > 0.0f)
+                {
+                    // Blend rather than assign, so the falloff band can be partial. In the core
+                    // the weight is exactly 1 and this lands the vertex on the target.
+                    chunk->mVertices[i].y += (target[i] - chunk->mVertices[i].y) * weight[i];
+                }
+            }
+
+            // Vertices shared with the chunk next door are the same world position in both, so
+            // both chunks compute the same weight and the same target for them and write the same
+            // value. No gap fixing is needed for the same reason the other brushes need none.
+            chunk->registerChunkUpdate(ChunkUpdateFlags::VERTEX);
+            return true;
+        }
+      , [this] (MapChunk* chunk)
+        {
+            recalc_norms (chunk);
+        }
+      );
 }
 
 void World::blurTerrain(glm::vec3 const& pos, float remain, float radius, int BrushType, flatten_mode const& mode)
@@ -2374,7 +2598,8 @@ void World::deleteObjects(std::vector<selected_object_type> const& types, bool a
   need_model_updates = true;
 }
 
-void World::updateTilesEntry(selection_type const& entry, model_update type)
+void World::updateTilesEntry(selection_type const& entry, model_update type,
+                             tile_dirty_intent intent)
 {
   ZoneScoped;
   if (entry.index() != eEntry_Object)
@@ -2383,33 +2608,33 @@ void World::updateTilesEntry(selection_type const& entry, model_update type)
   auto obj = std::get<selected_object_type>(entry);
 
   if (obj->which() == eWMO)
-    updateTilesWMO (static_cast<WMOInstance*>(obj), type);
+    updateTilesWMO (static_cast<WMOInstance*>(obj), type, intent);
   else if (obj->which() == eMODEL)
-    updateTilesModel (static_cast<ModelInstance*>(obj), type);
+    updateTilesModel (static_cast<ModelInstance*>(obj), type, intent);
 
 }
 
 
-void World::updateTilesEntry(SceneObject* entry, model_update type)
+void World::updateTilesEntry(SceneObject* entry, model_update type, tile_dirty_intent intent)
 {
   ZoneScoped;
   if (entry->which() == eWMO)
-    updateTilesWMO (static_cast<WMOInstance*>(entry), type);
+    updateTilesWMO (static_cast<WMOInstance*>(entry), type, intent);
   else if (entry->which() == eMODEL)
-    updateTilesModel (static_cast<ModelInstance*>(entry), type);
+    updateTilesModel (static_cast<ModelInstance*>(entry), type, intent);
 
 }
 
-void World::updateTilesWMO(WMOInstance* wmo, model_update type)
+void World::updateTilesWMO(WMOInstance* wmo, model_update type, tile_dirty_intent intent)
 {
   ZoneScoped;
-  _tile_update_queue.queue_update(wmo, type);
+  _tile_update_queue.queue_update(wmo, type, intent);
 }
 
-void World::updateTilesModel(ModelInstance* m2, model_update type)
+void World::updateTilesModel(ModelInstance* m2, model_update type, tile_dirty_intent intent)
 {
   ZoneScoped;
-  _tile_update_queue.queue_update(m2, type);
+  _tile_update_queue.queue_update(m2, type, intent);
 }
 
 void World::wait_for_all_tile_updates()

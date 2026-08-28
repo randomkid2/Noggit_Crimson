@@ -112,6 +112,10 @@ namespace Noggit
       QCheckBox* _snap_m2_objects_chkbox;
       QCheckBox* _snap_wmo_objects_chkbox;
 
+      //! Opt-in, and off at every start. Re-tilting a prop overwrites the rotation somebody
+      //! placed by hand, so this is not something to turn on for a user who did not ask.
+      QCheckBox* _follow_ground_normals_chkbox;
+
       QSlider* _angle_slider;
       QDial* _orientation_dial;
       MapView* _map_view;

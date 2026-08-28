@@ -16,6 +16,7 @@
 #include <noggit/uid_storage.hpp>
 #include <noggit/application/NoggitApplication.hpp>
 #include <ClientFile.hpp>
+#include <Exception.hpp>
 
 #include <QtCore/QSettings>
 #include <QByteArray>
@@ -342,7 +343,11 @@ void MapIndex::enterTile(const TileIndex& tile)
   }
 }
 
-void MapIndex::update_model_tile(const TileIndex& tile, model_update type, SceneObject* instance)
+void MapIndex::update_model_tile( const TileIndex& tile
+                                , model_update type
+                                , SceneObject* instance
+                                , tile_dirty_intent intent
+                                )
 {
   MapTile* adt = loadTile(tile);
 
@@ -350,7 +355,24 @@ void MapIndex::update_model_tile(const TileIndex& tile, model_update type, Scene
     return;
 
   adt->wait_until_loaded();
-  adt->changed = true;
+
+  // The mark used to be unconditional, and that is the memory leak. unloadTiles below refuses to
+  // release any tile whose `changed` flag is set, so every path that reaches this function pinned
+  // its tiles for the rest of the session -- including the two that are not edits at all:
+  // world_model_instances_storage queues a model_update::add for every model of a tile that is
+  // reloading, and for every model whose uid collided and had to be renumbered as it loaded. Both
+  // fire from inside MapTile::finishLoading, so on a map with duplicate uids -- the normal state
+  // of a custom map that has never had a uid fix run on it -- simply flying across the map marked
+  // every tile it streamed in and nothing was ever unloaded again.
+  //
+  // The flag is still set unconditionally for a user_edit, and that matters: World::
+  // snap_selected_models_to_the_ground issues a bare model_update::add with no preceding remove
+  // and nothing else marks its tiles, so anything cleverer here -- "only mark when the tile's uid
+  // set actually changed", for instance -- would silently drop a snap-to-ground.
+  if (intent == tile_dirty_intent::user_edit)
+  {
+    adt->changed = true;
+  }
 
   if (type == model_update::add)
   {
@@ -384,6 +406,29 @@ void MapIndex::unsetChanged(const TileIndex& tile)
   {
     mTiles[tile.z][tile.x].tile->changed = false;
   }
+}
+
+void MapIndex::pinTile(const TileIndex& tile)
+{
+  // Deliberately does not load the tile: a pin is a promise not to delete something that is
+  // already there, and there is nothing to protect in a tile nobody has loaded.
+  if (tileLoaded(tile))
+  {
+    mTiles[tile.z][tile.x].tile->pin();
+  }
+}
+
+void MapIndex::unpinTile(const TileIndex& tile)
+{
+  if (tileLoaded(tile))
+  {
+    mTiles[tile.z][tile.x].tile->unpin();
+  }
+}
+
+bool MapIndex::isTilePinned(const TileIndex& tile) const
+{
+  return tileLoaded(tile) && mTiles[tile.z][tile.x].tile->pinned();
 }
 
 bool MapIndex::has_unsaved_changes(const TileIndex& tile) const
@@ -462,16 +507,45 @@ void MapIndex::unloadTiles(const TileIndex& tile)
         settings.sync();
     }
 
+    unsigned retained_unsaved = 0;
+    unsigned retained_pinned = 0;
+
     for (MapTile* adt : loaded_tiles())
     {
       if (tile.dist(adt->index) > _unload_dist)
       {
-        //Only unload adts not marked to save
-        if (!adt->changed.load())
+        // Two separate reasons to keep a tile, and they are not the same thing. `changed` means
+        // the tile holds edits that are not on disk, so dropping it would throw work away.
+        // pinned() means some operation is holding raw MapTile*/MapChunk* pointers into it across
+        // something that pumps the event loop -- an ambient occlusion bake, a ground effect set
+        // pass -- so dropping it would be a use-after-free. A pinned tile is not dirty and is
+        // released again the moment the operation lets go.
+        if (adt->changed.load())
+        {
+          ++retained_unsaved;
+        }
+        else if (adt->pinned())
+        {
+          ++retained_pinned;
+        }
+        else
         {
           unloadTile(adt->index);
         }
       }
+    }
+
+    // Reported because the numbers are the difference between "the editor is streaming normally"
+    // and "this session is going to run out of memory", and nothing else in the editor shows it.
+    // MapTile::_chunk_heightmap_buffer alone is std::array<float, 145 * 256 * 4>, which is
+    // 145 * 256 * 4 * 4 = 593,920 bytes of the CPU-side copy per retained tile, before any
+    // alphamap, texture or GL buffer; the count is the number that matters. Logged only when
+    // something was actually held back, so a healthy flight prints nothing.
+    if (retained_unsaved || retained_pinned)
+    {
+      Log << "Tile unload pass kept " << retained_unsaved << " tile(s) with unsaved changes and "
+          << retained_pinned << " pinned tile(s) out of " << _n_loaded_tiles << " loaded."
+          << std::endl;
     }
 
     _last_unload_time = clock() / CLOCKS_PER_SEC;
@@ -688,70 +762,105 @@ void MapIndex::set_sort_models_by_size_class(bool state)
 }
 
 
-uint32_t MapIndex::getHighestGUIDFromFile(const std::string& pFilename) const
+std::optional<uint32_t> MapIndex::getHighestGUIDFromFile(const std::string& pFilename) const
 {
 	uint32_t highGUID = 0;
 
-    BlizzardArchive::ClientFile theFile(pFilename, Noggit::Application::NoggitApplication::instance()->clientData());
-    if (theFile.isEof())
+    auto* const client_data = Noggit::Application::NoggitApplication::instance()->clientData();
+
+    // The isEof() test below never sees a missing file, and that was the crash. The normal
+    // BlizzardArchive::ClientFile constructor THROWS Exceptions::FileReadFailedError when the name
+    // is in neither the project directory nor an archive (ClientFile.cpp:43-46) -- it never
+    // returns an object with _eof set, so the guard underneath it is unreachable for exactly the
+    // case it looks like it is handling.
+    //
+    // That matters because the only caller, searchMaxUID, walks every tile whose WDT MAIN entry
+    // has bit 0 set, and a WDT is perfectly able to flag a tile whose ADT was never written --
+    // which is the normal state of a custom or WMO-only map. searchMaxUID runs from
+    // MapView::initializeGL (MapView.cpp:4941), and paintGL calls initializeGL directly
+    // (MapView.cpp:5057), so the exception left a Qt paint event through a live
+    // OpenGL::context::scoped_setter and the editor exited with no message at all.
+    //
+    // Asked before constructing rather than only caught, because exists() is the same test
+    // MapIndex::loadTile already uses to skip a flagged-but-absent tile, and a throw per missing
+    // tile on a map with hundreds of them is needless. The catch stays anyway: exists() and the
+    // constructor reach the client data through two different code paths and a file can also fail
+    // to read for reasons other than being absent.
+    if (!client_data->exists(pFilename))
     {
+      return std::nullopt;
+    }
+
+    try
+    {
+      BlizzardArchive::ClientFile theFile(pFilename, client_data);
+      if (theFile.isEof())
+      {
+        return highGUID;
+      }
+
+      uint32_t fourcc;
+      uint32_t size;
+
+      MHDR Header;
+
+      // - MVER ----------------------------------------------
+
+      uint32_t version;
+
+      theFile.read(&fourcc, 4);
+      theFile.seekRelative(4);
+      theFile.read(&version, 4);
+
+      assert(fourcc == 'MVER' && version == 18);
+
+      // - MHDR ----------------------------------------------
+
+      theFile.read(&fourcc, 4);
+      theFile.seekRelative(4);
+
+      assert(fourcc == 'MHDR');
+
+      theFile.read(&Header, sizeof(MHDR));
+
+      // - MDDF ----------------------------------------------
+
+      theFile.seek(Header.mddf + 0x14);
+      theFile.read(&fourcc, 4);
+      theFile.read(&size, 4);
+
+      assert(fourcc == 'MDDF');
+
+      ENTRY_MDDF const* mddf_ptr = reinterpret_cast<ENTRY_MDDF const*>(theFile.getPointer());
+      for (unsigned int i = 0; i < size / sizeof(ENTRY_MDDF); ++i)
+      {
+          highGUID = std::max(highGUID, mddf_ptr[i].uniqueID);
+      }
+
+      // - MODF ----------------------------------------------
+
+      theFile.seek(Header.modf + 0x14);
+      theFile.read(&fourcc, 4);
+      theFile.read(&size, 4);
+
+      assert(fourcc == 'MODF');
+
+      ENTRY_MODF const* modf_ptr = reinterpret_cast<ENTRY_MODF const*>(theFile.getPointer());
+      for (unsigned int i = 0; i < size / sizeof(ENTRY_MODF); ++i)
+      {
+          highGUID = std::max(highGUID, modf_ptr[i].uniqueID);
+      }
+      theFile.close();
+
       return highGUID;
     }
-
-    uint32_t fourcc;
-    uint32_t size;
-
-    MHDR Header;
-
-    // - MVER ----------------------------------------------
-
-    uint32_t version;
-
-    theFile.read(&fourcc, 4);
-    theFile.seekRelative(4);
-    theFile.read(&version, 4);
-
-    assert(fourcc == 'MVER' && version == 18);
-
-    // - MHDR ----------------------------------------------
-
-    theFile.read(&fourcc, 4);
-    theFile.seekRelative(4);
-
-    assert(fourcc == 'MHDR');
-
-    theFile.read(&Header, sizeof(MHDR));
-
-    // - MDDF ----------------------------------------------
-
-    theFile.seek(Header.mddf + 0x14);
-    theFile.read(&fourcc, 4);
-    theFile.read(&size, 4);
-
-    assert(fourcc == 'MDDF');
-
-    ENTRY_MDDF const* mddf_ptr = reinterpret_cast<ENTRY_MDDF const*>(theFile.getPointer());
-    for (unsigned int i = 0; i < size / sizeof(ENTRY_MDDF); ++i)
+    catch (BlizzardArchive::Exceptions::FileReadFailedError const& error)
     {
-        highGUID = std::max(highGUID, mddf_ptr[i].uniqueID);
+      LogError << "Skipping \"" << pFilename << "\" while scanning for the highest uid: "
+               << error.what() << std::endl;
+
+      return std::nullopt;
     }
-
-    // - MODF ----------------------------------------------
-
-    theFile.seek(Header.modf + 0x14);
-    theFile.read(&fourcc, 4);
-    theFile.read(&size, 4);
-
-    assert(fourcc == 'MODF');
-
-    ENTRY_MODF const* modf_ptr = reinterpret_cast<ENTRY_MODF const*>(theFile.getPointer());
-    for (unsigned int i = 0; i < size / sizeof(ENTRY_MODF); ++i)
-    {
-        highGUID = std::max(highGUID, modf_ptr[i].uniqueID);
-    }
-    theFile.close();
-
-    return highGUID;
 }
 
 // reloadable settings
@@ -795,6 +904,8 @@ uid_fix_status MapIndex::fixUIDs (World* world, bool cancel_on_model_loading_err
 
   // pre-cond: mTiles[z][x].flags are set
 
+  _uid_scan_skipped_tiles = 0;
+
   // unload any previously loaded tile, although there shouldn't be as
   // the fix is executed before loading the map
   for (int z = 0; z < 64; ++z)
@@ -829,6 +940,18 @@ uid_fix_status MapIndex::fixUIDs (World* world, bool cancel_on_model_loading_err
 
       std::stringstream filename;
       filename << "World\\Maps\\" << basename << "\\" << basename << "_" << x << "_" << z << ".adt";
+
+      // Same missing-ADT crash as the one described in getHighestGUIDFromFile, in the other uid
+      // path: this constructor throws for a tile the WDT flags but that was never written, the
+      // isEof() guard below it can therefore never see that case, and fixUIDs is reached from
+      // MapView::initializeGL just as searchMaxUID is. A flagged-but-absent tile is skipped and
+      // counted; there is nothing in it to renumber.
+      if (!Noggit::Application::NoggitApplication::instance()->clientData()->exists(filename.str()))
+      {
+        ++_uid_scan_skipped_tiles;
+        continue;
+      }
+
       BlizzardArchive::ClientFile file(filename.str(), Noggit::Application::NoggitApplication::instance()->clientData());
 
       if (file.isEof())
@@ -1080,6 +1203,15 @@ uid_fix_status MapIndex::fixUIDs (World* world, bool cancel_on_model_loading_err
       std::stringstream filename;
       filename << "World\\Maps\\" << basename << "\\" << basename << "_" << x << "_" << z << ".adt";
 
+      // Third instance of the same missing-ADT crash, and the one the first two would have hidden:
+      // MapTile::finishLoading opens the file with the same throwing constructor (MapTile.cpp:119).
+      // MapIndex::loadTile already refuses a flagged-but-absent tile with exactly this exists()
+      // test before it builds a MapTile; this loop builds one directly and did not.
+      if (!Noggit::Application::NoggitApplication::instance()->clientData()->exists(filename.str()))
+      {
+        continue;
+      }
+
       // load the tile without the models
       MapTile tile(x, z, filename.str(), mBigAlpha, false, use_mclq_green_lava(), false, world, _context, tile_mode::uid_fix_all);
       tile.finishLoading();
@@ -1095,6 +1227,13 @@ uid_fix_status MapIndex::fixUIDs (World* world, bool cancel_on_model_loading_err
     }
   }
 
+  if (_uid_scan_skipped_tiles)
+  {
+    LogError << "Uid fix: " << _uid_scan_skipped_tiles
+             << " tile(s) are flagged in the WDT but have no ADT file and were skipped."
+             << std::endl;
+  }
+
   // override the db highest uid if used
   saveMaxUID();
 
@@ -1108,6 +1247,8 @@ uid_fix_status MapIndex::fixUIDs (World* world, bool cancel_on_model_loading_err
 
 void MapIndex::searchMaxUID()
 {
+  _uid_scan_skipped_tiles = 0;
+
   for (int z = 0; z < 64; ++z)
   {
     for (int x = 0; x < 64; ++x)
@@ -1119,11 +1260,39 @@ void MapIndex::searchMaxUID()
 
       std::stringstream filename;
       filename << "World\\Maps\\" << basename << "\\" << basename << "_" << x << "_" << z << ".adt";
-      highestGUID = std::max(highestGUID, getHighestGUIDFromFile(filename.str()));
+
+      // A flagged tile with no file is skipped and the scan carries on, where it used to take the
+      // whole editor down: getHighestGUIDFromFile constructed a ClientFile, that constructor threw
+      // for the missing file, and the exception left MapView::initializeGL from inside paintGL.
+      //
+      // Carrying on rather than stopping is the right answer even though the result is then an
+      // underestimate of the highest uid in the map: every tile that IS present still contributes,
+      // so the maximum can only be too low by whatever the absent tiles held -- and an absent tile
+      // holds nothing. The count is kept so MapView can tell the user the scan was incomplete.
+      if (auto const tile_max = getHighestGUIDFromFile(filename.str()))
+      {
+        highestGUID = std::max(highestGUID, *tile_max);
+      }
+      else
+      {
+        ++_uid_scan_skipped_tiles;
+      }
     }
   }
 
+  if (_uid_scan_skipped_tiles)
+  {
+    LogError << "Highest uid scan: " << _uid_scan_skipped_tiles
+             << " tile(s) are flagged in the WDT but have no ADT file and were skipped."
+             << std::endl;
+  }
+
   saveMaxUID();
+}
+
+unsigned MapIndex::uidScanSkippedTiles() const
+{
+  return _uid_scan_skipped_tiles;
 }
 
 void MapIndex::saveMaxUID()

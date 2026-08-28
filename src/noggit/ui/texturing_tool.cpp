@@ -12,6 +12,8 @@
 #include <noggit/ui/GroundEffectsTool.hpp>
 #include <noggit/ui/texture_swapper.hpp>
 #include <noggit/ui/texturing_tool.hpp>
+#include <noggit/ui/TexturingGUI.h>
+#include <noggit/texturing/TextureLayerPolicy.hpp>
 #include <noggit/ui/tools/ToolPanel/ToolWidgetStyle.hpp>
 #include <noggit/ui/tools/UiCommon/expanderwidget.h>
 #include <noggit/ui/tools/UiCommon/ExtendedSlider.hpp>
@@ -24,16 +26,22 @@
 #include <QSettings>
 #include <QStyle>
 #include <QStyleOptionSlider>
+#include <ClientData.hpp>
+
 #include <QtWidgets/QCheckBox>
+#include <QtWidgets/QComboBox>
 #include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QFormLayout>
 #include <QtWidgets/QGroupBox>
+#include <QtWidgets/QLineEdit>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QSpinBox>
 #include <QtWidgets/QTabWidget>
 
 #define _USE_MATH_DEFINES
 #include <math.h>
+
+#include <utility>
 
 namespace Noggit
 {
@@ -198,6 +206,104 @@ namespace Noggit
               _map_view->getWorld()->renderer()->getTerrainParamsUniformBlock()->draw_paintability_overlay = checked;
               _map_view->getWorld()->renderer()->markTerrainParamsUniformBlockDirty();
           });
+
+      // SMART PAINT -- the way through the four-layer wall, sitting directly under the checkbox
+      // that shows you where the wall is.
+      //
+      // A chunk holds four MCLY entries. When all four are in use and none of them is paintable
+      // away, TextureSet::get_texture_index_or_add returns -1 and the stroke does nothing at all:
+      // no error, no cursor change, nothing in the log. The red paintability overlay already says
+      // WHICH chunks those are; this says what to do about them.
+      _layer_budget_group = new QGroupBox("Layer budget", tool_widget);
+      _layer_budget_group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+      auto layer_budget_layout (new QVBoxLayout (_layer_budget_group));
+
+      _layer_full_mode = new QComboBox(_layer_budget_group);
+      // Short strings on purpose. This column measured 229px of minimum width and the dock's own
+      // minimum is 265px including its scroll bar (see the note on the hardness/radius captions
+      // above); a combo sized to its longest item would spend that headroom on a label. The
+      // tooltip carries the full sentence instead.
+      _layer_full_mode->addItem("Skip full chunks");
+      _layer_full_mode->addItem("Replace least visible");
+      _layer_full_mode->addItem("Replace nominated");
+      _layer_full_mode->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+      _layer_full_mode->setMinimumContentsLength(12);
+      _layer_full_mode->setToolTip
+        ( "What happens when a texture has to go onto a chunk that already holds four.\n\n"
+          "Skip: do nothing, which is what the brush has always done.\n"
+          "Replace least visible: evict the layer with the smallest total alpha over the chunk.\n"
+          "Replace nominated: evict the layer holding the texture named below, and skip chunks "
+          "that do not have it.\n\n"
+          "This governs every path that adds a layer, not just the brush: Automatic Texturing "
+          "and Live Auto Texture had nowhere to write on a full chunk and now have one. It is "
+          "never saved to settings, so it is back to Skip on the next start."
+        );
+      layer_budget_layout->addWidget(_layer_full_mode);
+
+      _nominated_texture = new QLineEdit(_layer_budget_group);
+      _nominated_texture->setReadOnly(true);
+      _nominated_texture->setPlaceholderText("texture to replace");
+      _nominated_texture->setEnabled(false);
+      layer_budget_layout->addWidget(_nominated_texture);
+
+      _nominate_selected_btn = new QPushButton("Nominate selected", _layer_budget_group);
+      _nominate_selected_btn->setEnabled(false);
+      layer_budget_layout->addWidget(_nominate_selected_btn);
+
+      auto layer_manager_btn (new QPushButton("Texture Layers", _layer_budget_group));
+      layer_manager_btn->setToolTip
+        ("Layer replacement, prepare area, and the duplicate and threshold purges.");
+      layer_budget_layout->addWidget(layer_manager_btn);
+
+      tool_layout->addWidget(_layer_budget_group);
+
+      connect ( _layer_full_mode, qOverload<int> (&QComboBox::currentIndexChanged)
+              , [this] (int index)
+                {
+                  bool const nominated
+                    = index == static_cast<int>(Noggit::LayerFullPolicy::ReplaceNominated);
+
+                  _nominated_texture->setEnabled(nominated);
+                  _nominate_selected_btn->setEnabled(nominated);
+
+                  update_layer_admission();
+                }
+              );
+
+      connect ( _nominate_selected_btn, &QPushButton::clicked
+              , [this]
+                {
+                  auto const texture = selected_texture::get();
+
+                  if (!texture)
+                  {
+                    return;
+                  }
+
+                  // Normalised on the way in, so the comparison in pickEvictableLayer has to
+                  // normalise only the stored side. Both halves have to be normalised or a
+                  // path spelled with backslashes never matches one spelled with slashes and
+                  // the mode silently does nothing.
+                  _nominated_texture->setText
+                    ( QString::fromStdString
+                        ( BlizzardArchive::ClientData::normalizeFilenameUnix
+                            ((*texture)->file_key().filepath())
+                        )
+                    );
+
+                  update_layer_admission();
+                }
+              );
+
+      connect ( layer_manager_btn, &QPushButton::clicked
+              , [this] { emit textureLayerManagerRequested(); }
+              );
+
+      // Pushed once at construction so the process-wide policy and the widget that owns it start
+      // in agreement. They would agree anyway on a fresh process -- both default to Skip -- but a
+      // second map view opened after the first armed an eviction would otherwise inherit the armed
+      // policy behind a combo box reading "Skip full chunks".
+      update_layer_admission();
 
       // spray
       _spray_mode_group = new QGroupBox("Spray", tool_widget);
@@ -868,6 +974,23 @@ namespace Noggit
       }
     }
 
+    void texturing_tool::update_layer_admission()
+    {
+      // THE ONE WRITER of the process-wide admission policy. It is process-wide rather than a
+      // parameter because the value has to be readable from inside
+      // TextureSet::get_texture_index_or_add, four call levels below the brush, and threading it
+      // down would change the signature of World::paintTexture, World::stampTexture,
+      // MapChunk::paintTexture and MapChunk::stampTexture for what is a tool setting. Noggit
+      // already carries the brush's own texture the same way -- Noggit::Ui::selected_texture is a
+      // process-wide holder that MapChunk.cpp reads directly.
+      Noggit::TextureLayerAdmission admission;
+
+      admission.policy = static_cast<Noggit::LayerFullPolicy>(_layer_full_mode->currentIndex());
+      admission.nominated_texture = _nominated_texture->text().toStdString();
+
+      Noggit::TextureLayerAdmission::setCurrent(std::move(admission));
+    }
+
     Brush const& texturing_tool::texture_brush() const
     {
       return _texture_brush;
@@ -944,6 +1067,8 @@ namespace Noggit
       json["brush_level"] = _brush_level_spin->value();
       json["texturing_mode"] = static_cast<int>(_texturing_mode);
       json["show_unpaintable_chunks"] = _show_unpaintable_chunks_cb->isChecked();
+      json["layer_full_mode"] = _layer_full_mode->currentIndex();
+      json["layer_nominated_texture"] = _nominated_texture->text();
 
       json["anim"] = _anim_prop.get();
       json["anim_speed"] = static_cast<int>(_anim_speed_prop.get());
@@ -979,6 +1104,14 @@ namespace Noggit
 
       tabs->setCurrentIndex(json["texturing_mode"].toInt());
       _show_unpaintable_chunks_cb->setChecked(json["show_unpaintable_chunks"].toBool());
+
+      // A preset saved before Smart Paint existed has neither key. QJsonValue::toInt on a missing
+      // key returns 0, which is LayerFullPolicy::Skip, and toString returns an empty string, which
+      // makes ReplaceNominated behave like Skip -- so an old preset restores today's behaviour
+      // rather than arming an eviction the user never asked for.
+      _nominated_texture->setText(json["layer_nominated_texture"].toString());
+      _layer_full_mode->setCurrentIndex(json["layer_full_mode"].toInt());
+      update_layer_admission();
 
       _anim_prop.set(json["anim"].toBool());
       _anim_speed_prop.set(json["anim_speed"].toInt());

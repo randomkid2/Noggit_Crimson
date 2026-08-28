@@ -15,8 +15,10 @@ class World;
 class MapView;
 
 class QCheckBox;
+class QComboBox;
 class QDoubleSpinBox;
 class QGroupBox;
+class QLineEdit;
 class QPushButton;
 class QSpinBox;
 class QTabWidget;
@@ -130,8 +132,17 @@ namespace Noggit
     signals:
       void texturePaletteToggled();
 
+      //! Emitted by the Paint tab's "Texture Layers" button. The window itself is owned by
+      //! Noggit::TexturingTool, the same way the texture browser and palette docks are, because a
+      //! brush widget is not the right owner for a window that outlives a stroke.
+      void textureLayerManagerRequested();
+
     private:
       void change_tex_flag(World* world, glm::vec3 const& pos, bool add, scoped_blp_texture_reference texture);
+
+      //! Pushes the two Smart Paint widgets into the process-wide Noggit::TextureLayerAdmission
+      //! that TextureSet::get_texture_index_or_add reads. Called on every change to either.
+      void update_layer_admission();
 
       // slider functions
       void update_brush_hardness();
@@ -166,6 +177,13 @@ namespace Noggit
       QSpinBox* _brush_level_spin;
 
       QCheckBox* _show_unpaintable_chunks_cb;
+
+      // SMART PAINT. What a stroke does when the chunk under it already holds four textures.
+      // Defaults to "skip", which is what the brush has always done.
+      QGroupBox* _layer_budget_group;
+      QComboBox* _layer_full_mode;
+      QLineEdit* _nominated_texture;
+      QPushButton* _nominate_selected_btn;
 
       QGroupBox* _spray_mode_group;
       QWidget* _spray_content;

@@ -8,6 +8,7 @@
 #include <noggit/texture_set.hpp>
 #include <noggit/TextureManager.h> // TextureManager, Texture
 
+#include <ClientData.hpp>
 #include <ClientFile.hpp>
 
 #include <QSettings>
@@ -270,20 +271,48 @@ void TextureSet::eraseTexture(size_t id)
 
 bool TextureSet::canPaintTexture(scoped_blp_texture_reference const& texture)
 {
-  if (nTextures)
-  {
-    for (size_t k = 0; k < nTextures; ++k)
-    {
-      if (textures[k] == texture)
-      {
-        return true;
-      }
-    }
+  // POLICY-AWARE, AND THAT IS WHAT MAKES RULE-DRIVEN TEXTURING REACH SMART PAINT.
+  //
+  // This function has exactly two callers: MapChunk::canPaintTexture, which deliberately does NOT
+  // come through here because it drives the paintability overlay, and TerrainRulePainter's
+  // `resolve` lambda, which asks it once per chunk and gives up on the whole chunk when the answer
+  // is no. Answering under the user's policy is what lets Automatic Texturing and Live Auto
+  // Texture -- which had nowhere to write on a full chunk, and counted every unit into
+  // TerrainPaintStats::units_refused -- evict a layer and land the paint. Nothing in
+  // TerrainRulePainter had to change for that.
+  //
+  // The coupling is real and worth stating: the mode selector lives on the texture tool, and it
+  // governs the bulk passes too. It is defaulted to Skip and never persisted to QSettings, so the
+  // coupling can only bite a user who armed it in this session.
+  return canAdmitTexture(texture, Noggit::TextureLayerAdmission::current());
+}
 
-    return nTextures < 4;
+bool TextureSet::canAdmitTexture( scoped_blp_texture_reference const& texture
+                                , Noggit::TextureLayerAdmission const& admission
+                                )
+{
+  if (!nTextures)
+  {
+    return true;
   }
 
-  return true;
+  for (size_t k = 0; k < nTextures; ++k)
+  {
+    if (textures[k] == texture)
+    {
+      return true;
+    }
+  }
+
+  if (nTextures < 4)
+  {
+    return true;
+  }
+
+  // The only behavioural line that is new; the three tests above are the old nested form written
+  // flat. Under the default Skip policy pickEvictableLayer returns -1 and this whole function
+  // gives exactly the answer it gave before Smart Paint existed.
+  return pickEvictableLayer(admission) != -1;
 }
 
 const std::string& TextureSet::filename(size_t id)
@@ -379,6 +408,15 @@ int TextureSet::texture_id(scoped_blp_texture_reference const& texture)
 
 int TextureSet::get_texture_index_or_add (scoped_blp_texture_reference texture, float target)
 {
+  return get_texture_index_or_add
+    (std::move (texture), target, Noggit::TextureLayerAdmission::current());
+}
+
+int TextureSet::get_texture_index_or_add ( scoped_blp_texture_reference texture
+                                         , float target
+                                         , Noggit::TextureLayerAdmission const& admission
+                                         )
+{
   for (int i = 0; i < nTextures; ++i)
   {
     if (textures[i] == texture)
@@ -395,7 +433,26 @@ int TextureSet::get_texture_index_or_add (scoped_blp_texture_reference texture, 
 
   if (nTextures == 4 && !eraseUnusedTextures())
   {
-    return -1;
+    // SMART PAINT. Everything above this point is unchanged, and with the default Skip policy
+    // pickEvictableLayer returns -1 and this returns -1 exactly as it always has, so a stroke on a
+    // full chunk still does nothing until the user asks for something else.
+    //
+    // The eviction is undoable because every caller that can reach here has already snapshotted
+    // the chunk: World::paintTexture registers the chunk on the running action before calling
+    // MapChunk::paintTexture (World.cpp:2002) and World::stampTexture does the same
+    // (World.cpp:2015). The batch operations in TextureLayerOps register before they call in.
+    int const victim = pickEvictableLayer(admission);
+
+    if (victim < 0)
+    {
+      return -1;
+    }
+
+    // eraseTexture is the ONLY layer removal primitive in this class, and that is deliberate: it
+    // shifts _layers_info and the alphamaps in the same loop (see the comment on
+    // purgeLayersBelowThreshold), so an MCLY entry and its alpha plane cannot drift apart.
+    eraseTexture (static_cast<std::size_t>(victim));
+    ensureAlphamapConsistency();
   }
 
   return addTexture (std::move (texture));
@@ -1649,6 +1706,18 @@ bool TextureSet::apply_alpha_changes()
     return false;
   }
 
+  // The loop below writes alphamaps[0 .. nTextures-2] through a raw ->setAlpha with no null check,
+  // and it is not alone: grepping this file for `alphamaps[...]->` finds 16 hits, of which one is
+  // this comment and one is the null-tolerant read in layerAlphaProfile, leaving 14 UNGUARDED
+  // dereferences in 13 functions -- swap_layers, eraseUnusedTextures, save_alpha, alphas_to_big_alpha,
+  // convertToBigAlpha, alphas_to_old_alpha, convertToOldAlpha, uploadAlphamapData,
+  // current_layer_values, get_textures_weight_for_unit, updateDoodadMapping, this one and
+  // create_temporary_alphamaps_if_needed. Every one of them assumes the plane exists because the
+  // layer does. A null there is not a wrong picture, it is a null dereference, and the
+  // layer-removing operations added for the purge tool are exactly the kind of code that can break
+  // the invariant. Restoring it costs three pointer tests.
+  ensureAlphamapConsistency();
+
   auto& new_amaps = *tmp_edit_values;
   std::array<std::uint16_t, 64 * 64> totals;
   totals.fill(0);
@@ -1687,6 +1756,11 @@ void TextureSet::create_temporary_alphamaps_if_needed()
   {
     return;
   }
+
+  // See the note in apply_alpha_changes. This is the earlier of the two on the paint path:
+  // paintTexture reaches here before it reaches apply_alpha_changes, so a chunk whose MCLY count
+  // and alpha plane count disagree would crash on the first brush tick rather than at commit time.
+  ensureAlphamapConsistency();
 
   tmp_edit_values = std::make_unique<tmp_edit_alpha_values>();
 
@@ -1754,6 +1828,455 @@ std::array<std::uint16_t, 8> TextureSet::lod_texture_map()
     else
       alphamaps[i].reset();
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE FOUR-LAYER BUDGET: measuring it, spending it, and sweeping up after it.
+//
+// Everything below exists because an MCNK holds four MCLY entries and nothing in this editor used
+// to be able to tell you which of the four was worth losing, or take one away once a rule pass had
+// manufactured it. See noggit/texturing/TextureLayerPolicy.hpp for the provenance of the design.
+// ---------------------------------------------------------------------------------------------
+
+bool TextureSet::ensureAlphamapConsistency()
+{
+  bool repaired = false;
+
+  for (std::size_t i = 0; i < static_cast<std::size_t>(MAX_ALPHAMAPS); ++i)
+  {
+    // alphamaps[i] belongs to layer i + 1, so a chunk with n layers needs planes 0 .. n-2.
+    if (nTextures > i + 1 && !alphamaps[i])
+    {
+      alphamaps[i] = std::make_unique<Alphamap>();
+      repaired = true;
+    }
+  }
+
+  // DELIBERATELY CREATE-ONLY. A surplus plane -- one that exists above nTextures-2 -- is not read
+  // by any of the sites listed in apply_alpha_changes, but it IS read by sum_alpha, which
+  // walks all three unconditionally (texture_set.cpp: `for (auto const& amap : alphamaps)`), and
+  // swap_layers uses sum_alpha to rebuild the base layer's alpha when slot 0 is one of the two
+  // being swapped. Dropping a surplus plane here would change that arithmetic in a function whose
+  // only job is to stop a crash. eraseTexture already resets the plane it frees, so no operation
+  // in this class produces one.
+  if (repaired)
+  {
+    _chunk->registerChunkUpdate(ChunkUpdateFlags::ALPHAMAP);
+    _need_lod_texture_map_update = true;
+  }
+
+  return repaired;
+}
+
+Noggit::LayerAlphaProfile TextureSet::layerAlphaProfile() const
+{
+  Noggit::LayerAlphaProfile profile;
+  profile.layers = nTextures;
+
+  if (!nTextures)
+  {
+    return profile;
+  }
+
+  // ONE PASS, BOTH MEASURES, and layer 0 derived rather than stored.
+  //
+  // The chunk's alpha planes only exist for layers 1..n-1; layer 0's weight is 255 minus the sum
+  // of the others at that texel, which is exactly how create_temporary_alphamaps_if_needed derives
+  // it. So a full profile costs at most 3 planes x 4096 texels = 12288 byte reads, and layer 0
+  // comes out of the same row for free.
+  //
+  // A stroke in flight is read from tmp_edit_values instead, because that is where the truth is
+  // until apply_alpha_changes runs -- profiling the committed planes mid-stroke would measure the
+  // chunk as it was before the user started painting.
+  if (tmp_edit_values)
+  {
+    auto const& amaps = *tmp_edit_values;
+
+    for (std::size_t texel = 0; texel < Noggit::LayerAlphaProfile::TEXELS_PER_CHUNK; ++texel)
+    {
+      for (std::size_t layer = 0; layer < nTextures; ++layer)
+      {
+        // Rounded and clamped the same way apply_alpha_changes will round and clamp it, so a
+        // measurement taken mid-stroke and one taken after the commit agree.
+        std::uint8_t const value = float_alpha_to_uint8(amaps.map[layer][texel]);
+
+        profile.sum[layer] += value;
+        profile.peak[layer] = std::max(profile.peak[layer], value);
+      }
+    }
+
+    return profile;
+  }
+
+  for (std::size_t texel = 0; texel < Noggit::LayerAlphaProfile::TEXELS_PER_CHUNK; ++texel)
+  {
+    int base = 255;
+
+    for (std::size_t layer = 1; layer < nTextures; ++layer)
+    {
+      // Null tolerated rather than repaired: this is a const measurement and a missing plane reads
+      // as an invisible layer, which is the honest answer. ensureAlphamapConsistency is what fixes
+      // it, and every mutating path here calls that first.
+      std::uint8_t const value = alphamaps[layer - 1]
+        ? static_cast<std::uint8_t>(alphamaps[layer - 1]->getAlpha(texel))
+        : std::uint8_t(0);
+
+      profile.sum[layer] += value;
+      profile.peak[layer] = std::max(profile.peak[layer], value);
+      base -= value;
+    }
+
+    // Clamped because the stored planes are not guaranteed to sum to 255 or less: a hand-edited or
+    // third-party ADT can be over-opaque, which is exactly what AlphaIntegrityReport exists to
+    // find. An over-opaque texel means the base is fully hidden, i.e. 0, not a negative weight.
+    std::uint8_t const base_value = static_cast<std::uint8_t>(std::max(0, base));
+
+    profile.sum[0] += base_value;
+    profile.peak[0] = std::max(profile.peak[0], base_value);
+  }
+
+  return profile;
+}
+
+int TextureSet::getLeastVisibleLayer() const
+{
+  if (!nTextures)
+  {
+    return -1;
+  }
+
+  Noggit::LayerAlphaProfile const profile = layerAlphaProfile();
+
+  // "LEAST VISIBLE" IS THE SMALLEST TOTAL ALPHA CONTRIBUTION OVER THE WHOLE CHUNK -- the sum of
+  // the layer's blend weight at all 4096 texels, out of a possible 255 * 4096 = 1044480. Not its
+  // peak, and not the number of texels it appears on:
+  //
+  //   * a layer painted at 8/255 over the entire chunk sums to 32768 and is barely there;
+  //   * a layer painted opaque over one 8x8 unit of the chunk sums to 16320 and IS there, in a
+  //     place the user can point at.
+  //
+  // Total alpha ranks the second above the first, which is what "which of these four can I lose
+  // with the least visible damage" means. Peak would rank them the other way round, and a texel
+  // count would call them equal at 4096 versus 64.
+  //
+  // LAYER 0 IS A CANDIDATE. A base texture that every overlay covers contributes nothing to the
+  // picture and is the correct thing to sacrifice. eraseTexture(0) promotes layer 1 to base and
+  // drops layer 1's stored plane, so the new base's implicit weight becomes 255 minus what is
+  // left -- which is old layer 0's weight plus old layer 1's. When layer 0 really was invisible
+  // that is exactly old layer 1's plane and the chunk does not change at all; when it was merely
+  // the faintest of the four, its residual weight lands on the layer that replaces it, which is
+  // the same place a purged overlay's weight lands.
+  //
+  // TIES GO TO THE HIGHER SLOT (note the <=). Two layers that both contribute nothing are equally
+  // worthless, and removing the higher one is the cheaper edit: eraseTexture renumbers everything
+  // above the victim, so slot 3 moves nothing and slot 0 moves three MCLY entries and two alpha
+  // planes. It also keeps the chunk's base texture, which is what shows through everywhere the
+  // overlays do not reach.
+  int least = 0;
+
+  for (int layer = 1; layer < static_cast<int>(nTextures); ++layer)
+  {
+    if (profile.sum[layer] <= profile.sum[least])
+    {
+      least = layer;
+    }
+  }
+
+  return least;
+}
+
+int TextureSet::pickEvictableLayer(Noggit::TextureLayerAdmission const& admission) const
+{
+  if (!nTextures)
+  {
+    return -1;
+  }
+
+  switch (admission.policy)
+  {
+    case Noggit::LayerFullPolicy::Skip:
+      return -1;
+
+    case Noggit::LayerFullPolicy::ReplaceLeastVisible:
+      return getLeastVisibleLayer();
+
+    case Noggit::LayerFullPolicy::ReplaceNominated:
+    {
+      if (admission.nominated_texture.empty())
+      {
+        return -1;
+      }
+
+      for (std::size_t layer = 0; layer < nTextures; ++layer)
+      {
+        // Normalised on both sides rather than compared raw: the nominated path comes from a UI
+        // widget and the stored one from the listfile, and the two disagree about slashes and
+        // case often enough that a raw compare silently never matches. At most four short
+        // allocations, and only on a chunk that is already full -- pickEvictableLayer is not
+        // reached otherwise.
+        std::string const stored
+          (BlizzardArchive::ClientData::normalizeFilenameUnix
+            (textures[layer]->file_key().filepath()));
+
+        if (stored == admission.nominated_texture)
+        {
+          return static_cast<int>(layer);
+        }
+      }
+
+      // The chunk does not hold the nominated texture, so there is nothing this policy is willing
+      // to give up. Skipping is the right answer: the user named one texture to sacrifice, not
+      // "whichever happens to be here".
+      return -1;
+    }
+  }
+
+  return -1;
+}
+
+namespace
+{
+  // Zeroes one alpha plane and reports whether it had to. Reading first costs 4096 byte compares
+  // and saves a pointless ALPHAMAP re-upload for the common case of a slot that is already empty.
+  bool zero_alpha_plane(std::unique_ptr<Alphamap>& plane)
+  {
+    if (!plane)
+    {
+      return false;
+    }
+
+    bool has_alpha = false;
+
+    for (std::size_t texel = 0; texel < 64 * 64; ++texel)
+    {
+      if (plane->getAlpha(texel) != 0)
+      {
+        has_alpha = true;
+        break;
+      }
+    }
+
+    if (!has_alpha)
+    {
+      return false;
+    }
+
+    std::array<std::uint8_t, 64 * 64> zeros{};
+    plane->setAlpha(zeros.data());
+
+    return true;
+  }
+}
+
+bool TextureSet::replaceLayerTexture( std::size_t layer
+                                    , scoped_blp_texture_reference texture
+                                    , Noggit::LayerAlphaHandling alpha_handling
+                                    )
+{
+  // NEVER INVENTS A LAYER. "Put this texture in slot 3" on a chunk that has two layers would have
+  // to fabricate slot 2 out of something, and there is no honest candidate. The caller counts this
+  // as a skip and says so.
+  if (layer >= nTextures)
+  {
+    return false;
+  }
+
+  // Committed first so there is exactly one representation of this chunk's alpha to reason about.
+  // The Reset branch below writes the stored planes; with a stroke still in flight those planes
+  // are stale and apply_alpha_changes would overwrite the reset the moment the stroke ended.
+  apply_alpha_changes();
+  ensureAlphamapConsistency();
+
+  bool changed = false;
+
+  if (!(textures[layer] == texture))
+  {
+    textures[layer] = std::move(texture);
+    changed = true;
+  }
+
+  if (alpha_handling == Noggit::LayerAlphaHandling::Reset)
+  {
+    if (layer == 0)
+    {
+      // LAYER 0 HAS NO STORED ALPHA. Its weight is 255 minus the sum of the others at each texel,
+      // so the only way to "reset layer 0's alpha" is to clear what covers it -- which leaves the
+      // chunk showing nothing but its base texture. Destructive, and the UI says so; one undo step
+      // covers it.
+      for (std::size_t plane = 0; plane + 1 < nTextures; ++plane)
+      {
+        changed |= zero_alpha_plane(alphamaps[plane]);
+      }
+    }
+    else
+    {
+      // The weight this layer gives up is not redistributed and does not need to be: layer 0 is
+      // derived as 255 minus the others, so clearing a plane hands its weight back to the base
+      // texture automatically and the texel still sums to 255.
+      changed |= zero_alpha_plane(alphamaps[layer - 1]);
+    }
+  }
+
+  if (changed)
+  {
+    // The MCLY flags and the ground effect id stay with the SLOT, not with the texture. That is
+    // what "assign a texture into slot N" means, and it is the useful behaviour: an animated water
+    // slot stays animated when its BLP is swapped. The Ground Effects tool remains the place to
+    // change effect ids, so this raises no eCHUNKS_LAYERINFO change.
+    markDirty();
+  }
+
+  return changed;
+}
+
+int TextureSet::purgeDuplicateLayers()
+{
+  if (nTextures < 2)
+  {
+    return 0;
+  }
+
+  apply_alpha_changes();
+  ensureAlphamapConsistency();
+
+  int removed = 0;
+
+  for (std::size_t i = 0; i < nTextures; ++i)
+  {
+    // j is not advanced after a merge: merge_layers erases layer j, so everything above it shifts
+    // down and the index that was j+1 is now j. nTextures is re-read by the condition on every
+    // iteration for the same reason.
+    for (std::size_t j = i + 1; j < nTextures; )
+    {
+      if (textures[i] == textures[j])
+      {
+        // merge_layers adds j's per-texel weight into i before erasing j, so a duplicate that was
+        // actually painted somewhere does not lose its coverage -- it ends up on the layer that
+        // was already drawing the same BLP. Two slots holding one texture is a wasted quarter of
+        // the chunk's budget and an extra sampler bind, and it draws identically either way.
+        merge_layers(i, j);
+        ++removed;
+      }
+      else
+      {
+        ++j;
+      }
+    }
+  }
+
+  if (removed)
+  {
+    // merge_layers works through tmp_edit_values and leaves them live. Committing here means the
+    // Action's post-state snapshot is taken against stored planes rather than a float scratch
+    // buffer, and it is where the 255 overflow guard in apply_alpha_changes runs.
+    apply_alpha_changes();
+    ensureAlphamapConsistency();
+    markDirty();
+  }
+
+  return removed;
+}
+
+int TextureSet::purgeLayersBelowThreshold(std::uint8_t threshold)
+{
+  // A one-layer chunk has nothing to purge and must not be emptied. See below.
+  if (nTextures < 2)
+  {
+    return 0;
+  }
+
+  apply_alpha_changes();
+  ensureAlphamapConsistency();
+
+  Noggit::LayerAlphaProfile const profile = layerAlphaProfile();
+
+  // PEAK, NOT TOTAL, and "at most" rather than "below": the question is "does this layer ever get
+  // above `threshold` anywhere on the chunk". A layer whose strongest texel is 4/255 is invisible
+  // at every texel and is spending a slot and a texture bind on nothing. A layer with a low TOTAL
+  // may still be solid in one corner, and that one is not garbage.
+  std::vector<std::size_t> victims;
+
+  for (std::size_t layer = 0; layer < nTextures; ++layer)
+  {
+    if (profile.peak[layer] <= threshold)
+    {
+      victims.push_back(layer);
+    }
+  }
+
+  if (victims.empty())
+  {
+    return 0;
+  }
+
+  // NEVER EMPTY A CHUNK. At a high enough threshold every layer qualifies, and a chunk with zero
+  // MCLY entries is not a tidier chunk, it is an untextured one. The most visible layer by total
+  // alpha survives -- total rather than peak here, because among layers that are all invisible by
+  // the peak test the one that covers the most ground is the least arbitrary base to keep.
+  if (victims.size() == nTextures)
+  {
+    std::size_t keep = 0;
+
+    for (std::size_t layer = 1; layer < nTextures; ++layer)
+    {
+      if (profile.sum[layer] > profile.sum[keep])
+      {
+        keep = layer;
+      }
+    }
+
+    victims.erase(std::remove(victims.begin(), victims.end(), keep), victims.end());
+  }
+
+  // HOW THE REPACK STAYS SAFE, in three parts:
+  //
+  //   1. DESCENDING. `victims` is ascending by construction, so this walks it backwards.
+  //      eraseTexture renumbers every layer above the one it removes; erasing 1 then 2 would erase
+  //      the original layers 1 and 3.
+  //   2. ONE PRIMITIVE. eraseTexture moves _layers_info[i] = _layers_info[i+1] and
+  //      swap(alphamaps[i-1], alphamaps[i]) in the same loop body and resets the freed plane, so
+  //      an MCLY entry and its alpha plane cannot end up describing different layers. Nothing here
+  //      touches either array directly.
+  //   3. RE-CHECKED AFTERWARDS. ensureAlphamapConsistency restores the invariant the 14 raw
+  //      dereference sites listed in apply_alpha_changes depend on, rather than assuming
+  //      eraseTexture got it right.
+  //
+  // The purged layers' weight is not redistributed, and that is correct rather than an omission:
+  // layer 0's alpha is 255 minus the sum of the stored planes, so dropping a plane hands its
+  // weight straight back to the base texture and the texel still sums to 255.
+  for (auto victim = victims.rbegin(); victim != victims.rend(); ++victim)
+  {
+    eraseTexture(*victim);
+  }
+
+  ensureAlphamapConsistency();
+  markDirty();
+
+  return static_cast<int>(victims.size());
+}
+
+int TextureSet::clearOverlayLayers()
+{
+  if (nTextures < 2)
+  {
+    return 0;
+  }
+
+  apply_alpha_changes();
+
+  int const removed = static_cast<int>(nTextures) - 1;
+
+  // Top down, for the reason given in purgeLayersBelowThreshold. The loop stops at 1 rather than
+  // running to 0, so the unsigned counter never wraps and the base layer is never a victim.
+  for (std::size_t layer = nTextures - 1; layer >= 1; --layer)
+  {
+    eraseTexture(layer);
+  }
+
+  ensureAlphamapConsistency();
+  markDirty();
+
+  return removed;
 }
 
 std::array<std::uint8_t, 256 * 256> TextureSet::alpha_convertion_lookup = TextureSet::make_alpha_lookup_array();

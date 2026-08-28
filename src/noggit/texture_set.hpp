@@ -5,9 +5,12 @@
 #include <noggit/Alphamap.hpp>
 #include <noggit/ContextObject.hpp>
 #include <noggit/TextureManager.h>
+#include <noggit/texturing/TextureLayerPolicy.hpp>
 
 #include <cstdint>
 #include <array>
+#include <string>
+#include <vector>
 
 class Brush;
 class MapTile;
@@ -65,7 +68,17 @@ public:
                       , scoped_blp_texture_reference replacement_texture
                       , bool entire_chunk = false
                       );
+  //! Answers the question the brush asks: can this texture be painted here right now, under the
+  //! layer budget policy the user has set? Under the default Skip policy this is exactly what it
+  //! has always been -- "already present, or is there a free slot".
+  //!
+  //! The paintability OVERLAY must not go through here. See MapChunk::canPaintTexture.
   bool canPaintTexture(scoped_blp_texture_reference const& texture);
+
+  //! The same question against an explicit policy rather than the process-wide one. A
+  //! default-constructed TextureLayerAdmission is the strict, pre-Smart-Paint answer.
+  bool canAdmitTexture(scoped_blp_texture_reference const& texture
+                      , Noggit::TextureLayerAdmission const& admission);
 
   const std::string& filename(size_t id);
 
@@ -105,6 +118,50 @@ public:
   void setAlphamaps(const std::array<std::unique_ptr<Alphamap>, MAX_ALPHAMAPS>& newAlphamaps);
 
   int get_texture_index_or_add (scoped_blp_texture_reference texture, float target);
+
+  //! The same, against an explicit layer budget policy. The two-argument form above is this one
+  //! with TextureLayerAdmission::current(), which is how a brush stroke reaches Smart Paint
+  //! without World::paintTexture or MapChunk::paintTexture growing a parameter.
+  int get_texture_index_or_add ( scoped_blp_texture_reference texture
+                               , float target
+                               , Noggit::TextureLayerAdmission const& admission
+                               );
+
+  //! Every layer's total and peak alpha over the chunk, in one 4096-texel pass.
+  Noggit::LayerAlphaProfile layerAlphaProfile() const;
+
+  //! The layer that contributes the least to what this chunk actually looks like, or -1 when the
+  //! chunk holds no textures. See the implementation for how "least" is defined and why ties break
+  //! towards the higher slot.
+  int getLeastVisibleLayer() const;
+
+  //! LAYER REPLACEMENT: put `texture` into slot `layer`, keeping or clearing that slot's alpha.
+  //! Returns false when the chunk has no such slot -- this never invents intermediate layers.
+  bool replaceLayerTexture ( std::size_t layer
+                           , scoped_blp_texture_reference texture
+                           , Noggit::LayerAlphaHandling alpha_handling
+                           );
+
+  //! TEXTURE DUPLICATES: fold every layer that references a texture an earlier layer already
+  //! holds into that earlier layer. Returns the number of layers removed.
+  int purgeDuplicateLayers();
+
+  //! TEXTURES BELOW THRESHOLD: remove every layer whose peak alpha anywhere on the chunk is at
+  //! most `threshold`. Returns the number of layers removed. Never empties a chunk.
+  int purgeLayersBelowThreshold(std::uint8_t threshold);
+
+  //! Drop layers 1..n-1 and leave the chunk showing nothing but its base texture. Returns the
+  //! number of layers removed.
+  int clearOverlayLayers();
+
+  //! Restores the invariant six raw dereference sites in this class assume: every layer from 1 to
+  //! nTextures-1 has an alpha plane. Create-only -- see the implementation for why a surplus plane
+  //! is left alone. Returns true if it had to create one.
+  bool ensureAlphamapConsistency();
+
+  //! The layer this policy is willing to sacrifice on a full chunk, or -1 when it is willing to
+  //! sacrifice none. Does not modify anything.
+  int pickEvictableLayer(Noggit::TextureLayerAdmission const& admission) const;
 
   auto getDoodadMappingBase(void) -> std::uint16_t*;
   std::array<std::uint16_t, 8> const& getDoodadMapping();

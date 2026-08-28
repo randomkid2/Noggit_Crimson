@@ -11,6 +11,7 @@
 #include <noggit/ui/GroundEffectsTool.hpp>
 #include <noggit/ui/texture_palette_small.hpp>
 #include <noggit/ui/texture_swapper.hpp>
+#include <noggit/ui/TextureLayerManager.hpp>
 #include <noggit/ui/TexturePicker.h>
 #include <noggit/ui/texturing_tool.hpp>
 #include <noggit/ui/TexturingGUI.h>
@@ -163,6 +164,12 @@ namespace Noggit
             [=]()
             {
                 _show_texture_palette_window.set(!_show_texture_palette_window.get());
+            });
+
+        QObject::connect(_texturingTool, &Ui::texturing_tool::textureLayerManagerRequested,
+            [this]()
+            {
+                showTextureLayerManager();
             });
 
         setupTextureBrowser(mv);
@@ -344,6 +351,22 @@ namespace Noggit
         addMenuTitle(menu, "Texture Painter");
         addMenuItem(menu, "Texture Browser", Qt::Key_X, _show_texture_browser_window);
         addMenuItem(menu, "Texture palette", _show_texture_palette_window);
+        addMenuItem(menu, "Texture Layers...",
+            [this] { showTextureLayerManager(); });
+    }
+
+    void TexturingTool::showTextureLayerManager()
+    {
+        auto mv = mapView();
+
+        if (!_textureLayerManager)
+        {
+            _textureLayerManager = new Ui::TextureLayerManager(mv, mv);
+        }
+
+        _textureLayerManager->show();
+        _textureLayerManager->raise();
+        _textureLayerManager->activateWindow();
     }
 
     ToolDrawParameters TexturingTool::drawParameters() const
@@ -578,6 +601,12 @@ namespace Noggit
         _texturePalette->hide();
         _texturePickerDock->hide();
         _textureBrowserDock->hide();
+
+        // Null until the user has opened it once; hidePopups runs on every UI-hide toggle.
+        if (_textureLayerManager)
+        {
+            _textureLayerManager->hide();
+        }
     }
 
     std::string TexturingTool::selectedTexturePath() const

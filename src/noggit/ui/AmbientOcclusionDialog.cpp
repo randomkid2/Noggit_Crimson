@@ -563,10 +563,11 @@ void AmbientOcclusionDialog::onBake()
   // This is the whole defence against a use-after-free, and it is worth spelling out. Further
   // down, QProgressDialog::setValue() pumps on every one of the 256 chunks of every tile. Modality
   // stops *input* reaching the rest of the application; it does not stop timers. MapView's frame
-  // timer keeps firing (MapView.cpp:3958-3977), paintGL() calls tick() unconditionally, and tick()
-  // calls MapIndex::unloadTiles() (MapView.cpp:4376), which deletes any loaded MapTile further
-  // than unload_dist from the camera. The only thing unloadTiles refuses to delete is a tile whose
-  // `changed` flag is set (map_index.cpp:470).
+  // timer keeps firing (MapView.cpp:4828-4830), paintGL() calls tick() unconditionally, and tick()
+  // calls MapIndex::unloadTiles() (MapView.cpp:5362), which deletes any loaded MapTile further
+  // than unload_dist from the camera. unloadTiles refuses to delete a tile whose `changed` flag is
+  // set (map_index.cpp:523), and until the pin count described below existed that was the only
+  // lever available here.
   //
   // So the MapTile* held in `tiles`, and every MapChunk* an undo action is about to store, are
   // live across pumps that are entitled to free them -- unless the flag is set first. Setting it
@@ -577,6 +578,15 @@ void AmbientOcclusionDialog::onBake()
   // nothing -- the whole scope if the user backs out of a confirmation, or a tile with no chunk
   // data. A tile that has had even one chunk snapshotted keeps the flag for good: an undo action
   // holds pointers into it.
+  //
+  // This borrows the unsaved-changes flag to express a lifetime, and that overload is what made
+  // MapIndex::unloadTiles unable to tell an edited tile from a visited one -- the memory leak
+  // fixed in map_index.cpp. MapIndex::pinTile()/unpinTile() now say exactly this and nothing else:
+  // undeletable, not dirty, reference counted so two overlapping scopes cannot release each
+  // other's tiles. Moving this loop and release_untouched_pins onto them is the right follow-up
+  // and is deliberately NOT done in the same change as the leak fix, because the bake must keep
+  // working identically while the two mechanisms coexist: setChanged() still sets `changed`, and
+  // unloadTiles still refuses on `changed`, so nothing here has changed behaviour.
   std::vector<ScopeTile> scope;
   scope.reserve(tiles.size());
 

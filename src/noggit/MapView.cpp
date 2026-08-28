@@ -3784,6 +3784,11 @@ void MapView::setupAssistMenu()
 
   auto debug_menu(assist_menu->addMenu("Debug"));
 
+  // Turns tile unloading off for the rest of the session, and that is the point: the whole map
+  // is loaded and MapIndex::unloadTiles would start dropping it again from the next tick. It is
+  // also the only switch in the editor that retains tiles without bound, so it is paired with a
+  // way back -- there was none, and a mapper who used this once then flew for an hour had no way
+  // to find out why memory never came back down.
   ADD_ACTION_NS ( debug_menu
   , "Load all tiles"
   , [=]
@@ -3792,6 +3797,17 @@ void MapView::setupAssistMenu()
     OpenGL::context::scoped_setter const _(::gl, context());
     _unload_tiles = false;
     _world->loadAllTiles(_camera.position);
+  }
+  );
+
+  ADD_ACTION_NS ( debug_menu
+  , "Resume tile unloading"
+  , [=]
+  {
+    // Nothing else to do: MapView::tick calls MapIndex::unloadTiles on every frame this is true,
+    // and unloadTiles rate-limits itself to one pass per unload_interval seconds (30 by default,
+    // read from QSettings in the MapIndex constructor), so the backlog drains on its own.
+    _unload_tiles = true;
   }
   );
 
@@ -4943,20 +4959,61 @@ void MapView::initializeGL()
 
   _uid_fix = uid_fix_mode::none;
 
+  // Non-zero means this map's WDT flags tiles whose ADT files are not there, so the scan for the
+  // highest unique ID could not read them. That used to be fatal rather than merely incomplete:
+  // MapIndex::getHighestGUIDFromFile built a BlizzardArchive::ClientFile for every flagged tile
+  // and that constructor throws for a missing file -- from here, inside a paint event. Reported
+  // below rather than here, for the reason spelled out there.
+  unsigned const uid_scan_skipped_tiles (_world->mapIndex.uidScanSkippedTiles());
+
   if (!_from_bookmark)
   {
     move_camera_with_auto_height (_camera.position);
   }
 
-  if (uid_warning)
+  // Both notices are posted to the event loop instead of being raised here, and that is not
+  // cosmetic. paintGL calls initializeGL directly whenever _gl_initialized is false, so this code
+  // runs with a Qt paint event and the OpenGL::context::scoped_setter declared at the top of this
+  // function still on the stack. QMessageBox is modal: it spins a nested event loop that delivers
+  // further paints, and when it closes and that setter unwinds it verifies a context the nested
+  // loop has since changed -- OpenGL::Scoped's destructor then throws, and a throw from a
+  // destructor is std::terminate. The duplicate-uid warning in paintGL already carries this fix
+  // and this reasoning; the warning below was left behind on the old path.
+  if (uid_warning || uid_scan_skipped_tiles)
   {
-    QMessageBox::warning
-      ( nullptr
-      , "UID Warning"
-      , "Some models were missing or couldn't be loaded. "
-        "This will lead to culling (visibility) errors in game\n"
-        "It is recommended to fix those models (listed in the log file) and run the uid fix all again."
-      , QMessageBox::Ok
+    QTimer::singleShot
+      ( 0
+      , this
+      , [this, uid_warning, uid_scan_skipped_tiles]
+        {
+          if (uid_scan_skipped_tiles)
+          {
+            QMessageBox::warning
+              ( this
+              , "Incomplete unique ID scan"
+              , QString("%1 tile(s) are flagged in this map's WDT but have no ADT file, so the "
+                        "scan for the highest unique ID skipped them and carried on.\n\n"
+                        "No object was lost: a tile with no file holds nothing. The skipped "
+                        "tiles are named in the log. A WMO-only or partly built map is the usual "
+                        "reason for this; a WDT that has drifted away from the tiles actually on "
+                        "disk is the other.")
+                  .arg(uid_scan_skipped_tiles)
+              , QMessageBox::Ok
+              );
+          }
+
+          if (uid_warning)
+          {
+            QMessageBox::warning
+              ( this
+              , "UID Warning"
+              , "Some models were missing or couldn't be loaded. "
+                "This will lead to culling (visibility) errors in game\n"
+                "It is recommended to fix those models (listed in the log file) and run the uid fix all again."
+              , QMessageBox::Ok
+              );
+          }
+        }
       );
   }
 

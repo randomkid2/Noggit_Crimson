@@ -232,7 +232,7 @@ public:
   template<typename Fun>
     void for_tile_at_force(const TileIndex& pos, Fun&&);
 
-  void changeObjectsWithTerrain(glm::vec3 const& pos, float change, float radius, int BrushType, float inner_radius, bool iter_wmos_ = true, bool iter_m2s = true);
+  void changeObjectsWithTerrain(glm::vec3 const& pos, float change, float radius, int BrushType, float inner_radius, bool iter_wmos_ = true, bool iter_m2s = true, bool follow_normals = false);
   void changeTerrain(glm::vec3 const& pos, float change, float radius, int BrushType, float inner_radius);
   std::vector<selected_object_type> getObjectsInRange(glm::vec3 const& pos, float radius, bool ignore_height = true, bool iter_wmos_ = true, bool iter_m2s = true);
   void changeShader(glm::vec3 const& pos, glm::vec4 const& color, float change, float radius, bool editMode);
@@ -240,7 +240,70 @@ public:
   glm::vec3 pickShaderColor(glm::vec3 const& pos);
   void flattenTerrain(glm::vec3 const& pos, float remain, float radius, int BrushType, flatten_mode const& mode, const glm::vec3& origin, math::degrees angle, math::degrees orientation);
   std::vector<std::pair<SceneObject*, float>> getObjectsGroundDistance(glm::vec3 const& pos, float radius, bool iter_wmos_, bool iter_m2s);
+
+  //! Put every object back the distance above the ground that getObjectsGroundDistance measured
+  //! for it before the terrain under it moved, and -- when `follow_normals` is set -- re-align it
+  //! to the slope the ground now has there.
+  //!
+  //! The three brush paths that snap objects (TerrainTool's stamp branch, and the flatten and blur
+  //! halves of the flatten tool) each carried their own copy of this loop. They are one loop now,
+  //! because the re-tilt has to happen in the same place in all three or "objects follow the
+  //! ground" would mean something different depending on which brush moved it.
+  //!
+  //! Registers on whatever action is already open -- it opens none of its own. That is what keeps
+  //! a sculpting stroke and the object movement it caused inside ONE undo step: World::set_model_pos
+  //! and World::rotate_model_to_ground_normal both call Action::registerObjectTransformed, which
+  //! records a pre-image the first time it sees a uid and returns immediately on every later tick
+  //! of the same stroke (Action.cpp:778-782).
+  void reseatObjectsOnGround(std::vector<std::pair<SceneObject*, float>> const& ground_distances, bool follow_normals);
+
   void blurTerrain(glm::vec3 const& pos, float remain, float radius, int BrushType, flatten_mode const& mode);
+
+  //! Grade the terrain between two points into a ramp of constant slope.
+  //!
+  //! `start` and `end` are terrain picks, so the ramp's height at each end already matches the
+  //! ground there and the grade is fixed by the two of them: (end.y - start.y) / horizontal length.
+  //! `width` is the full width of the flat core in yards and `falloff_width` the band outside it,
+  //! per side and past each end, over which the effect fades to nothing. `smooth_falloff` picks
+  //! smoothstep over a straight line across that band. The geometry and the reason for each choice
+  //! are on the implementation.
+  //!
+  //! Returns whether any chunk actually moved, so false covers both refusals: two points less
+  //! than a millimetre apart horizontally, which has no direction to grade along and is logged,
+  //! and a ramp whose tiles are not loaded, which is silent because it is not an error.
+  bool buildRamp(glm::vec3 const& start, glm::vec3 const& end, float width, float falloff_width, bool smooth_falloff);
+
+  //! Where a point sits relative to a ramp, measured in the XZ plane.
+  struct RampProjection
+  {
+    //! How far along the ramp the point projects, clamped into [0, 1]. The ramp's target height
+    //! under the point is start.y + (end.y - start.y) * along.
+    float along = 0.0f;
+
+    //! The shortest 2-D distance from the point to the ramp's flat core, in yards, and zero
+    //! anywhere inside that core. This is what the falloff band is measured against: a point is
+    //! untouched exactly when this is positive AND at least falloff_width, which is why a zero
+    //! band still grades the core rather than nothing.
+    float distance_to_core = 0.0f;
+  };
+
+  //! THE ONE DEFINITION OF A RAMP'S FOOTPRINT.
+  //!
+  //! buildRamp calls this per terrain vertex. Callers that have to decide which OBJECTS a ramp
+  //! reaches call it per object, and that is why it is exposed rather than kept inside the
+  //! implementation: the alternative is a second copy of the arithmetic that can disagree with
+  //! this one, and the visible symptom of disagreeing would be props re-tilting to a slope that
+  //! was never graded under them.
+  //!
+  //! `width` is the full width of the flat core, so the core is the rectangle running from
+  //! `start` to `end` and reaching width/2 to either side.
+  //!
+  //! A start and end less than a thousandth of a unit apart horizontally have no ramp between
+  //! them, and every point is then reported as infinitely far outside rather than inside -- so a
+  //! caller that forgets to check the degenerate case grades nothing instead of everything.
+  [[nodiscard]]
+  static RampProjection projectOntoRamp(glm::vec3 const& start, glm::vec3 const& end, float width, glm::vec3 const& pos);
+
   bool paintTexture(glm::vec3 const& pos, Brush *brush, float strength, float pressure, scoped_blp_texture_reference texture);
   bool stampTexture(glm::vec3 const& pos, Brush *brush, float strength, float pressure, scoped_blp_texture_reference texture, QImage* img, bool paint);
   bool sprayTexture(glm::vec3 const& pos, Brush *brush, float strength, float pressure, float spraySize, float sprayPressure, scoped_blp_texture_reference texture);
@@ -329,10 +392,17 @@ public:
 
   void reload_tile(TileIndex const& tile);
 
-  void updateTilesEntry(selection_type const& entry, model_update type);
-  void updateTilesEntry(SceneObject* entry, model_update type);
-  void updateTilesWMO(WMOInstance* wmo, model_update type);
-  void updateTilesModel(ModelInstance* m2, model_update type);
+  // The `intent` argument decides whether the tiles this touches are marked as carrying unsaved
+  // edits. It defaults to user_edit, so every existing caller keeps its behaviour; the streaming
+  // paths in world_model_instances_storage pass bookkeeping instead. See tile_dirty_intent.
+  void updateTilesEntry(selection_type const& entry, model_update type,
+                        tile_dirty_intent intent = tile_dirty_intent::user_edit);
+  void updateTilesEntry(SceneObject* entry, model_update type,
+                        tile_dirty_intent intent = tile_dirty_intent::user_edit);
+  void updateTilesWMO(WMOInstance* wmo, model_update type,
+                      tile_dirty_intent intent = tile_dirty_intent::user_edit);
+  void updateTilesModel(ModelInstance* m2, model_update type,
+                        tile_dirty_intent intent = tile_dirty_intent::user_edit);
   void wait_for_all_tile_updates();
 
   void deleteModelInstance(int uid, bool action);
