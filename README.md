@@ -3,9 +3,9 @@
 [![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue.svg)](COPYING)
 
 **Noggit Crimson is an unofficial fork of
-([https://github.com/Marlamin/noggit-red](https://gitlab.com/prophecy-rp/noggit-red))](https://gitlab.com/prophecy-rp/noggit-red) — "Noggit Red" — that adds
-TrinityCore 3.3.5a world-database editing to the Noggit map editor. It is
-[GPL-3.0](COPYING), inherited from upstream and unchangeable.**
+[Noggit Red](https://gitlab.com/prophecy-rp/noggit-red) that adds TrinityCore 3.3.5a
+world-database editing to the Noggit map editor. It is [GPL-3.0](COPYING), inherited from upstream
+and unchangeable.**
 
 Upstream Noggit Red edits the *client* side of a World of Warcraft map: terrain, textures, water,
 M2 and WMO placements inside ADT files. Noggit Crimson keeps all of that untouched and adds the
@@ -16,8 +16,8 @@ stand on.
 | | |
 |---|---|
 | Product | **Noggit Crimson** — this fork, this repository |
-| Upstream | **Noggit Red** — gitlab.com/prophecy-rp/noggit-red |
-| Forked at | `6f0776d4` (2025-01-17) |
+| Upstream | **Noggit Red** — [prophecy-rp/noggit-red](https://gitlab.com/prophecy-rp/noggit-red), where the line is maintained |
+| Forked at | `6f0776d4` (2025-01-17), taken from the [Marlamin/noggit-red](https://github.com/Marlamin/noggit-red) mirror |
 | Licence | **GPL-3.0**, inherited and unchangeable — see [COPYING](COPYING) |
 | Target | TrinityCore 3.3.5a only, client build `3.3.5a.12340` |
 | Platform | Windows / MSVC is the tested configuration |
