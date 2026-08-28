@@ -3,7 +3,7 @@
 [![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue.svg)](COPYING)
 
 **Noggit Crimson is an unofficial fork of
-[[Marlamin/noggit-red]([https://github.com/Marlamin/noggit-red](https://gitlab.com/prophecy-rp/noggit-red))](https://gitlab.com/prophecy-rp/noggit-red) — "Noggit Red" — that adds
+([https://github.com/Marlamin/noggit-red](https://gitlab.com/prophecy-rp/noggit-red))](https://gitlab.com/prophecy-rp/noggit-red) — "Noggit Red" — that adds
 TrinityCore 3.3.5a world-database editing to the Noggit map editor. It is
 [GPL-3.0](COPYING), inherited from upstream and unchangeable.**
 
