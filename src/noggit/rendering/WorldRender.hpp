@@ -14,6 +14,7 @@
 #include <noggit/Sky.h>
 
 #include <noggit/rendering/Primitives.hpp>
+#include <noggit/rendering/ShadowBaker.hpp>
 
 #include <memory>
 
@@ -122,6 +123,30 @@ namespace Noggit::Rendering
     bool saveMinimap (TileIndex const& tile_idx
                       , MinimapRenderSettings* settings
                       , std::optional<QImage>& combined_image);
+
+    // Renders the loaded scene once from the sun's viewpoint and reads the depth buffer back, for
+    // the terrain shadow (MCSH) bake. Returns false and leaves `out` invalid on failure.
+    //
+    // This is the GPU half; Noggit::Rendering::ShadowBaker holds the arithmetic and
+    // World::bakeTerrainShadows does the chunk writes. Requires a current GL context and MUST NOT
+    // be called from paintGL: it ends in a glReadPixels of up to 8192x8192 floats, which is a full
+    // pipeline stall by nature. The tool calls it from a button handler, which the Qt event loop
+    // delivers nowhere near a paint.
+    //
+    // > [!note] This is deliberately NOT the two-program approach Noggit Green uses. Green renders
+    // > depth into a 2048 texture with dedicated depth shaders, then draws the terrain again at
+    // > 1024 with a shadow-compare fragment shader and reads back the result. Only the first of
+    // > those passes is here: the compare is done per MCSH texel on the CPU
+    // > (Noggit::Rendering::bakeChunkShadowMap) against the terrain's own vertex lattice. Our
+    // > renderer has no program-substitution seam for M2 and WMO drawing, so a depth-only pass
+    // > would have meant four new shader programs and a second way to walk the scene; reusing
+    // > draw() gets correct depth for terrain, alpha-tested doodads and WMOs for free, and moving
+    // > the compare to the CPU removes the raster-alignment question entirely.
+    bool renderSunDepth ( TileIndex const& tile_idx
+                        , Noggit::Rendering::ShadowBakeSettings const& settings
+                        , Noggit::Rendering::SunDepthMap& out
+                        , int* out_neighbour_tiles_loaded = nullptr
+                        );
 
     [[nodiscard]]
     OpenGL::TerrainParamsUniformBlock* getTerrainParamsUniformBlock();;

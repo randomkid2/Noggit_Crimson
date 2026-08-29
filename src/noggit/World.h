@@ -9,6 +9,7 @@
 #include <noggit/world_tile_update_queue.hpp>
 #include <noggit/world_model_instances_storage.hpp>
 #include <noggit/ContextObject.hpp>
+#include <noggit/rendering/ShadowBaker.hpp>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -32,6 +33,10 @@ struct flatten_mode;
 
 class Brush;
 class MapTile;
+// Forward-declared only. bakeTerrainShadows takes one solely to hand to
+// ActionManager::beginAction, which forward-declares it too, so World gains no dependency on the
+// view -- and World.cpp does not include MapView.h.
+class MapView;
 class QPixmap;
 class QProgressDialog;
 class QSettings;
@@ -314,6 +319,41 @@ public:
   void paintGroundEffectExclusion(glm::vec3 const& pos, float radius, bool exclusion);
   void setBaseTexture(glm::vec3 const& pos);
   void clear_shadows(glm::vec3 const& pos);
+
+  // --- terrain shadow (MCSH) editing -----------------------------------------------------
+  //
+  // clear_shadows above was the only shadow method this fork inherited, and it erases. These two
+  // are the producers: a brush and a bake. See rendering/ShadowBaker.hpp for what MCSH is, why it
+  // is not the same layer as the ambient-occlusion bake, and the resolution arithmetic.
+
+  // Paints or erases a disc of shadow. Neither opens an action -- the caller must already be
+  // inside one, because the undo snapshot has to be taken before the first texel changes.
+  // Returns true when at least one chunk changed, and marks only those tiles as modified.
+  bool setShadow(glm::vec3 const& pos, float radius, bool add);
+
+  // Thresholds an already-rendered sun depth map into every chunk of one tile.
+  //
+  // Pure CPU and no GL: the depth render is WorldRender::renderSunDepth and has to have happened
+  // already. Split that way so the GPU stall and the readback stay in one place, outside paintGL,
+  // and so this half can be reasoned about without a context.
+  //
+  // ONE undo step for the whole tile, and the whole tile in one step. The action is opened HERE,
+  // lazily, on the first chunk whose shadow map actually differs -- the same shape
+  // AmbientOcclusionDialog::bakeOneTile uses (AmbientOcclusionDialog.cpp:493-495) and for the
+  // same two reasons. Opening it unconditionally in the caller would push an empty undo entry
+  // every time a re-bake with identical settings found nothing to change, and beginAction returns
+  // the action already in flight (ActionManager.cpp:64-65), so every subsequent chunk joins the
+  // first one's action rather than starting its own.
+  //
+  // The CALLER must close it, and only if it was opened: test NOGGIT_CUR_ACTION after this
+  // returns. Refuses outright if an action is already running, because a bake folded into
+  // somebody else's stroke could not be undone on its own.
+  Noggit::Rendering::ShadowBakeReport bakeTerrainShadows
+    ( MapView* map_view
+    , MapTile* tile
+    , Noggit::Rendering::SunDepthMap const& depth_map
+    , Noggit::Rendering::ShadowBakeSettings const& settings
+    );
   void clearTextures(glm::vec3 const& pos);
   void swapTexture(glm::vec3 const& pos, scoped_blp_texture_reference tex);
   void swapTextureGlobal(scoped_blp_texture_reference tex);

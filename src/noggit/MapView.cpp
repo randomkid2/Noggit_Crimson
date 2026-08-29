@@ -29,6 +29,7 @@
 #include <noggit/uid_storage.hpp>
 #include <noggit/ui/AlphaIntegrityReport.hpp>
 #include <noggit/ui/AmbientOcclusionDialog.hpp>
+#include <noggit/ui/TerrainMaskDialog.hpp>
 #include <noggit/ui/AutoTextureDialog.hpp>
 #include <noggit/ui/CurrentTexture.h>
 #include <noggit/ui/DatabaseSpawnPanel.hpp>
@@ -95,6 +96,7 @@
 #include <noggit/tools/ChunkTool.hpp>
 #include <noggit/tools/AreaTriggerTool.hpp>
 #include <noggit/tools/ErosionTool.hpp>
+#include <noggit/tools/ShadowTool.hpp>
 #include <noggit/StringHash.hpp>
 #include <noggit/application/NoggitApplication.hpp>
 
@@ -4232,6 +4234,22 @@ void MapView::setupToolsMenu()
         dialog->show();
       }
     );
+
+    // Terrain masks. Not a Tool and deliberately not modal: a mask decides where the OTHER tools
+    // apply, so the window has to stay open while the user paints with the tool it is clipping.
+    // show() rather than exec() is what allows that.
+    auto terrain_masks (new QAction("Terrain Masks...", this));
+    terrain_masks->setStatusTip
+      ("Author named masks that clip every terrain and texture brush to a derived region.");
+    menu->addAction(terrain_masks);
+
+    connect(terrain_masks, &QAction::triggered, this, [this]
+      {
+        auto dialog (new Noggit::Ui::TerrainMaskDialog(this, this));
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->show();
+      }
+    );
 }
 
 void MapView::setupHelpMenu()
@@ -4626,6 +4644,9 @@ void MapView::createGUI()
   // enumerator directly (selectedTexturePath, and the paint/object resets in the destructor).
   // Erosion is editing_mode::erosion = 15, so it is appended here and nothing above it moves.
   _tools.emplace_back(std::make_unique<Noggit::ErosionTool>(this))->setupUi(_tool_panel_dock);
+  // Terrain shadows are editing_mode::shadow = 16, appended after erosion for the same
+  // reason: position in this sequence IS the enumerator.
+  _tools.emplace_back(std::make_unique<Noggit::ShadowTool>(this))->setupUi(_tool_panel_dock);
 
   // End combined dock
 

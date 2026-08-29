@@ -82,6 +82,9 @@ enum class editing_mode
   // in the emplace_back sequence in MapView::createGUI has to equal its enumerator -- renumbering
   // an existing entry silently hands one tool another tool's slot.
   erosion = 15,
+  // Terrain shadow (MCSH) painting and baking. 16, appended after erosion for the reason stated
+  // above -- nothing below this line may be renumbered.
+  shadow = 16,
 };
 
 enum water_opacity

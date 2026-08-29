@@ -87,6 +87,12 @@ noggit_add_if_present(NOGGIT_DB_SOURCES
   "${NOGGIT_SRC_DIR}/noggit/terrain/ErosionKernel.cpp"
   "${NOGGIT_SRC_DIR}/noggit/terrain/AmbientOcclusion.cpp"
   "${NOGGIT_SRC_DIR}/noggit/terrain/AlphaIntegrity.cpp"
+  # The mask feature's pure half. TerrainMask.cpp and TerrainMaskFilters.cpp hold no Qt, no glm
+  # and no MapChunk for exactly this reason; TerrainMaskStore.cpp is deliberately NOT here,
+  # because it is the Qt-and-project half and would drag QtCore into a target whose whole point
+  # is that it builds on a bare machine.
+  "${NOGGIT_SRC_DIR}/noggit/terrain/TerrainMask.cpp"
+  "${NOGGIT_SRC_DIR}/noggit/terrain/TerrainMaskFilters.cpp"
 )
 
 set(NOGGIT_DB_TESTS "")
@@ -110,6 +116,7 @@ noggit_add_if_present(NOGGIT_DB_TESTS
   "${CMAKE_CURRENT_SOURCE_DIR}/ErosionKernelTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/AmbientOcclusionTests.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/AlphaIntegrityTests.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/TerrainMaskTests.cpp"
 )
 
 if(MYSQLCPPCONN_INCLUDE AND MYSQLCPPCONN_LIBRARY)

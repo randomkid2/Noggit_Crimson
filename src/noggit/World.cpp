@@ -40,6 +40,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <cassert>
 #include <functional>
 #include <limits>
@@ -3089,6 +3090,178 @@ void World::clear_shadows(glm::vec3 const& pos)
     NOGGIT_CUR_ACTION->registerChunkShadowChange(chunk);
     chunk->clear_shadows();
   });
+}
+
+bool World::setShadow(glm::vec3 const& pos, float radius, bool add)
+{
+  ZoneScoped;
+
+  return for_all_chunks_in_range
+    ( pos
+    , radius
+    , [&] (MapChunk* chunk)
+      {
+        // Registered BEFORE the edit, unconditionally, because the snapshot it takes is the only
+        // copy of the pre-stroke shadow map that will exist. Registering a chunk the brush then
+        // does not change costs 4 KB in the action and dedupes on the next tick
+        // (Action.cpp:902-907); getting the order wrong would record the POST state as the undo
+        // target and make ctrl-Z a no-op.
+        NOGGIT_CUR_ACTION->registerChunkShadowChange(chunk);
+
+        return chunk->setShadow(pos, radius, add);
+      }
+    );
+}
+
+Noggit::Rendering::ShadowBakeReport World::bakeTerrainShadows
+  ( MapView* map_view
+  , MapTile* tile
+  , Noggit::Rendering::SunDepthMap const& depth_map
+  , Noggit::Rendering::ShadowBakeSettings const& settings
+  )
+{
+  ZoneScoped;
+
+  Noggit::Rendering::ShadowBakeReport report;
+  report.mcsh_texel_yards = Noggit::Rendering::MCSH_TEXEL_SIZE_YARDS;
+
+  if (!tile)
+  {
+    report.failure = "no tile";
+    return report;
+  }
+
+  // finishedLoading() rather than trusting the caller: mVertices of a tile the async loader is
+  // still parsing is a data race, and a bake is exactly the kind of slow operation a user starts
+  // right after clicking a new tile into view.
+  if (!tile->finishedLoading())
+  {
+    report.failure = "the tile is still loading";
+    return report;
+  }
+
+  if (!depth_map.valid())
+  {
+    report.failure = "the sun depth render produced nothing";
+    return report;
+  }
+
+  if (!map_view)
+  {
+    report.failure = "no map view";
+    return report;
+  }
+
+  if (NOGGIT_CUR_ACTION)
+  {
+    // beginAction returns the ALREADY RUNNING action when one exists and does not apply the flags
+    // it was passed (ActionManager.cpp:64-65). Baking into somebody else's open stroke would file
+    // 256 chunks of shadow under it and make the two undoable only together, so refuse instead of
+    // nesting. Same reasoning as AmbientOcclusionDialog::onBake.
+    report.failure = "another edit is still in progress";
+    return report;
+  }
+
+  // YARDS OF GROUND PER DEPTH TEXEL, which is not the tile footprint over the resolution. That
+  // was the first thing written here and it is wrong in two independent ways.
+  //
+  // First, the orthographic box is fitted to the eight corners of the grown world box AFTER they
+  // are rotated into light space (ShadowBaker.cpp:180-195), so its extent depends on the sun's
+  // YAW. At yaw 0 the box presents its side and the extent really is 933.3 yards at the default
+  // margin; at yaw 45 it presents its diagonal and the extent is 1319.9. Second, a light-space
+  // texel lands on flat ground stretched by 1 / sin(pitch) along the sun's bearing, and that
+  // stretch is the entire mechanism by which a low sun stair-steps a shadow edge.
+  //
+  // Measured at the defaults -- 2048 texels, 200 yard margin, pitch 47, yaw 0 -- the footprint
+  // formula reported 0.4557 yards against MCSH's 0.5208 and so never warned, while the true
+  // ground figure is 0.7289. At pitch 15 the truth is 1.7608 yards, 3.4 MCSH texels, and the
+  // panel still read 0.4557 and stayed silent. Because the old expression had no pitch or yaw
+  // term at all, "raise the sun" -- half the advice the warning gives -- could not change the
+  // number it was gated on.
+  //
+  // The extents are read back out of the projection rather than recomputed: glm::ortho puts
+  // 2 / (right - left) in [0][0] and 2 / (top - bottom) in [1][1], so they are already here and
+  // widening SunDepthMap to carry two floats it can derive would be the more error-prone half.
+  {
+    float const scale_x = std::abs(depth_map.light_projection[0][0]);
+    float const scale_y = std::abs(depth_map.light_projection[1][1]);
+
+    float const ortho_width = scale_x > 0.0f ? 2.0f / scale_x : 0.0f;
+    float const ortho_height = scale_y > 0.0f ? 2.0f / scale_y : 0.0f;
+
+    float const light_texel = std::max(ortho_width, ortho_height)
+                            / static_cast<float>(depth_map.resolution);
+
+    // sanitized() clamps pitch to [1, 90] degrees (ShadowBaker.cpp:48-50) precisely so this
+    // sine cannot reach zero; the guard is here because the clamp living in another file is not
+    // something a later reader of this line can see.
+    float const sin_pitch = std::abs
+      (std::sin(settings.sanitized().sun_pitch_degrees * 0.01745329252f));
+
+    report.depth_texel_yards = sin_pitch > 1.0e-4f ? light_texel / sin_pitch : light_texel;
+  }
+
+  std::array<std::uint8_t, 64 * 64> baked {};
+
+  // Not for_all_chunks_on_tile: that calls mapIndex.setChanged(tile) on entry (World.inl:34)
+  // whether or not anything is written, so a bake that changes nothing would still leave the
+  // tile marked unsaved and put a save prompt in front of the user. setChanged is called below,
+  // once, and only if a chunk actually changed.
+  for (unsigned chunk_z = 0; chunk_z < 16; ++chunk_z)
+  {
+    for (unsigned chunk_x = 0; chunk_x < 16; ++chunk_x)
+    {
+      MapChunk* chunk = tile->getChunk(chunk_x, chunk_z);
+
+      if (!chunk)
+      {
+        continue;
+      }
+
+      ++report.chunks_visited;
+
+      report.texels_shadowed += Noggit::Rendering::bakeChunkShadowMap
+        ( depth_map
+        , chunk->mVertices
+        , chunk->xbase
+        , chunk->zbase
+        , settings
+        , baked.data()
+        );
+
+      // Compared BEFORE the action is opened, so a chunk the bake reproduces exactly costs
+      // nothing: no snapshot, no undo entry, and -- when that is true of all 256 -- no action at
+      // all, which is what stops a re-bake with unchanged settings from pushing an empty step
+      // onto the undo stack. _shadow_map is public (MapChunk.h:106) and this is the same 4 KB
+      // comparison MapChunk::setShadowMap would do a moment later.
+      if (std::memcmp(chunk->_shadow_map, baked.data(), 64 * 64) == 0)
+      {
+        continue;
+      }
+
+      // Opened on the first chunk that is actually going to be written, and left open. Every
+      // later chunk joins this same action because beginAction returns the running one, which is
+      // what makes the whole tile a single ctrl-Z. The caller closes it; see the header.
+      if (report.chunks_changed == 0)
+      {
+        NOGGIT_ACTION_MGR->beginAction(map_view, Noggit::ActionFlags::eCHUNK_SHADOWS);
+      }
+
+      // Before the write, not after: this snapshots the chunk's current _shadow_map and that is
+      // the only copy of the pre-bake shadows that will exist.
+      NOGGIT_CUR_ACTION->registerChunkShadowChange(chunk);
+
+      chunk->setShadowMap(baked.data());
+      ++report.chunks_changed;
+    }
+  }
+
+  if (report.chunks_changed > 0)
+  {
+    mapIndex.setChanged(tile);
+  }
+
+  return report;
 }
 
 void World::swapTexture(glm::vec3 const& pos, scoped_blp_texture_reference tex)

@@ -13,6 +13,8 @@
 #include <noggit/MapTile.h> // MapTile
 #include <noggit/Misc.h>
 #include <noggit/ModelInstance.h>
+#include <noggit/rendering/ShadowBaker.hpp>
+#include <noggit/terrain/TerrainMaskQuery.hpp>
 #include <noggit/texture_set.hpp>
 #include <noggit/TileWater.hpp>
 #include <noggit/tool_enums.hpp>
@@ -20,6 +22,7 @@
 #include <noggit/World.h>
 #include <util/sExtendableArray.hpp>
 
+#include <cstring>
 #include <limits>
 #include <map>
 #include <QImage>
@@ -1078,22 +1081,41 @@ bool MapChunk::flattenTerrain ( glm::vec3 const& pos
 		  continue;
 	  }
 
+	  // MASK CLIP for both branches below. Taken once per vertex rather than once per branch so
+	  // the two paths cannot drift apart, and hoisted above the eFlattenType_Origin test because
+	  // both of them need it.
+	  float const mask_factor
+		  (Noggit::TerrainMaskQuery::factorAt(mVertices[i].x, mVertices[i].z));
+
+	  if (mask_factor <= 0.0f)
+	  {
+		  continue;
+	  }
+
 	  if (BrushType == eFlattenType_Origin)
 	  {
-		  mVertices[i].y = origin.y;
+		  // This branch ASSIGNS an absolute height rather than accumulating a delta, so the mask
+		  // cannot be folded in as a multiply the way it is everywhere else -- scaling origin.y
+		  // would drag the vertex toward y = 0, i.e. toward sea level, rather than toward the
+		  // flatten target. Interpolating from the current height is the assignment's equivalent:
+		  // factor 1 lands exactly on origin.y, factor 0 leaves the vertex untouched.
+		  mVertices[i].y = glm::mix(mVertices[i].y, origin.y, mask_factor);
 		  changed = true;
 		  continue;
 	  }
 
+    // The third argument of glm::mix is how far toward `ah` this vertex travels, so scaling it
+    // by the mask factor is precisely "flatten, but only here".
     mVertices[i].y = glm::mix
       ( 
         mVertices[i].y
       , ah
-      , BrushType == eFlattenType_Flat ? remain
+      , mask_factor *
+      ( BrushType == eFlattenType_Flat ? remain
       : BrushType == eFlattenType_Linear ? remain * (1.f - dist / radius)
       : BrushType == eFlattenType_Smooth ? pow (remain, 1.f + dist / radius)
       : throw std::logic_error ("bad brush type")
-
+      )
       );
 
     changed = true;
@@ -1172,14 +1194,29 @@ bool MapChunk::blurTerrain ( glm::vec3 const& pos
       continue;
     }
 
+    // MASK CLIP, same shape as the flatten above: the mix parameter is the fraction of the way
+    // to `target` this vertex travels, so the mask scales it directly. This test cannot be
+    // hoisted above the neighbourhood average the way flatten's was, even though the average is
+    // by far the expensive part of this loop, because `target` is what decides the raise/lower
+    // skip immediately above -- and that skip has to keep running for unmasked vertices.
+    float const mask_factor
+      (Noggit::TerrainMaskQuery::factorAt(mVertices[i].x, mVertices[i].z));
+
+    if (mask_factor <= 0.0f)
+    {
+      continue;
+    }
+
     y = glm::mix
       ( 
         y,
         target,
-        BrushType == eFlattenType_Flat ? remain
+        mask_factor *
+      ( BrushType == eFlattenType_Flat ? remain
       : BrushType == eFlattenType_Linear ? remain * (1.f - dist / radius)
       : BrushType == eFlattenType_Smooth ? pow (remain, 1.f + dist / radius)
       : throw std::logic_error ("bad brush type")
+      )
       );
 
     changed = true;
@@ -1244,6 +1281,24 @@ bool MapChunk::changeTerrainProcessVertex(glm::vec3 const& pos, glm::vec3 const&
           break;
       }
     }
+  }
+
+  // MASK CLIP. One multiply here covers all three callers of this function -- changeTerrain
+  // (MapChunk.cpp:874) and both stamp paths -- because every one of them routes its per-vertex
+  // strength through the `dt` reference this function already scales by the falloff curve.
+  // factorAt returns 1.0 whenever no mask is selected, so a build with no mask behaves exactly
+  // as it did before the feature existed.
+  //
+  // `changed` is forced false at a factor of exactly zero rather than left true with a zero dt.
+  // changeTerrain uses the return value to decide whether to register a VERTEX chunk update,
+  // which marks the tile modified and folds the chunk into the undo snapshot. Reporting a change
+  // for a vertex the mask moved by 0.0 would dirty tiles the user never edited and leave an undo
+  // entry that restores identical data.
+  if (changed)
+  {
+    float const mask_factor = Noggit::TerrainMaskQuery::factorAt(vertex.x, vertex.z);
+    dt *= mask_factor;
+    changed = mask_factor > 0.0f;
   }
 
   return changed;
@@ -1404,6 +1459,98 @@ void MapChunk::clear_shadows()
   memset(_shadow_map, 0, 64 * 64);
 
   registerChunkUpdate(ChunkUpdateFlags::SHADOW);
+}
+
+bool MapChunk::setShadow(glm::vec3 const& pos, float radius, bool add)
+{
+  ZoneScoped;
+
+  if (!(radius > 0.0f))
+  {
+    return false;
+  }
+
+  // MCSH_SHADOW_VALUE is 85 and not 255, which is the one value in this function it is possible
+  // to get wrong without noticing. The loader unpacks a set MCSH bit to 85 (MapChunk.cpp:250) and
+  // the shader darkens by that fraction of full (terrain_frag.glsl:466-467), so 85 is what every
+  // Blizzard-authored shadow looks like here. 255 would paint shadows three times as dark that
+  // still SAVE correctly, because the writer only asks whether a texel is non-zero
+  // (MapChunk.cpp:379) -- so the brush would disagree with itself across a reload.
+  std::uint8_t const value = add ? Noggit::Rendering::MCSH_SHADOW_VALUE : 0;
+
+  // Squared distance, so the inner loop needs no square root. Purely XZ: the shadow map is a plan
+  // view of the chunk and has no height axis to compare against, so a cursor hovering above the
+  // ground must paint the same disc it would paint sitting on it.
+  float const radius_squared = radius * radius;
+
+  bool changed = false;
+
+  for (int row = 0; row < 64; ++row)
+  {
+    // Texel CENTRES, matching Noggit::Rendering::mcshTexelCentre and therefore matching what the
+    // bake writes. A brush addressing texel corners and a bake addressing texel centres would
+    // disagree by half a texel, which is invisible on its own and shows up as a one-texel seam
+    // where a hand-painted shadow meets a baked one.
+    float const dz = (zbase + (static_cast<float>(row) + 0.5f) * TEXDETAILSIZE) - pos.z;
+    float const dz_squared = dz * dz;
+
+    if (dz_squared > radius_squared)
+    {
+      continue;
+    }
+
+    for (int column = 0; column < 64; ++column)
+    {
+      float const dx = (xbase + (static_cast<float>(column) + 0.5f) * TEXDETAILSIZE) - pos.x;
+
+      if (dx * dx + dz_squared > radius_squared)
+      {
+        continue;
+      }
+
+      std::uint8_t& texel = _shadow_map[row * 64 + column];
+
+      if (texel != value)
+      {
+        texel = value;
+        changed = true;
+      }
+    }
+  }
+
+  if (changed)
+  {
+    registerChunkUpdate(ChunkUpdateFlags::SHADOW);
+  }
+
+  return changed;
+}
+
+bool MapChunk::setShadowMap(std::uint8_t const* shadow_map)
+{
+  if (!shadow_map)
+  {
+    return false;
+  }
+
+  // Compared before copying so a bake that reproduces a chunk's existing shadows exactly reports
+  // no change. That matters for the status line the bake tool shows: "0 chunks changed" on a
+  // re-bake with the same settings is the correct and reassuring answer, not a sign of failure.
+  if (std::memcmp(_shadow_map, shadow_map, 64 * 64) == 0)
+  {
+    return false;
+  }
+
+  std::memcpy(_shadow_map, shadow_map, 64 * 64);
+
+  registerChunkUpdate(ChunkUpdateFlags::SHADOW);
+
+  return true;
+}
+
+bool MapChunk::shadowMapIsEmpty() const
+{
+  return !has_shadows();
 }
 
 void MapChunk::paintDetailDoodadsExclusion(glm::vec3 const& pos, float radius, bool exclusion)

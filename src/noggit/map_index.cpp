@@ -13,6 +13,7 @@
   #include <mysql/mysql.h>
 #endif
 #include <noggit/map_index.hpp>
+#include <noggit/terrain/TerrainMaskStore.hpp>
 #include <noggit/uid_storage.hpp>
 #include <noggit/application/NoggitApplication.hpp>
 #include <ClientFile.hpp>
@@ -564,6 +565,17 @@ void MapIndex::unloadTile(const TileIndex& tile)
     AsyncLoader::instance->ensure_deletable(mTiles[tile.z][tile.x].tile.get());
     mTiles[tile.z][tile.x].tile.reset();
     _n_loaded_tiles--;
+
+    // Drop this tile's composited mask blocks along with the tile itself. This call is what
+    // bounds mask memory: a composited mask block is a dense 64x64 bytes per chunk, so 4096
+    // bytes a chunk and 1,048,576 bytes for a fully dense tile. Nothing else ever frees a baked
+    // tile, so without this the field would only grow as the camera moved.
+    //
+    // Hooked HERE rather than inside the unloadTiles sweep, because this function is the single
+    // choke point every unload passes through -- both the distance sweep and the "unload any
+    // previously loaded tile" pass in setChanged call it -- and hooking the sweep would have
+    // missed the second one.
+    Noggit::TerrainMaskStore::instance()->releaseTile(tile.x, tile.z);
   }
 }
 

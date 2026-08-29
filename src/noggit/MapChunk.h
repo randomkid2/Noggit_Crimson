@@ -208,6 +208,35 @@ public:
 
   void clear_shadows();
 
+  // --- terrain shadow (MCSH) editing -----------------------------------------------------
+  //
+  // Noggit Red inherited exactly one shadow method, clear_shadows, which erases. These are the
+  // two producers it never had: a brush and the sink a bake writes through. Noggit Green has
+  // both (World::set_shadow / MapChunk::set_shadow / set_shadows) and these follow its shape,
+  // renamed to this tree's camelCase.
+  //
+  // MCSH is a 64x64 one-bit mask per chunk, composited by the client as the SUN shadow. It is a
+  // different layer from the ambient-occlusion bake, which writes per-vertex MCCV and is
+  // directionless -- see the header note in rendering/ShadowBaker.hpp for why the two must not
+  // be merged.
+
+  // Paints a disc of shadow into this chunk's shadow map. `radius` is a world distance and only
+  // the XZ plane is considered, so a brush covers the same texels whatever height the cursor is
+  // at. Returns true when at least one texel changed.
+  //
+  // Opens no action: the caller must already be inside one, because the undo snapshot has to be
+  // taken before the first texel moves and a stroke is one action across many ticks.
+  bool setShadow(glm::vec3 const& pos, float radius, bool add);
+
+  // Replaces the whole 64x64 map, for the bake. `shadow_map` must have 64*64 readable bytes.
+  // Returns true when anything changed, so a bake can report chunks it actually altered rather
+  // than chunks it merely visited.
+  bool setShadowMap(std::uint8_t const* shadow_map);
+
+  // True when no texel is set, i.e. when MapChunk::save would write no MCSH block at all and
+  // clear the has_mcsh flag (MapChunk.cpp:1756-1760). Green calls this shadow_map_is_empty.
+  bool shadowMapIsEmpty() const;
+
   void paintDetailDoodadsExclusion(glm::vec3 const& pos, float radius, bool exclusion);
 
   bool isHole(int i, int j);

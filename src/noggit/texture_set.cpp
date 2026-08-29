@@ -5,6 +5,7 @@
 #include <noggit/MapHeaders.h>
 #include <noggit/MapTile.h>
 #include <noggit/Misc.h>
+#include <noggit/terrain/TerrainMaskQuery.hpp>
 #include <noggit/texture_set.hpp>
 #include <noggit/TextureManager.h> // TextureManager, Texture
 
@@ -630,6 +631,16 @@ bool TextureSet::stampTexture(float xbase, float zbase, float x, float z, Brush*
       double sum_other_alphas = (total - current_alpha);
       double alpha_change = image_factor * (strength - current_alpha) * pressure;
 
+      // MASK CLIP, sampled at the TEXEL CENTRE rather than the corner. TerrainMask::valueAt
+      // subtracts half a texel before interpolating (TerrainMask.cpp:306-307) because mask texel
+      // centres sit at half-integer positions in its grid. MASK_TEXEL_SIZE and TEXDETAILSIZE are
+      // the same expression -- CHUNKSIZE / 64 -- so a centre sample lands exactly on one mask
+      // texel with both bilinear weights at zero, giving the mask grid and the alphamap grid a
+      // one-to-one correspondence. Passing xPos would shift the mask half a texel south-east.
+      alpha_change *= Noggit::TerrainMaskQuery::factorAt( xPos + TEXDETAILSIZE / 2.0f
+                                                        , zPos + TEXDETAILSIZE / 2.0f
+                                                        );
+
       // alpha too low, set it to 0 directly
       if (alpha_change < 0. && current_alpha + alpha_change < 1.)
       {
@@ -923,6 +934,11 @@ bool TextureSet::paintTexture(float xbase, float zbase, float x, float z, Brush*
         double current_alpha = alpha_values[tex_layer];
         double sum_other_alphas = (total - current_alpha);
         double alpha_change = (strength - current_alpha) * pressure * brush->getValue(dist);
+
+        // MASK CLIP at the texel centre, for the reason spelled out in stampTexture above.
+        alpha_change *= Noggit::TerrainMaskQuery::factorAt( xPos + TEXDETAILSIZE / 2.0f
+                                                          , zPos + TEXDETAILSIZE / 2.0f
+                                                          );
 
         // alpha too low, set it to 0 directly
         if (alpha_change < 0. && current_alpha + alpha_change < 1.)

@@ -30,6 +30,7 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QListWidget>
+#include <QOpenGLFramebufferObject>
 #include <QOpenGLFramebufferObjectFormat>
 #include <QSettings>
 
@@ -2411,6 +2412,294 @@ void WorldRender::drawMinimap ( MapTile *tile
   {
     _world->mapIndex.unloadTile(m_tile);
   }
+}
+
+bool WorldRender::renderSunDepth( TileIndex const& tile_idx
+                               , Noggit::Rendering::ShadowBakeSettings const& settings
+                               , Noggit::Rendering::SunDepthMap& out
+                               , int* out_neighbour_tiles_loaded
+                               )
+{
+  ZoneScoped;
+
+  out = Noggit::Rendering::SunDepthMap();
+
+  Noggit::Rendering::ShadowBakeSettings const clean (settings.sanitized());
+
+  MapTile* tile = _world->mapIndex.getTile(tile_idx);
+
+  if (!tile || !tile->finishedLoading())
+  {
+    return false;
+  }
+
+  // The volume the bake has to cover: this tile's footprint, and its own vertical extent rather
+  // than a guessed constant. makeSunTransform grows it by the caster margin on every side, so
+  // nothing here has to anticipate which way the light is coming from.
+  //
+  // getExtents() and not getCombinedExtents(): the box being fitted is the ground that will
+  // RECEIVE shadow, which is terrain only. Objects standing on it are casters and are covered by
+  // the caster margin instead -- folding a 300-yard WMO's bounding box into the receiver volume
+  // would stretch the orthographic box and cost depth resolution over the whole tile to no
+  // purpose.
+  auto const& extents = tile->getExtents();
+
+  glm::vec3 const min_bounds (tile->xbase, extents[0].y, tile->zbase);
+  glm::vec3 const max_bounds ( tile->xbase + TILESIZE
+                             , extents[1].y
+                             , tile->zbase + TILESIZE
+                             );
+
+  if (!Noggit::Rendering::makeSunTransform(min_bounds, max_bounds, clean, out))
+  {
+    return false;
+  }
+
+  int const resolution = clean.depth_resolution;
+
+  // Colour attachment as well as depth, even though only depth is read back. A framebuffer with
+  // no colour buffer is legal but the terrain, M2 and WMO programs all write a colour output and
+  // several of them blend; dropping the attachment would make every one of those writes undefined
+  // behaviour to no benefit, since the depth attachment is the same size either way.
+  QOpenGLFramebufferObjectFormat fmt;
+  fmt.setSamples(0);
+  fmt.setInternalTextureFormat(GL_RGBA8);
+  fmt.setAttachment(QOpenGLFramebufferObject::Depth);
+
+  QOpenGLFramebufferObject pixel_buffer(resolution, resolution, fmt);
+
+  if (!pixel_buffer.isValid())
+  {
+    // A 8192-square renderbuffer is past what some GL 4.1 drivers will allocate. Failing here and
+    // saying so beats rendering into a zero-sized target and reporting a bake that shadowed
+    // nothing.
+    return false;
+  }
+
+  // Saved before the FBO is bound, because the viewport is CONTEXT state and setting it below
+  // would otherwise be a one-way change.
+  //
+  // MapView sets the viewport in resizeGL and nowhere else (MapView.cpp:5256-5259) -- there is no
+  // per-frame glViewport in paintGL or in draw(). Qt's QOpenGLWidget is understood to set it
+  // itself before each invokeUserPaint, which is presumably why saveMinimap has got away with
+  // leaving a 512-square viewport behind since it was written; but "presumably" is not a thing to
+  // stake the whole viewport on, and if that understanding is wrong the symptom is the editor
+  // rendering at the bake's resolution into a window-sized buffer until the user happens to
+  // resize the window. Four integers is a cheap way not to depend on it.
+  GLint saved_viewport[4] = {0, 0, 0, 0};
+  gl.getIntegerv(GL_VIEWPORT, saved_viewport);
+
+  pixel_buffer.bind();
+
+  gl.viewport(0, 0, resolution, resolution);
+  gl.clearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+  // Depth writes have to be enabled for the clear to reach the depth buffer at all. draw() leaves
+  // the mask in whatever state its last pass set (ModelRender.cpp:896-906 toggles it per render
+  // flag), so this cannot be assumed.
+  gl.depthMask(GL_TRUE);
+  gl.clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+  // Default-constructed and never shown to the user. draw() dereferences this unconditionally
+  // whenever minimap_render is set (WorldRender.cpp:90 and :96), and its filter list pointers are
+  // only touched behind use_filters, which defaults false -- so a default instance is safe and is
+  // the smallest thing that satisfies the contract.
+  MinimapRenderSettings depth_pass_settings;
+  depth_pass_settings.draw_shadows = false;
+  depth_pass_settings.draw_water = false;
+  depth_pass_settings.use_filters = false;
+
+  WorldRenderParams render_params;
+
+  render_params.cursorRotation = 0.0f;
+  render_params.cursor_type = CursorType::NONE;
+  render_params.brush_radius = 0.0f;
+  render_params.show_unpaintable_chunks = false;
+  render_params.draw_only_inside_light_sphere = false;
+  render_params.draw_wireframe_light_sphere = false;
+  render_params.alpha_light_sphere = 0.0f;
+  render_params.inner_radius_ratio = 0.0f;
+  render_params.angle = 0.0f;
+  render_params.orientation = 0.0f;
+  render_params.use_ref_pos = false;
+  render_params.angled_mode = false;
+  render_params.draw_paintability_overlay = false;
+
+  // NOT editing_mode::minimap. draw() reads minimap_render_settings->selected_tiles only when the
+  // editing mode is minimap (WorldRender.cpp:355-356), and a shadow bake must never be filtered
+  // down to whatever tiles somebody last ticked in the minimap tool.
+  render_params.editing_mode = editing_mode::shadow;
+
+  render_params.camera_moved = true;
+  render_params.draw_mfbo = false;
+  render_params.draw_terrain = true;
+  render_params.draw_wmo = clean.include_wmos;
+
+  // Water is a receiver, never a caster: the client does not composite MCSH under liquid and a
+  // river surface drawn into the depth buffer would shadow the riverbed beneath it.
+  render_params.draw_water = false;
+
+  render_params.draw_wmo_doodads = clean.include_models;
+  render_params.draw_models = clean.include_models;
+
+  // Animations off so a bake is reproducible. With them on, the shadow a windmill or a swaying
+  // tree casts depends on the value of _world->animtime at the instant the button was pressed,
+  // and two bakes of the same tile with the same settings would differ.
+  render_params.draw_model_animations = false;
+
+  render_params.draw_models_with_box = false;
+
+  // Hidden models still cast. Hiding a model is an editor convenience for seeing past it, not a
+  // statement that it is absent from the world, and a bake that honoured it would bake the
+  // editor's view state into the map data.
+  render_params.draw_hidden_models = true;
+
+  render_params.draw_sky = false;
+  render_params.draw_skybox = false;
+  render_params.draw_fog = false;
+  render_params.ground_editing_brush = eTerrainType::eTerrainType_Linear;
+  render_params.water_layer = 0;
+  render_params.display_mode = display_mode::in_3D;
+  render_params.draw_occlusion_boxes = false;
+
+  // The one thing this really needs from the minimap path, and the reason it is set even though
+  // nothing about this is a minimap. It makes the tile loop at WorldRender.cpp:138-149 accept
+  // every loaded tile with no frustum test, force setObjectsFrustumCullTest(2) so M2 and WMO
+  // instances skip theirs, and clear the occlusion flag each tile carries from the interactive
+  // view. Without it a caster the camera cannot currently see is culled and casts nothing -- and
+  // the camera is pointing wherever the user left it, so the bake would depend on the view.
+  render_params.minimap_render = true;
+
+  render_params.draw_wmo_exterior = true;
+  render_params.render_select_m2_aabb = false;
+  render_params.render_select_m2_collission_bbox = false;
+  render_params.render_select_wmo_aabb = false;
+  render_params.render_select_wmo_groups_bounds = false;
+  render_params.draw_db_spawns = false;
+  render_params.db_spawns = nullptr;
+
+  glm::vec3 const tile_centre ( tile->xbase + TILESIZE * 0.5f
+                              , (extents[0].y + extents[1].y) * 0.5f
+                              , tile->zbase + TILESIZE * 0.5f
+                              );
+
+  int neighbours_loaded = 0;
+
+  for (MapTile* loaded : _world->mapIndex.loaded_tiles())
+  {
+    if (loaded && loaded != tile)
+    {
+      ++neighbours_loaded;
+    }
+  }
+
+  if (out_neighbour_tiles_loaded)
+  {
+    *out_neighbour_tiles_loaded = neighbours_loaded;
+  }
+
+  // Distance culling is the one cull minimap_render does NOT disable: draw() still skips a tile
+  // whose camDist exceeds _cull_distance (WorldRender.cpp:493) and an M2 that fails
+  // isInRenderDist (:620). _cull_distance is recomputed from _view_distance inside draw()
+  // (:270) with fog off, so raising _view_distance for the duration is what keeps a caster on a
+  // neighbouring tile in the scene. camera_pos is the TILE centre rather than the sun's eye,
+  // which is what makes that distance mean "how far from the tile being baked".
+  float const saved_view_distance = _view_distance;
+
+  // Two tile diagonals past the caster margin, and only ever RAISED. std::max is the whole point
+  // of this line: the interactive view distance is a user setting that defaults to 2000 plus a
+  // tile radius (WorldRender.cpp:44), which is already larger than the 1708 this computes at the
+  // default margin -- so assigning unconditionally would LOWER the cull distance for the bake and
+  // drop casters the interactive view was happily drawing. Generous on purpose either way: this
+  // is a once-per-tile finishing operation, and over-including costs some wasted rasterisation
+  // while under-including costs a silently missing shadow.
+  _view_distance = std::max( _view_distance
+                           , clean.caster_margin_yards + 2.0f * static_cast<float>(TILE_RADIUS)
+                           );
+
+  // The terrain parameter block is snapshotted and put back below, and that is NOT tidiness.
+  // draw() overwrites thirteen of its fields whenever minimap_render is set (WorldRender.cpp:96-
+  // 110) and NOTHING restores them: draw_shadows in particular is only ever written from the
+  // View menu's own toggle (MapView.cpp:3879), which fires on change rather than per frame. Leave
+  // it clobbered and the editor stops compositing MCSH the moment a bake finishes -- so the tool
+  // whose entire purpose is producing shadows would appear, every single time, to have produced
+  // none. The overlay flags (impass, area id, paintability, wireframe, ground effect) are set
+  // the same way by their tools and would go out the same door.
+  OpenGL::TerrainParamsUniformBlock const saved_terrain_params = _terrain_params_ubo_data;
+
+  bool read_back = false;
+
+  try
+  {
+    // Single-shot render: WMOGroupRender::upload() must not take its interactive bail-and-retry
+    // path, because there is no next frame to retry in and a WMO whose batch textures were still
+    // queued would simply be missing from the depth buffer and cast nothing. Same reasoning as
+    // saveMinimap, which carries the longer note.
+    WMOGroupRender::ScopedBlockingUpload const blocking_upload_guard;
+
+    // View and projection kept SEPARATE rather than collapsed into the projection slot with an
+    // identity model-view. The product is all that decides gl_Position, so collapsing them would
+    // put the geometry in the right place -- but m2_vert.glsl:96-107 uses model_view on its own
+    // to build the view-space position that generates environment-map UVs and camera_dist. Feed
+    // it an identity and world coordinates arrive where view coordinates are expected, which
+    // changes which texels an alpha-tested doodad discards, and therefore changes the outline of
+    // the shadow a tree casts.
+    draw( out.light_view
+        , out.light_projection
+        , glm::vec3()
+        , glm::vec4()
+        , glm::vec3()
+        , tile_centre
+        , &depth_pass_settings
+        , render_params
+        );
+
+    // glFinish and not gl.finish: the OpenGL::context wrapper does not expose finish (it is
+    // absent from src/opengl/context.hpp), and saveMinimap reaches for the raw entry point in the
+    // same way at WorldRender.cpp:2724. The barrier itself is required -- glReadPixels below is
+    // specified to block until the pixels are ready, but the FBO is released immediately
+    // afterwards and finishing first keeps that ordering explicit rather than implied.
+    glFinish();
+
+    out.depth.resize(static_cast<std::size_t>(resolution) * static_cast<std::size_t>(resolution));
+
+    // 4-byte rows at every resolution used here, so the default GL_PACK_ALIGNMENT of 4 cannot
+    // mis-stride: a row is `resolution` floats and resolution is a multiple of 1024.
+    gl.readPixels(0, 0, resolution, resolution, GL_DEPTH_COMPONENT, GL_FLOAT, out.depth.data());
+
+    out.resolution = resolution;
+    read_back = true;
+  }
+  catch (...)
+  {
+    // The guard above and the FBO below both have to be unwound whatever happens, and this
+    // function is reached from a button handler rather than from paintGL -- but an exception
+    // escaping toward Qt's event loop past a bound framebuffer would leave the interactive
+    // renderer drawing into a dead target for the rest of the session.
+    pixel_buffer.release();
+    gl.viewport(saved_viewport[0], saved_viewport[1], saved_viewport[2], saved_viewport[3]);
+    _view_distance = saved_view_distance;
+    _terrain_params_ubo_data = saved_terrain_params;
+    _need_terrain_params_ubo_update = true;
+    throw;
+  }
+
+  pixel_buffer.release();
+  gl.viewport(saved_viewport[0], saved_viewport[1], saved_viewport[2], saved_viewport[3]);
+  _view_distance = saved_view_distance;
+
+  // Restored and marked dirty, so the next interactive frame uploads the user's own flags again
+  // rather than the ones this pass forced. See the note where the snapshot is taken.
+  _terrain_params_ubo_data = saved_terrain_params;
+  _need_terrain_params_ubo_update = true;
+
+  if (!read_back || !out.valid())
+  {
+    out = Noggit::Rendering::SunDepthMap();
+    return false;
+  }
+
+  return true;
 }
 
 bool WorldRender::saveMinimap(TileIndex const& tile_idx, MinimapRenderSettings* settings, std::optional<QImage>& combined_image)
