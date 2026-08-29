@@ -97,6 +97,7 @@
 #include <noggit/tools/AreaTriggerTool.hpp>
 #include <noggit/tools/ErosionTool.hpp>
 #include <noggit/tools/ShadowTool.hpp>
+#include <noggit/tools/TerrainMaskTool.hpp>
 #include <noggit/StringHash.hpp>
 #include <noggit/application/NoggitApplication.hpp>
 
@@ -4250,6 +4251,22 @@ void MapView::setupToolsMenu()
         dialog->show();
       }
     );
+
+    // The brush that touches a mask up by hand. A SECOND entry point rather than the only
+    // one -- the tool has a button in the left strip like every other tool -- and it is put
+    // in the Tools menu directly under "Terrain Masks..." because that is where a user who
+    // has just derived a mask is standing when they discover the filter stack caught the
+    // quarry wall along with the cliffs.
+    auto paint_terrain_mask (new QAction("Paint Terrain Mask", this));
+    paint_terrain_mask->setStatusTip
+      ("Switch to the mask brush: shift to paint into the active mask, ctrl to erase.");
+    menu->addAction(paint_terrain_mask);
+
+    connect(paint_terrain_mask, &QAction::triggered, this, [this]
+      {
+        set_editing_mode(editing_mode::terrain_mask);
+      }
+    );
 }
 
 void MapView::setupHelpMenu()
@@ -4462,6 +4479,16 @@ void MapView::setupHotkeys()
   addHotkey(Qt::Key_Plus, MOD_alt, "increaseRadius"_hash);
   addHotkey(Qt::Key_Minus, MOD_alt, "decreaseRadius"_hash);
 
+  // MASK STROKE HISTORY, AND DELIBERATELY NOT Ctrl+Z. Ctrl+Z is the Edit menu's QAction a
+  // few hundred lines up and drives ActionManager, which restores MCNK data; a mask is not
+  // MCNK data and must not share the key -- the argument is in TerrainMaskHistory.hpp.
+  //
+  // Only TerrainMaskTool registers these two names, and Tool::hotkeyCondition returns false
+  // for a name a tool never registered (Tool.cpp:42-50), so in every other mode this binding
+  // does not match and the key falls through exactly as it does today.
+  addHotkey(Qt::Key_Z, MOD_alt, "maskUndoStroke"_hash);
+  addHotkey(Qt::Key_Z, MOD_alt | MOD_shift, "maskRedoStroke"_hash);
+
   addHotkey (Qt::Key_1, MOD_shift, [this] { _camera.move_speed = 15.0f; });
   addHotkey (Qt::Key_2, MOD_shift, [this] { _camera.move_speed = 50.0f; });
   addHotkey (Qt::Key_3, MOD_shift, [this] { _camera.move_speed = 200.0f; });
@@ -4647,6 +4674,10 @@ void MapView::createGUI()
   // Terrain shadows are editing_mode::shadow = 16, appended after erosion for the same
   // reason: position in this sequence IS the enumerator.
   _tools.emplace_back(std::make_unique<Noggit::ShadowTool>(this))->setupUi(_tool_panel_dock);
+  // The mask brush is editing_mode::terrain_mask = 17, appended last for the same reason
+  // again. It is the only tool in this list that edits no ADT data at all -- it paints a
+  // project-side mask that decides where the seventeen above it are allowed to apply.
+  _tools.emplace_back(std::make_unique<Noggit::TerrainMaskTool>(this))->setupUi(_tool_panel_dock);
 
   // End combined dock
 
@@ -6850,24 +6881,50 @@ void MapView::save(save_mode mode)
     makeCurrent();
     OpenGL::context::scoped_setter const _ (::gl, context());
 
+    // saveTile/saveChanged/saveall each return false when at least one ADT could not be written,
+    // having already logged the path and queued a modal naming it. Discarding that answer and then
+    // announcing "Map saved" is worse than saying nothing: the failure dialog is posted with
+    // Qt::QueuedConnection, so the reassuring status message would paint FIRST and be contradicted
+    // only when the dialog arrives on top of it.
+    bool saved = true;
+
     switch (mode)
     {
-    case save_mode::current: _world->mapIndex.saveTile(TileIndex(_camera.position), _world.get()); break;
-    case save_mode::changed: _world->mapIndex.saveChanged(_world.get()); break;
-    case save_mode::all:     _world->mapIndex.saveall(_world.get()); break;
+    case save_mode::current: saved = _world->mapIndex.saveTile(TileIndex(_camera.position), _world.get()); break;
+    case save_mode::changed: saved = _world->mapIndex.saveChanged(_world.get()); break;
+    case save_mode::all:     saved = _world->mapIndex.saveall(_world.get()); break;
     }
+
     // write wdl, we update wdl data prior in the mapIndex saving fucntions above
-    _world->horizon.save_wdl(_world.get());
+    //
+    // Runs even when a tile failed, because the WDL is derived from tiles that DID save and the
+    // whole-map policy here is continue-and-report rather than stop at the first casualty.
+    if (!_world->horizon.save_wdl(_world.get()))
+    {
+      saved = false;
+    }
 
     for (auto&& dbc : _dirty_dbcs)
     {
       dbc->save();
     }
 
-    NOGGIT_ACTION_MGR->purge();
+    // Undo history is the only remaining route back to work that never reached disk, so it is kept
+    // when anything failed. A failed tile stays `changed`, stays loaded and stays marked on the
+    // minimap; purging here would leave the user looking at unsaved edits they can no longer undo
+    // or reconstruct. Retaining the history costs memory. Purging it costs the session.
+    if (saved)
+    {
+      NOGGIT_ACTION_MGR->purge();
+    }
+
     AsyncLoader::instance->reset_object_fail();
 
-    _main_window->statusBar()->showMessage("Map saved", 2000);
+    _main_window->statusBar()->showMessage
+      ( saved ? "Map saved"
+              : "Map NOT fully saved -- see the error dialog and the log for which files failed"
+      , saved ? 2000 : 10000
+      );
 
   }
   else

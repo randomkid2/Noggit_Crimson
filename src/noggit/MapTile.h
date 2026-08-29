@@ -119,6 +119,19 @@ public:
   [[nodiscard]]
   bool pinned() const;
 
+  // A third reason a tile must not be released, and not the same as either of the two above: the
+  // last attempt to write this tile's ADT did not reach the disk, so the only surviving copy of
+  // those edits is this object. `changed` cannot carry it, because the six export paths in
+  // World.cpp call MapIndex::unsetChanged and then MapIndex::unloadTile unconditionally after
+  // saveTile (World.cpp:2249-2255, 3310-3317, 4358-4364, 4421-4427, 4479-4485, 4531-4537), which
+  // clears the flag and drops the tile whether or not the write worked.
+  //
+  // False for every tile that has never been saved, so it costs nothing in normal streaming: it
+  // can only become true after MapTile::save has actually tried and failed, and it goes back to
+  // false the moment a later save succeeds.
+  [[nodiscard]]
+  bool lastSaveFailed() const;
+
   bool _was_rendered_last_frame = false;
 
   bool intersect (math::ray const&, selection_result*);
@@ -128,10 +141,19 @@ public:
   void getVertexInternal(float x, float z, glm::vec3* v);
 
 	void CropWater();
-  void saveTile(World* world);
+
+  // Returns whether the ADT is on disk. False means the write failed and the previous file was
+  // left exactly as it was, so `changed` must NOT be cleared for this tile: MapIndex::unloadTiles
+  // refuses to release a tile whose `changed` flag is set, and that refusal is the only thing
+  // keeping the edits alive in memory once the disk copy could not be replaced.
+  //
+  // Deliberately not [[nodiscard]]. Six call sites in World.cpp ignore the result today and the
+  // user is told about the failure by Noggit::reportSaveFailure regardless of who checks; making
+  // those six a warning would be noise, not safety.
+  bool saveTile(World* world);
 
 private:
-  void save(World* world, bool save_using_mclq_liquids);
+  bool save(World* world, bool save_using_mclq_liquids);
 
 public:
 
@@ -206,6 +228,10 @@ private:
   // Read by MapIndex::unloadTiles from the main thread while pin()/unpin() can be called from a
   // dialog that is pumping the event loop, so it is atomic for the same reason `changed` is.
   std::atomic<int> _pin_count {0};
+
+  // Written by MapTile::save and read by MapIndex::unloadTile and MapIndex::unsetChanged. Atomic
+  // for the same reason as the two above: saving runs from paths that are not all on one thread.
+  std::atomic<bool> _last_save_failed {false};
 
   bool _extents_dirty = true;
   bool _combined_extents_dirty = true;

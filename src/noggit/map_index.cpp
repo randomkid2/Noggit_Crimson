@@ -13,6 +13,7 @@
   #include <mysql/mysql.h>
 #endif
 #include <noggit/map_index.hpp>
+#include <noggit/SafeFileWrite.hpp>
 #include <noggit/terrain/TerrainMaskStore.hpp>
 #include <noggit/uid_storage.hpp>
 #include <noggit/application/NoggitApplication.hpp>
@@ -25,8 +26,10 @@
 #include <QRegExp>
 #include <QFile>
 
+#include <filesystem>
 #include <forward_list>
 #include <sstream>
+#include <string>
 
 MapIndex::TileRange<false> MapIndex::loaded_tiles()
 {
@@ -214,21 +217,54 @@ MapIndex::MapIndex (const std::string &pBasename, int map_id, World* world,
   loadMinimapMD5translate();
 }
 
-void MapIndex::saveall (World* world)
+// WHOLE-MAP FAILURE POLICY: keep going, and report every failure at the end.
+//
+// Saving a map writes up to 4096 independent files. The alternative -- stop at the first failure --
+// was rejected for three measured reasons.
+//
+// First, stopping cannot save anything that continuing loses. Each tile is its own file and its own
+// atomic replace; tile 41 is not made any safer by refusing to attempt it after tile 40 failed. If
+// the cause is local (one read-only ADT, one file the client has open, one path the antivirus is
+// scanning) then stopping punishes up to 4095 healthy tiles for one sick one, and the user has no
+// way to find out which of the rest would have worked.
+//
+// Second, continuing is now cheap and harmless. Every attempt writes a sibling temp file and only
+// renames it into place once it is complete, so a tile that fails costs one create and one delete
+// and leaves its destination byte-for-byte as it was. Before this change continuing WOULD have been
+// the wrong answer, because every attempt truncated a real ADT first.
+//
+// Third, and this is the part that actually loses work: `changed` is now cleared only for tiles
+// that reached the disk. MapIndex::unloadTiles refuses to release a tile whose `changed` flag is
+// set, so a tile that failed to save stays in memory and stays marked on the minimap, and the user
+// can fix the cause and save again. The old code cleared `changed` unconditionally after a save
+// call that could not report failure -- that combination is what turned a failed write into
+// permanently lost edits, and it is the same combination in both loops below.
+bool MapIndex::saveall (World* world)
 {
   world->wait_for_all_tile_updates();
 
   saveMaxUID();
 
+  bool all_saved (true);
+
   for (MapTile* tile : loaded_tiles())
   {
     world->horizon.update_horizon_tile(tile);
-    tile->saveTile(world);
-    tile->changed = false;
+
+    if (tile->saveTile(world))
+    {
+      tile->changed = false;
+    }
+    else
+    {
+      all_saved = false;
+    }
   }
+
+  return all_saved;
 }
 
-void MapIndex::save()
+bool MapIndex::save()
 {
   std::stringstream filename;
   filename << "World\\Maps\\" << basename << "\\" << basename << ".wdt";
@@ -316,13 +352,25 @@ void MapIndex::save()
     //  }
   }
 
-  BlizzardArchive::ClientFile f(filename.str(), Noggit::Application::NoggitApplication::instance()->clientData(),
-                                BlizzardArchive::ClientFile::NEW_FILE);
-  f.setBuffer(wdtFile.all_data());
-  f.save();
-  f.close();
+  // Was BlizzardArchive::ClientFile::save(), which truncated the real WDT at open() and never
+  // checked the stream afterwards (ClientFile.cpp:139-150). Losing the WDT is worse than losing
+  // one ADT: it is the map's tile table, so a truncated one makes every tile of the map
+  // unreachable at once. Same bytes as before -- wdtFile.all_data() is what setBuffer was given.
+  BlizzardArchive::Listfile::FileKey const file_key (filename.str());
+
+  std::filesystem::path const target
+    ( Noggit::Application::NoggitApplication::instance()->clientData()->getDiskPath (file_key) );
+
+  if (!Noggit::writeFileGuarded (target, wdtFile.all_data()))
+  {
+    // `changed` deliberately stays set, so that the next save attempt writes the WDT again rather
+    // than believing the tile table on disk matches the one in memory.
+    return false;
+  }
 
   changed = false;
+
+  return true;
 }
 
 void MapIndex::enterTile(const TileIndex& tile)
@@ -405,7 +453,27 @@ void MapIndex::unsetChanged(const TileIndex& tile)
   // change the changed flag of the map tile
   if (hasTile(tile))
   {
-    mTiles[tile.z][tile.x].tile->changed = false;
+    // Null-checked because hasTile() above is only a WDT flag test (flags & 1), NOT a statement
+    // that the tile is loaded or that its ADT exists. World::for_tile_at_force guards saveTile
+    // with `if (tile)` and then calls markOnDisc/unsetChanged/unloadTile unconditionally, so a WDT
+    // that lists a tile whose ADT was never written -- the ordinary shape of a custom or WMO-only
+    // map, and the same shape that used to crash the UID scan -- arrives here with a null tile.
+    MapTile* const map_tile = mTiles[tile.z][tile.x].tile.get();
+
+    if (!map_tile)
+    {
+      return;
+    }
+
+    // Refuses to call a tile clean when the last attempt to write its ADT failed. Every caller of
+    // this reaches it straight after a saveTile that used to be unable to report anything, so
+    // "we just saved it" was an assumption rather than a fact.
+    if (map_tile->lastSaveFailed())
+    {
+      return;
+    }
+
+    map_tile->changed = false;
   }
 }
 
@@ -558,6 +626,27 @@ void MapIndex::unloadTile(const TileIndex& tile)
   // unloads a tile with given cords
   if (tileLoaded(tile))
   {
+    // A third reason to keep a tile, alongside the `changed` and pinned() cases in unloadTiles
+    // above. Unlike that sweep, this function releases whatever it is given, and the six export
+    // paths in World.cpp call it right after unsetChanged and a saveTile whose result they ignore
+    // (World.cpp:2249-2255, 3310-3317, 4358-4364, 4421-4427, 4479-4485, 4531-4537). Without this
+    // check, an ADT that could not be written would be followed immediately by the destruction of
+    // the only remaining copy of those edits -- the file survives the failed write now, but the
+    // work done since the last good save would not.
+    //
+    // Costs nothing in normal use: lastSaveFailed() is false for every tile that has never been
+    // saved, which includes every tile the renderer streams out, and it goes false again as soon
+    // as a save succeeds. The price of being wrong here is one retained tile of memory; the price
+    // of the other answer is the user's session.
+    if (mTiles[tile.z][tile.x].tile->lastSaveFailed())
+    {
+      Log << "Keeping tile " << tile.x << "-" << tile.z
+          << " loaded: its last save failed, so unloading it would discard the only copy of its "
+             "changes." << std::endl;
+
+      return;
+    }
+
     // either log before or don't use a reference for the tile/make a copy
     // otherwise it can be deleted before the log because it comes from the adt itself (see unloadTiles)
     Log << "Unloading Tile " << tile.x << "-" << tile.z << std::endl;
@@ -583,6 +672,19 @@ void MapIndex::markOnDisc(const TileIndex& tile, bool mto)
 {
   if(tile.is_valid())
   {
+    // The third and last member of the sequence the six World.cpp export paths run after a
+    // saveTile whose result they ignore: markOnDisc, unsetChanged, unloadTile. The other two now
+    // consult lastSaveFailed(); without this one, a tile whose first-ever write failed would be
+    // recorded as present on disc when no file exists there, and isTileExternal() would then
+    // answer yes for a path that cannot be read.
+    //
+    // Only the true direction is refused. Marking a tile as NOT on disc is always safe and is how
+    // a deletion is recorded, so it must never be blocked.
+    if (mto && tileLoaded(tile) && mTiles[tile.z][tile.x].tile->lastSaveFailed())
+    {
+      return;
+    }
+
     mTiles[tile.z][tile.x].onDisc = mto;
   }
 }
@@ -593,39 +695,56 @@ bool MapIndex::isTileExternal(const TileIndex& tile) const
   return tile.is_valid() && mTiles[tile.z][tile.x].onDisc;
 }
 
-void MapIndex::saveTile(const TileIndex& tile, World* world, bool save_unloaded)
+bool MapIndex::saveTile(const TileIndex& tile, World* world, bool save_unloaded)
 {
   world->wait_for_all_tile_updates();
 
 	// save given tile
 	if (save_unloaded)
   {
-    auto filepath = std::filesystem::path (Noggit::Project::CurrentProject::get()->ProjectPath)
-                    / BlizzardArchive::ClientData::normalizeFilenameInternal (mTiles[tile.z][tile.x].tile->file_key().filepath());
-
-    QFile file(filepath.string().c_str());
-    file.open(QIODevice::WriteOnly);
-
+    // The QFile that used to stand here opened the destination ADT with QIODevice::WriteOnly,
+    // which truncates it, wrote nothing at all, and let the handle close at the end of the
+    // statement's scope. MapTile::saveTile then produced the real file. So the tile on disk was
+    // destroyed a measurable interval before its replacement even began to be built, and any
+    // failure in between -- including the two "filename changed during save" bail-outs in
+    // MapTile::save -- left a zero-byte ADT. Nothing depended on the file existing first: the
+    // writer creates its own parent directories, and the ClientFile constructor used for a new
+    // file never reads the destination.
     mTiles[tile.z][tile.x].tile->initEmptyChunks();
-    mTiles[tile.z][tile.x].tile->saveTile(world);
-    return;
+
+    return mTiles[tile.z][tile.x].tile->saveTile(world);
   }
 
 	if (tileLoaded(tile))
 	{
     saveMaxUID();
     world->horizon.update_horizon_tile(mTiles[tile.z][tile.x].tile.get());
-		mTiles[tile.z][tile.x].tile->saveTile(world);
+
+    // `changed` is deliberately left exactly as this function found it. It never cleared the flag
+    // before either, and that direction of the asymmetry is safe -- a tile wrongly believed dirty
+    // is only kept in memory and re-saved, whereas a tile wrongly believed clean is released and
+    // lost. Making it symmetric would let unloadTiles release a tile it currently keeps, which is
+    // a lifetime change and not a write-safety one.
+    return mTiles[tile.z][tile.x].tile->saveTile(world);
 	}
+
+  return true;
 }
 
-void MapIndex::saveChanged (World* world, bool save_unloaded)
+// Continue-and-report, for the reasons argued above MapIndex::saveall.
+bool MapIndex::saveChanged (World* world, bool save_unloaded)
 {
   world->wait_for_all_tile_updates();
 
+  bool all_saved (true);
+
   if (changed)
   {
-    save();
+    // Not an early return even though this is the map's tile table. The ADTs are self-contained
+    // files; a WDT that could not be replaced does not make the ADT that CAN be replaced any less
+    // worth writing, and the old WDT still on disk describes the same 64x64 grid unless tiles were
+    // added or removed this session.
+    all_saved = save();
   }
 
   if (!save_unloaded)
@@ -648,21 +767,42 @@ void MapIndex::saveChanged (World* world, bool save_unloaded)
 
         if (mTiles[i][j].flags & 0x1)
         {
-          QFile file(filepath.string().c_str());
-          file.open(QIODevice::WriteOnly);
-
+          // The QFile that stood here opened the destination ADT WriteOnly -- truncating it to
+          // zero bytes -- and wrote nothing, leaving MapTile::saveTile to produce the real file
+          // afterwards. See MapIndex::saveTile for the same removal and the same reasoning.
           mTiles[i][j].tile->initEmptyChunks();
-          mTiles[i][j].tile->saveTile(world);
-          mTiles[i][j].tile->changed = false;
+
+          if (mTiles[i][j].tile->saveTile(world))
+          {
+            mTiles[i][j].tile->changed = false;
+          }
+          else
+          {
+            all_saved = false;
+          }
         }
         else
         {
+          // Deliberate deletion: the WDT no longer flags this tile as present, so the stale ADT
+          // has to go. Checked now because a failure here leaves a file the client will still
+          // load, and silently disagreeing with the WDT is its own kind of lost work.
           QFile file(filepath.string().c_str());
-          file.remove();
+
+          if (file.exists() && !file.remove())
+          {
+            Noggit::reportSaveFailure
+              ( filepath
+              , "the tile was removed from the map but its ADT could not be deleted: "
+                + file.errorString().toStdString()
+              );
+
+            all_saved = false;
+          }
         }
       }
     }
-    return;
+
+    return all_saved;
   }
 
   for (MapTile* tile : loaded_tiles())
@@ -670,10 +810,23 @@ void MapIndex::saveChanged (World* world, bool save_unloaded)
     if (tile->changed.load())
     {
       world->horizon.update_horizon_tile(tile);
-      tile->saveTile(world);
-      tile->changed = false;
+
+      // Cleared ONLY on success. This assignment used to be unconditional, next to a saveTile
+      // that could not report a failure, so a tile whose ADT had just been truncated was marked
+      // clean; unloadTiles was then free to release it, and the edits were gone from the disk and
+      // from memory at once. That pair was the largest data-loss path in the program.
+      if (tile->saveTile(world))
+      {
+        tile->changed = false;
+      }
+      else
+      {
+        all_saved = false;
+      }
     }
   }
+
+  return all_saved;
 }
 
 bool MapIndex::hasAGlobalWMO() const
@@ -1413,33 +1566,87 @@ void MapIndex::saveMinimapMD5translate()
 
   QString filepath = str + "/textures/minimap/md5translate.trs";
 
-  QFile file = QFile(filepath);
+  // Written to a sibling and renamed, like every other save in this file. md5translate.trs is the
+  // whole map's minimap index: truncate it and every minimap tile becomes unfindable at once, and
+  // the file is rebuilt only by re-rendering the minimaps.
+  //
+  // Unlike the ADT and WDT writers this one keeps its own QFile and QTextStream instead of handing
+  // a buffer to writeFileAtomically, because QIODevice::Text rewrites every "\n" as "\r\n" on
+  // Windows. Reproducing that by hand would be a change to WHAT is written; pointing the identical
+  // stream at the temp file is not.
+  QString const temporary_path = filepath + ".tmp";
+
+  QFile file = QFile(temporary_path);
   if (file.open(QIODevice::WriteOnly | QIODevice::Text | QFile::Truncate))
   {
-    QTextStream out(&file);
+    // Both halves are needed. QTextStream::status() is the only thing that remembers a write that
+    // failed part way through, because QFileDevice::close() calls unsetError() when its own final
+    // flush and close both succeed and would erase that history; QFile::error() is the only thing
+    // that sees a failure in that final flush or close. Neither alone covers a full disk.
+    bool text_ok (false);
 
-    auto const& minimap_md5translate = Noggit::Application::NoggitApplication::instance()->clientData()->_minimap_md5translate;
-
-    for (auto it = minimap_md5translate.begin(); it != minimap_md5translate.end(); ++it)
     {
-      out << "dir: " << it->first.c_str() << "\n"; // save dir
+      QTextStream out(&file);
 
-      for (auto it_ = it->second.begin(); it_ != it->second.end(); ++it_)
+      auto const& minimap_md5translate = Noggit::Application::NoggitApplication::instance()->clientData()->_minimap_md5translate;
+
+      for (auto it = minimap_md5translate.begin(); it != minimap_md5translate.end(); ++it)
       {
-        out << it_->first.c_str() << "\t" << it_->second.c_str() << "\n";
+        out << "dir: " << it->first.c_str() << "\n"; // save dir
+
+        for (auto it_ = it->second.begin(); it_ != it->second.end(); ++it_)
+        {
+          out << it_->first.c_str() << "\t" << it_->second.c_str() << "\n";
+        }
       }
+
+      // The QTextStream buffers, so it has to be flushed into the QFile before the QFile is
+      // closed and questioned. Scoping it here is what guarantees the order.
+      out.flush();
+
+      text_ok = (out.status() == QTextStream::Ok);
     }
 
     file.close();
+
+    // Asked after close() for the same reason DBCFile::save asks after close(): a full disk is
+    // reported at the final flush, not at any individual write.
+    if (!text_ok || file.error() != QFileDevice::NoError)
+    {
+      QString const message = file.errorString();
+      file.remove();
+
+      Noggit::reportSaveFailure
+        ( std::filesystem::path (filepath.toStdString())
+        , "writing the minimap index failed: " + message.toStdString()
+        );
+    }
+    else
+    {
+      std::string commit_error;
+
+      if (!Noggit::commitReplacementFile ( std::filesystem::path (temporary_path.toStdString())
+                                         , std::filesystem::path (filepath.toStdString())
+                                         , &commit_error
+                                         )
+         )
+      {
+        Noggit::reportSaveFailure (std::filesystem::path (filepath.toStdString()), commit_error);
+      }
+    }
   }
   else
   {
     LogError << "Failed saving md5translate.trs. File can't be opened." << std::endl;
+
+    // The old code stopped at that log line. Losing the minimap index without being told means
+    // discovering it the next time the map is opened, with nothing left to recover from.
+    Noggit::reportSaveFailure
+      ( std::filesystem::path (filepath.toStdString())
+      , "could not open " + temporary_path.toStdString() + " for writing: "
+        + file.errorString().toStdString()
+      );
   }
-
-
-
-
 }
 
 void MapIndex::addTile(const TileIndex& tile)
@@ -1645,11 +1852,16 @@ void MapIndex::create_empty_wdl() const
     }
     delete[] mare_offsets;
 
-    BlizzardArchive::ClientFile f(filename.str(), Noggit::Application::NoggitApplication::instance()->clientData(),
-    BlizzardArchive::ClientFile::NEW_FILE);
-    f.setBuffer(wdlFile.all_data());
-    f.save();
-    f.close();
+    // Same replacement as the WDT above. This one is called from the map creation wizard
+    // (MapCreationWizard.cpp:934) on a map that may already have a hand-authored low-detail mesh,
+    // and truncate-then-write would destroy it on any failure. Bytes unchanged: wdlFile.all_data()
+    // is exactly what setBuffer received.
+    BlizzardArchive::Listfile::FileKey const file_key (filename.str());
+
+    std::filesystem::path const target
+      ( Noggit::Application::NoggitApplication::instance()->clientData()->getDiskPath (file_key) );
+
+    Noggit::writeFileGuarded (target, wdlFile.all_data());
 }
 
 MapTileEntry::~MapTileEntry()

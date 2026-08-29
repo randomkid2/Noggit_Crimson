@@ -183,8 +183,16 @@ public:
   void setFlag(bool to, glm::vec3 const& pos, uint32_t flag);
   bool has_unsaved_changes(const TileIndex& tile) const;
 
-  void saveTile(const TileIndex& tile, World*, bool save_unloaded = false);
-  void saveChanged (World*, bool save_unloaded = false);
+  // saveTile, saveChanged, save and saveall all return whether everything they were asked to
+  // write actually reached the disk.
+  //
+  // Not [[nodiscard]]: MapView drives three of them from menu actions (MapView.cpp:6855-6857) and
+  // ignores the result, and the user is told about a failure by Noggit::reportSaveFailure whether
+  // or not anyone looks. The return exists so that a caller which cares -- and so that saveChanged
+  // and saveall themselves, which clear MapTile::changed -- can tell a written tile from an
+  // unwritten one.
+  bool saveTile(const TileIndex& tile, World*, bool save_unloaded = false);
+  bool saveChanged (World*, bool save_unloaded = false);
   void reloadTile(const TileIndex& tile);
   void unloadTiles(const TileIndex& tile);  // unloads all tiles more then x adts away from given
   void unloadTile(const TileIndex& tile);  // unload given tile
@@ -196,8 +204,8 @@ public:
   bool tileAwaitingLoading(const TileIndex& tile) const;
   bool tileLoaded(const TileIndex& tile) const;
 
-  void save();
-  void saveall (World*);
+  bool save();
+  bool saveall (World*);
 
   MapTile* getTile(const TileIndex& tile) const;
   MapTile* getTileAbove(MapTile* tile) const;

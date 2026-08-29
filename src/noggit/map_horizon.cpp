@@ -7,13 +7,28 @@
 #include <noggit/map_index.hpp>
 #include <noggit/MapChunk.h>
 #include <noggit/MapTile.h>
+#include <noggit/Misc.h>
+#include <noggit/SafeFileWrite.hpp>
+#include <noggit/Selection.h>
+#include <noggit/WMOInstance.h>
 #include <noggit/World.h>
 
 #include <opengl/context.hpp>
 #include <opengl/context.inl>
 
+#include <algorithm>
 #include <bitset>
+#include <cctype>
+#include <cstring>
 #include <sstream>
+#include <unordered_set>
+
+// The MODF record is a fixed 64-byte on-disk layout, and every size this file computes for the
+// chunk assumes it. ENTRY_MODF is declared as plain members plus a std::array<glm::vec3, 2>
+// (MapHeaders.h:113-125), which lays out to exactly that on every supported target -- but the
+// assumption is worth stating where it is relied on rather than discovered from a WDL the client
+// refuses to load. MapTile.cpp writes MODF with the literal 0x40 for the same reason.
+static_assert(sizeof(ENTRY_MODF) == 64, "MODF records are 64 bytes on disk");
 
 struct color
 {
@@ -91,6 +106,284 @@ static inline uint32_t color_for_height (int16_t height)
 
   return lerp_color(colors[correct_color]._color, colors[correct_color + 1]._color, t);
 }
+
+// =================================================================================================
+// The WMO half of the horizon: MWMO, MWID and MODF.
+// =================================================================================================
+//
+// WHAT THE HORIZON ACTUALLY DRAWS, MEASURED. The premise this work started from was that the
+// Stormwind skyline seen from the Elwynn border comes out of the WDL. It does not. Azeroth.wdl,
+// pulled from patch-2.MPQ of a stock 3.3.5a.12340 client, carries MWMO, MWID and MODF chunks of
+// size 0, and Stormwind.wmo -- a 1488 x 1488 yard, 376 yard tall instance sitting in
+// Azeroth_32_48.adt and Azeroth_31_49.adt -- appears in neither. Distant Stormwind is the client
+// drawing an ordinary ADT WMO at long range. The WDL's MODF is a different and much rarer thing:
+// of 106 stock WDLs, two use it, and those two are the evidence everything below is built on.
+namespace
+{
+  // Smallest instance that goes on the horizon when its model has no authored _LOW variant.
+  //
+  // Blizzard's own selection is editorial rather than geometric: it ships a hand-made
+  // "<name>_LOW.wmo" for the few buildings it wants on a skyline and lists exactly those. Custom
+  // content has no such variant, so honouring _LOW and nothing else would leave every custom city
+  // off the horizon -- which is the whole problem this code exists to fix. The fallback therefore
+  // puts the FULL model in the WDL, which the client will draw quite happily, and that has to be
+  // gated or a map with forty thousand wall segments would put all forty thousand on the skyline.
+  //
+  // Calibrated against data, not chosen by feel. Measured over the 15 stock horizon entries and a
+  // 79-instance sample of ADT placements from Northrend_22_17, Northrend_31_20, Azeroth_32_48 and
+  // Azeroth_31_49: the smallest thing Blizzard put on a horizon is 49.1 yards tall with a 2779
+  // square yard footprint, so both thresholds sit just under that. The pair keeps 15 of the 15
+  // stock horizon entries and admits seven models from the sample -- Stormwind, Dalaran,
+  // Northshire Abbey, the Scarlet Onslaught docks, NH_Cathedral, MD_MountainCave and
+  // ND_Human_Tower_Open. The largest instance it rejects is MD_Goldmine, 32.2 yards tall. That is
+  // the landmark / wall-furniture split the gate is trying to make.
+  constexpr float HORIZON_MIN_HEIGHT = 40.0f;
+  constexpr float HORIZON_MIN_FOOTPRINT = 2500.0f;
+
+  //! The "<path>_LOW.wmo" companion of `wmo_path` when the client data has one, else empty.
+  //!
+  //! This is the opt-in signal Blizzard uses and it is honoured with no size gate at all: an
+  //! author who made a low-detail variant has already said the model belongs on the skyline, and
+  //! second-guessing that with a bounding box would drop small landmarks somebody built the
+  //! variant for.
+  std::string horizon_variant_path(std::string const& wmo_path)
+  {
+    // Case-insensitive, because a listfile path, an MWMO string and a hand-typed path disagree on
+    // case constantly and the archive lookup below does not care either.
+    std::string lowered (wmo_path);
+    std::transform ( lowered.begin(), lowered.end(), lowered.begin()
+                   , [](unsigned char c) { return static_cast<char>(std::tolower(c)); }
+                   );
+
+    if (lowered.size() < 4 || lowered.compare(lowered.size() - 4, 4, ".wmo") != 0)
+    {
+      return {};
+    }
+
+    std::string const candidate (wmo_path.substr(0, wmo_path.size() - 4) + "_LOW.wmo");
+
+    return Noggit::Application::NoggitApplication::instance()->clientData()->exists(candidate)
+      ? candidate
+      : std::string();
+  }
+
+  //! True when an instance is big enough to be worth drawing at horizon range on its own merits.
+  bool is_horizon_scale(std::array<glm::vec3, 2> const& extents)
+  {
+    // Noggit's frame: y is up, x and z are the ground plane. The extents are the world-space
+    // axis-aligned box, which is what MODF stores and therefore what the numbers above were
+    // measured from.
+    float const height (extents[1].y - extents[0].y);
+    float const footprint ((extents[1].x - extents[0].x) * (extents[1].z - extents[0].z));
+
+    return height >= HORIZON_MIN_HEIGHT && footprint >= HORIZON_MIN_FOOTPRINT;
+  }
+
+  //! Append the horizon-worthy WMO placements of one loaded tile to `out`.
+  //!
+  //! `seen` carries across tiles and is why this takes it by reference: a WMO wider than one ADT
+  //! is listed in the MODF of every ADT it touches, under the same uniqueID, and a WDL that named
+  //! it four times would draw it four times.
+  void collect_tile_horizon_wmos( World* world
+                                , MapTile* tile
+                                , std::vector<Noggit::wdl_wmo_placement>& out
+                                , std::unordered_set<std::uint32_t>& seen
+                                , std::size_t& too_small
+                                )
+  {
+    std::vector<std::uint32_t> const* const uids (tile->get_uids());
+
+    if (!uids)
+    {
+      return;
+    }
+
+    for (std::uint32_t const uid : *uids)
+    {
+      if (!seen.insert(uid).second)
+      {
+        continue;
+      }
+
+      // The same route MapTile::save takes to turn a tile's uid list into placements
+      // (MapTile.cpp:607-632), so the WDL record is built from the identical object the ADT
+      // record is built from. Anything else would let the two drift.
+      auto const model (world->get_model(uid));
+
+      if (!model || model.value().index() != eEntry_Object)
+      {
+        continue;
+      }
+
+      SceneObject* const object (std::get<selected_object_type>(model.value()));
+
+      if (object->which() != eWMO)
+      {
+        continue;
+      }
+
+      WMOInstance* const instance (static_cast<WMOInstance*>(object));
+      std::string const source_path (instance->wmo->file_key().filepath());
+      std::string horizon_path (horizon_variant_path(source_path));
+
+      if (horizon_path.empty())
+      {
+        // getExtents() only recomputes while the WMO has finished loading
+        // (WMOInstance::ensureExtents, WMOInstance.cpp:277-283); on one that has not, it returns
+        // the box read out of the ADT's own MODF. Both answers are the right one to write here,
+        // which is why no wait is needed: the second IS the record we are mirroring.
+        if (!is_horizon_scale(instance->getExtents()))
+        {
+          ++too_small;
+          continue;
+        }
+
+        horizon_path = source_path;
+      }
+
+      ENTRY_MODF entry;
+
+      // nameID is assigned when MWMO is written, not here. Everything else is copied from the
+      // instance in the same order and with the same conversions MapTile::save uses
+      // (MapTile.cpp:902-923), because the measured rule is that a WDL record equals the ADT
+      // record it mirrors in every field but the name.
+      entry.nameID = 0;
+      entry.uniqueID = instance->uid;
+
+      entry.pos[0] = instance->pos.x;
+      entry.pos[1] = instance->pos.y;
+      entry.pos[2] = instance->pos.z;
+
+      entry.rot[0] = instance->dir.x;
+      entry.rot[1] = instance->dir.y;
+      entry.rot[2] = instance->dir.z;
+
+      entry.extents = instance->getExtents();
+
+      entry.flags = instance->mFlags;
+      entry.doodadSet = instance->doodadset();
+      entry.nameSet = instance->mNameset;
+
+      // scale * 1024, matching MapTile::save, and NOT the 0 Blizzard writes. Measured: all 15
+      // stock WDL records and all 79 sampled ADT records hold 0 in this field, so the 3.3.5
+      // client plainly ignores it -- it would otherwise scale every stock WMO to nothing. Writing
+      // what Noggit writes into its own ADTs is what keeps "the WDL record equals the ADT record"
+      // true for files this editor produced, which is the invariant the whole scheme rests on.
+      entry.scale = static_cast<std::uint16_t>(instance->scale * 1024.0f);
+
+      out.push_back({horizon_path, entry});
+    }
+  }
+
+  //! Write MWMO, MWID and MODF for `placements`, advancing `cur_pos` past all three.
+  //!
+  //! Always writes all three chunks, empty ones included. Every stock WDL has them present at
+  //! size 0 when it has no objects, and our own reader walks the file sequentially rather than by
+  //! offset, so a missing chunk would be read as whatever follows it.
+  void write_wdl_objects( util::sExtendableArray& wdl
+                        , int& cur_pos
+                        , std::vector<Noggit::wdl_wmo_placement> const& placements
+                        )
+  {
+    // First-appearance order, which is what Blizzard's files use: Northrend.wdl's MODF nameIDs
+    // run 0, 0, 1, 2 against an MWMO of NH_CATHEDRAL_LOW, VALGARDE_IC_LOW, OILPLATFORM_LOW. The
+    // walk that fills `placements` is a fixed y-then-x scan of the tile grid, so the order is
+    // reproducible across runs on unchanged data and two saves diff cleanly.
+    std::vector<std::string> ordered_names;
+    std::vector<std::uint32_t> name_offsets;
+    std::vector<std::uint32_t> name_id_of_placement;
+
+    name_id_of_placement.reserve(placements.size());
+
+    std::uint32_t running_offset (0);
+
+    for (Noggit::wdl_wmo_placement const& placement : placements)
+    {
+      std::string const stored (misc::normalize_adt_filename(placement.filename));
+
+      auto const existing (std::find(ordered_names.begin(), ordered_names.end(), stored));
+
+      if (existing != ordered_names.end())
+      {
+        name_id_of_placement.push_back
+          (static_cast<std::uint32_t>(std::distance(ordered_names.begin(), existing)));
+        continue;
+      }
+
+      name_id_of_placement.push_back(static_cast<std::uint32_t>(ordered_names.size()));
+      ordered_names.push_back(stored);
+      name_offsets.push_back(running_offset);
+      running_offset += static_cast<std::uint32_t>(stored.size() + 1);
+    }
+
+    // ---- MWMO ---------------------------------------------------------------------------------
+    int const mwmo_position (cur_pos);
+    wdl.Extend(8);
+    SetChunkHeader(wdl, cur_pos, 'MWMO', 0);
+    cur_pos += 8;
+
+    for (std::string const& name : ordered_names)
+    {
+      // c_str() gives size() + 1 bytes counting the terminator, which is what MWMO stores: the
+      // block is a run of NUL-terminated strings with no padding, and MWID's offsets below are
+      // the running sums of exactly these lengths.
+      wdl.Insert(cur_pos, static_cast<unsigned long>(name.size() + 1), name.c_str());
+      cur_pos += static_cast<int>(name.size() + 1);
+      wdl.GetPointer<sChunkHeader>(mwmo_position)->mSize += static_cast<int>(name.size() + 1);
+    }
+
+    // ---- MWID ---------------------------------------------------------------------------------
+    //
+    // BYTE OFFSETS INTO MWMO, not indices. Measured on Northrend.wdl, whose MWID is {0, 68, 115}
+    // for three names of 67, 46 and 59 characters -- running sums of strlen + 1. Writing indices
+    // there produces a file that looks right in a hex editor and names the wrong model.
+    int const mwid_size (static_cast<int>(4 * ordered_names.size()));
+    wdl.Extend(8 + mwid_size);
+    SetChunkHeader(wdl, cur_pos, 'MWID', mwid_size);
+
+    {
+      // memcpy rather than a typed store, because MWMO leaves the file misaligned and everything
+      // after it inherits that: in Northrend.wdl the MWID header is at 0xC3 and its data at 0xCB,
+      // which is 3 mod 4. SetChunkHeader above has the same exposure and is deliberately left
+      // alone -- it is shared with every other chunk writer in the tree and changing it is not
+      // this file's business -- but the two loops here are new code and are written safely.
+      auto const mwid_bytes (wdl.GetPointer<char>(cur_pos + 8));
+
+      for (std::size_t i (0); i < name_offsets.size(); ++i)
+      {
+        std::uint32_t const offset (name_offsets[i]);
+
+        std::memcpy(mwid_bytes.get() + i * sizeof(std::uint32_t), &offset, sizeof(offset));
+      }
+    }
+
+    cur_pos += 8 + mwid_size;
+
+    // ---- MODF ---------------------------------------------------------------------------------
+    int const modf_size (static_cast<int>(sizeof(ENTRY_MODF) * placements.size()));
+    wdl.Extend(8 + modf_size);
+    SetChunkHeader(wdl, cur_pos, 'MODF', modf_size);
+
+    {
+      // memcpy for the same reason as MWID above and as the reader: with Northrend's three names
+      // the MODF header lands at 0xD7 and the first record at 0xDF, so assigning an ENTRY_MODF
+      // through that pointer is a misaligned store of six floats -- undefined behaviour that x86
+      // forgives and other targets do not.
+      auto const modf_bytes (wdl.GetPointer<char>(cur_pos + 8));
+
+      for (std::size_t i (0); i < placements.size(); ++i)
+      {
+        ENTRY_MODF record (placements[i].placement);
+        record.nameID = name_id_of_placement[i];
+
+        std::memcpy(modf_bytes.get() + i * sizeof(ENTRY_MODF), &record, sizeof(ENTRY_MODF));
+      }
+    }
+
+    cur_pos += 8 + modf_size;
+  }
+}
+
 namespace Noggit
 {
 
@@ -157,21 +450,42 @@ map_horizon::map_horizon(const std::string& basename, const MapIndex * const ind
         break;
       }
       case 'MWID':
+          // Skipped on purpose, and it is not a TODO. MWID holds the byte offset of each MWMO
+          // string inside the MWMO block; the reader above has already split that block on its
+          // NUL bytes, which produces the same list in the same order. Keeping the offsets would
+          // give us a second, redundant statement of the name order that the writer rebuilds from
+          // scratch anyway -- and the two could then disagree.
           wdl_file.seekRelative(size);
           break;
-          // TODO
       case 'MODF':
       {
+        // Read through memcpy rather than by casting the file pointer, which is what the
+        // commented-out original did. MODF's data does not begin on a 4-byte boundary: MWMO holds
+        // NUL-terminated strings with no padding after them, so in Northrend.wdl the header sits
+        // at 0xD7 and the first record at 0xDF -- 223, which is 3 mod 4. Reading a float array
+        // through a misaligned ENTRY_MODF* is undefined behaviour that happens to work on x86 and
+        // does not elsewhere.
+        for (uint32_t offset = 0; offset + sizeof(ENTRY_MODF) <= size; offset += sizeof(ENTRY_MODF))
+        {
+          ENTRY_MODF entry;
+          std::memcpy(&entry, wdl_file.getPointer() + offset, sizeof(ENTRY_MODF));
+
+          if (entry.nameID >= mWMOFilenames.size())
+          {
+            // Every stock WDL puts MWMO before MODF, so this only fires on a malformed file. It
+            // is reported rather than assumed away, because the alternative -- indexing the name
+            // table out of bounds -- reads whatever follows it and writes that path back out.
+            LogError << "wdl MODF entry " << (offset / sizeof(ENTRY_MODF)) << " names MWMO index "
+                     << entry.nameID << " but only " << mWMOFilenames.size()
+                     << " name(s) were read; the entry is dropped." << std::endl;
+            continue;
+          }
+
+          _wdl_wmo_instances.push_back({mWMOFilenames[entry.nameID], entry});
+        }
+
         wdl_file.seekRelative(size);
         break;
-        // {
-        //     ENTRY_MODF const* modf_ptr = reinterpret_cast<ENTRY_MODF const*>(wdl_file.getPointer());
-        //     for (unsigned int i = 0; i < size / sizeof(ENTRY_MODF); ++i)
-        //     {
-        //         lWMOInstances.push_back(modf_ptr[i]);
-        //     }
-        // }
-        // break;
       }
       case 'MAOF':
       {
@@ -371,7 +685,7 @@ void map_horizon::update_horizon_tile(MapTile* mTile)
     update_minimap_tile(tile_index.z, tile_index.x, true);
 }
 
-void map_horizon::save_wdl(World* world, bool regenerate)
+bool map_horizon::save_wdl(World* world, bool regenerate)
 {
     world->wait_for_all_tile_updates();
 
@@ -379,6 +693,96 @@ void map_horizon::save_wdl(World* world, bool regenerate)
     filename << "World\\Maps\\" << world->basename << "\\" << world->basename << ".wdl";
     //Log << "Saving WDL \"" << filename << "\"." << std::endl;
 
+    // ---- pass one: resolve the terrain, and the objects that go with it ------------------------
+    //
+    // The tile walk used to be inside the MAOF loop, resolving and writing one tile at a time.
+    // It cannot stay there now. MWMO, MWID and MODF sit BEFORE MAOF in the file -- measured on
+    // Northrend.wdl, where MWMO begins at 0x0C and MAOF at 0x1DF -- so what goes in them has to be
+    // known before the first MAOF byte is written, and a WMO placement only becomes readable once
+    // its tile is loaded. Splitting the walk out still costs exactly ONE load per tile: the heights
+    // it resolves are stored in _tiles, which outlives the unload, so the write loop below reads
+    // them back rather than loading anything again.
+    bool has_horizon_data[64][64] = {};
+
+    std::vector<wdl_wmo_placement> collected_objects;
+    std::unordered_set<std::uint32_t> collected_uids;
+    std::size_t objects_too_small (0);
+
+    for (int y = 0; y < 64; ++y)
+    {
+        for (int x = 0; x < 64; ++x)
+        {
+            TileIndex index(x, y);
+
+            if (!world->mapIndex.hasTile(index))
+            {
+                continue;
+            }
+
+            // May legitimately be null: the map had no WDL to read one from.
+            Noggit::map_horizon_tile* horizon_tile = get_horizon_tile(y, x);
+
+            // load tile and extract WDL data
+            if (!horizon_tile || regenerate)
+            {
+                bool unload = !world->mapIndex.tileLoaded(index) && !world->mapIndex.tileAwaitingLoading(index);
+                MapTile* mTile = world->mapIndex.loadTile(index, false, false, false);
+
+                // THE crash. MapIndex::hasTile only reads bit 0 of the WDT's MAIN entry for
+                // this tile (map_index.cpp:815-818); it does not check that the ADT behind it
+                // exists. MapIndex::loadTile does check, and returns nullptr when the file is
+                // missing (map_index.cpp:530-533). The original guarded only the
+                // wait_until_loaded call with "if (mTile)" and then passed the same pointer
+                // straight into update_horizon_tile, whose first statement is
+                // "auto tile_index = mTile->index" (map_horizon.cpp:638). A WDT that lists a
+                // tile whose ADT is not there is exactly the shape of the broken map somebody
+                // reaches for "Generate new WDL" to repair, so the repair tool crashed on the
+                // maps that needed it.
+                if (mTile)
+                {
+                    mTile->wait_until_loaded();
+                    update_horizon_tile(mTile);
+
+                    // Before the unload, necessarily: unloading the tile can drop the last
+                    // reference to its WMO instances, and everything below copies out of them by
+                    // value precisely so that nothing survives this scope as a pointer.
+                    if (regenerate)
+                    {
+                        collect_tile_horizon_wmos
+                            (world, mTile, collected_objects, collected_uids, objects_too_small);
+                    }
+
+                    if (unload)
+                        world->mapIndex.unloadTile(index);
+
+                    horizon_tile = get_horizon_tile(y, x);
+                }
+                else
+                {
+                    LogError << "WDL generation: tile " << x << "_" << y << " is flagged in the"
+                                " WDT but its ADT could not be loaded; writing it as empty."
+                             << std::endl;
+                }
+            }
+
+            has_horizon_data[y][x] = horizon_tile != nullptr;
+        }
+    }
+
+    if (regenerate)
+    {
+        // Replaced wholesale, and only when regenerating. A plain save re-exports what was read,
+        // which is the behaviour that stops a WDL round trip from deleting distant buildings the
+        // editor cannot see; a regenerating one is the user asking for the table to be rebuilt
+        // from the ADTs, and a merge of the two would leave placements behind for objects that
+        // have since been deleted.
+        _wdl_wmo_instances = std::move(collected_objects);
+
+        Log << "WDL objects: " << _wdl_wmo_instances.size() << " WMO placement(s) written to MODF, "
+            << objects_too_small << " skipped as too small for the horizon." << std::endl;
+    }
+
+    // ---- pass two: write the file --------------------------------------------------------------
     util::sExtendableArray wdlFile;
     int curPos = 0;
 
@@ -392,26 +796,8 @@ void map_horizon::save_wdl(World* world, bool regenerate)
     curPos += 8 + 0x4;
     //  }
 
-    // MWMO
-    //  {
-    wdlFile.Extend(8);
-    SetChunkHeader(wdlFile, curPos, 'MWMO', 0);
-    curPos += 8;
-    //  }
-
-    // MWID
-    //  {
-    wdlFile.Extend(8);
-    SetChunkHeader(wdlFile, curPos, 'MWID', 0);
-    curPos += 8;
-    //  }
-
-    // TODO : MODF
-    //  {
-    wdlFile.Extend(8);
-    SetChunkHeader(wdlFile, curPos, 'MODF', 0);
-    curPos += 8;
-    //  }
+    // MWMO, MWID and MODF, which were three empty chunks and a "TODO : MODF" before this.
+    write_wdl_objects(wdlFile, curPos, _wdl_wmo_instances);
 
     //uint32_t mare_offsets[64][64] = { 0 };
     // MAOF
@@ -426,55 +812,13 @@ void map_horizon::save_wdl(World* world, bool regenerate)
     {
         for (int x = 0; x < 64; ++x)
         {
-            TileIndex index(x, y);
-
-            // The horizon data is resolved BEFORE anything is written for this tile, which is a
-            // change of order from the original and the reason the failure cases below can be
-            // handled at all. Writing the MAOF offset and the MARE header first commits the file
-            // to containing a MARE for this tile, so a later "we have no data" has nowhere to go
-            // but out of the function -- which is what the original did, abandoning the whole
-            // WDL, silently, several hundred tiles in.
-            Noggit::map_horizon_tile* horizon_tile = nullptr;
-
-            if (world->mapIndex.hasTile(index))
-            {
-                // May legitimately be null: the map had no WDL to read one from.
-                horizon_tile = get_horizon_tile(y, x);
-
-                // load tile and extract WDL data
-                if (!horizon_tile || regenerate)
-                {
-                    bool unload = !world->mapIndex.tileLoaded(index) && !world->mapIndex.tileAwaitingLoading(index);
-                    MapTile* mTile = world->mapIndex.loadTile(index, false, false, false);
-
-                    // THE crash. MapIndex::hasTile only reads bit 0 of the WDT's MAIN entry for
-                    // this tile (map_index.cpp:599-602); it does not check that the ADT behind it
-                    // exists. MapIndex::loadTile does check, and returns nullptr when the file is
-                    // missing (map_index.cpp:426-430). The original guarded only the
-                    // wait_until_loaded call with "if (mTile)" and then passed the same pointer
-                    // straight into update_horizon_tile, whose first statement is
-                    // "auto tile_index = mTile->index" (map_horizon.cpp:325). A WDT that lists a
-                    // tile whose ADT is not there is exactly the shape of the broken map somebody
-                    // reaches for "Generate new WDL" to repair, so the repair tool crashed on the
-                    // maps that needed it.
-                    if (mTile)
-                    {
-                        mTile->wait_until_loaded();
-                        update_horizon_tile(mTile);
-
-                        if (unload)
-                            world->mapIndex.unloadTile(index);
-
-                        horizon_tile = get_horizon_tile(y, x);
-                    }
-                    else
-                    {
-                        LogError << "WDL generation: tile " << x << "_" << y << " is flagged in the"
-                                    " WDT but its ADT could not be loaded; writing it as empty."
-                                 << std::endl;
-                    }
-                }
-            }
+            // Resolved in pass one, which is what lets the failure cases be handled at all.
+            // Writing the MAOF offset and the MARE header first commits the file to containing a
+            // MARE for this tile, so a later "we have no data" has nowhere to go but out of the
+            // function -- which is what the original did, abandoning the whole WDL, silently,
+            // several hundred tiles in.
+            Noggit::map_horizon_tile* const horizon_tile
+                (has_horizon_data[y][x] ? get_horizon_tile(y, x) : nullptr);
 
             // write offset in MAOF entry
             *(wdlFile.GetPointer<uint>(curPos)) = horizon_tile ? mareoffset : 0;
@@ -506,18 +850,38 @@ void map_horizon::save_wdl(World* world, bool regenerate)
                 }
             }
             // A zero MAOF offset is how a WDL says "no terrain here" -- our own reader skips those
-            // entries (map_horizon.cpp:188-191) and so does the client. Emitting one for a tile we
+            // entries (map_horizon.cpp:501-504) and so does the client. Emitting one for a tile we
             // could not read is therefore a well-formed answer, and the file stays valid and
             // complete instead of not being written at all.
         }
     }
-    BlizzardArchive::ClientFile f(filename.str(), Noggit::Application::NoggitApplication::instance()->clientData(),
-    BlizzardArchive::ClientFile::NEW_FILE);
-    f.setBuffer(wdlFile.all_data());
-    f.save();
-    f.close();
+    // The same replacement made for the ADT and the WDT, and this was the last writer in the tree
+    // still opening its destination with std::ofstream in out mode -- which truncates at open(),
+    // before a single replacement byte exists.
+    //
+    // It became the sharpest of the three in this same round. save_wdl now re-exports MWMO/MWID/
+    // MODF, so a failed write no longer costs a regenerable low-detail heightmap: it destroys
+    // exactly the distant-building placements the change was written to preserve. A zero-byte WDL
+    // is also read by the client rather than ignored.
+    //
+    // Bytes unchanged: wdlFile.all_data() is precisely what setBuffer received, and the writer
+    // emits it with one ostream::write, as ClientFile::save did.
+    BlizzardArchive::Listfile::FileKey const file_key (filename.str());
+
+    std::filesystem::path const target
+      ( Noggit::Application::NoggitApplication::instance()->clientData()->getDiskPath (file_key) );
+
+    if (!Noggit::writeFileGuarded (target, wdlFile.all_data()))
+    {
+      // Deliberately still refreshes the minimap below. The in-memory horizon is correct and is
+      // what the minimap draws from; refusing to update it would add a second, cosmetic symptom
+      // to a failure the user has already been shown a dialog about.
+      set_minimap(&world->mapIndex);
+      return false;
+    }
 
     set_minimap(&world->mapIndex);
+    return true;
 }
 
 map_horizon::minimap::minimap(const map_horizon& horizon)

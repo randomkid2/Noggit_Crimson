@@ -12,6 +12,7 @@ class MapView;
 
 class QCheckBox;
 class QComboBox;
+class QDoubleSpinBox;
 class QLabel;
 class QListWidget;
 class QPushButton;
@@ -152,6 +153,26 @@ namespace Noggit::Ui
       // spawn is not loaded.
       bool spawnFacingDegrees(Noggit::Database::SpawnRef const& spawn, int& degrees) const;
 
+      // Moves every loaded spawn standing on the picked tiles the same way the terrain under them
+      // was moved, through Noggit::Database::moveSpawnsWithChunks.
+      //
+      // > [!important] This is the manual half of a feature whose automatic half needs a hook
+      // > this panel cannot make
+      // > The Chunk Manipulator can already copy, paste, rotate and mirror terrain, and
+      // > ChunkTransform can already move the spawns that stand on it -- but the two have never
+      // > been connected, because ChunkClipboard::pasted carries a ChunkPasteReport of four
+      // > counters (chunks, objects added, objects removed, chunks skipped) and no geometry
+      // > whatever. There is no way, from outside that class, to learn which chunks a paste came
+      // > from, where they landed, or what grid ops were applied on the way: _cached_chunks,
+      // > _clipboard_pivot and _clipboard_pivot_chunk are all private and no accessor exposes
+      // > them. Guessing at it from the cursor position and signal ordering would move spawns to
+      // > a place nobody chose, which is worse than not moving them.
+      // >
+      // > So the same transform is driven from the tile grid this panel already owns, and the
+      // > module underneath takes the move in chunk-grid terms so the paste hook drops straight
+      // > in once ChunkPasteReport carries the geometry. See the report accompanying this change.
+      void onMoveSpawnsWithTerrain();
+
       // Points the camera at the selected spawn from a short distance.
       //
       // The outline alone is not enough when the spawn is off screen or behind terrain, which is
@@ -187,6 +208,19 @@ namespace Noggit::Ui
       QSpinBox* _place_entry;
       QCheckBox* _place_mode;
       QPushButton* _delete_button;
+
+      // --- following a terrain move -----------------------------------------------------------
+      //
+      // Offsets in whole ADT tiles rather than in chunks, because that is the granularity the tile
+      // picker above works at and offering a chunk offset the picker cannot express would be a
+      // control with nothing to point at. The module underneath is chunk-granular; only this UI
+      // rounds to tiles.
+      QSpinBox* _chunk_move_dx;
+      QSpinBox* _chunk_move_dz;
+      QComboBox* _chunk_move_turn;
+      QDoubleSpinBox* _chunk_move_height;
+      QPushButton* _chunk_move_button;
+      QLabel* _chunk_move_status;
 
       QCheckBox* _move_mode;
       QSpinBox* _orientation;

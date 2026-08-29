@@ -17,6 +17,7 @@
 #include <noggit/World.h>
 #include <noggit/project/CurrentProject.hpp>
 #include <noggit/terrain/TerrainMaskBaker.hpp>
+#include <noggit/terrain/TerrainMaskHistory.hpp>
 #include <noggit/terrain/TerrainMaskStore.hpp>
 #include <noggit/texture_set.hpp>
 
@@ -39,6 +40,7 @@
 #include <QtWidgets/QWidget>
 
 #include <QtCore/QString>
+#include <QtCore/QTimer>
 #include <QtCore/QStringList>
 
 #include <algorithm>
@@ -255,9 +257,74 @@ namespace Noggit::Ui
 
     // Loaded from the project on open rather than held across map changes, because a mask describes
     // one project's terrain and means nothing against another's.
-    TerrainMaskStore::instance()->load(projectPath());
+    //
+    // ONLY WHEN THE STORE IS EMPTY, which is a fix rather than a caution. load() REPLACES the
+    // in-memory set (TerrainMaskStore::load), so the unconditional call this replaced discarded
+    // every unsaved change the moment the dialog was reopened -- a mask created here, closed and
+    // reopened was gone, and now that the mask brush can put hand-painted strokes into the same
+    // store the same reopen would throw away work nothing can recompute. Reloading from disk on
+    // purpose is what the Reload button is for, and it asks first.
+    if (TerrainMaskStore::instance()->names().empty())
+    {
+      TerrainMaskStore::instance()->load(projectPath());
+    }
 
     refreshMaskList(TerrainMaskStore::instance()->activeName());
+
+    // The two switches the mask brush's panel can also write. TerrainMaskStore is deliberately
+    // not a QObject and has no change signal, so with two windows open on one store the only
+    // honest options are to poll or to go stale; 500 ms of re-reading two scalars is cheaper than
+    // a check box that lies. See the note on TerrainMaskToolSettings.
+    _shared_state_poll = new QTimer(this);
+    _shared_state_poll->setInterval(500);
+    connect(_shared_state_poll, &QTimer::timeout, this, [this] { refreshSharedState(); });
+    _shared_state_poll->start();
+  }
+
+  void TerrainMaskDialog::refreshSharedState()
+  {
+    if (_loading_widgets)
+    {
+      return;
+    }
+
+    TerrainMaskStore* const store = TerrainMaskStore::instance();
+
+    // THE LIST FIRST, because selectedMask() reads from it. The mask brush's panel can create a
+    // mask and can change which one is active, and a stale list here is worse than a stale check
+    // box: the stack editor would be editing one mask while a different one clipped the brushes,
+    // which is exactly the two-selections failure onMaskSelectionChanged's note rules out.
+    //
+    // Skipped while nothing is active, because refreshMaskList falls back to row 0 and then makes
+    // that row active -- so resyncing on an empty selection would fight a user who has just chosen
+    // "no mask" in the tool panel.
+    std::string const active = store->activeName();
+
+    if (!active.empty())
+    {
+      QListWidgetItem const* const item = _mask_list->currentItem();
+      std::string const shown = item ? item->text().toStdString() : std::string();
+
+      if (_mask_list->count() != static_cast<int>(store->names().size()) || shown != active)
+      {
+        refreshMaskList(active);
+      }
+    }
+
+    _loading_widgets = true;
+
+    _clip_enabled->setChecked(store->clippingEnabled());
+
+    NamedTerrainMask const* const mask = store->active();
+
+    if (mask)
+    {
+      // combineIndex, not itemData: this combo is built from COMBINE_ORDER's labels alone and
+      // carries no data role, so the index IS the position in that array.
+      _paint_combine->setCurrentIndex(combineIndex(mask->paint_combine));
+    }
+
+    _loading_widgets = false;
   }
 
   QGroupBox* TerrainMaskDialog::buildMaskListGroup()
@@ -1217,6 +1284,11 @@ namespace Noggit::Ui
         , QString::fromStdString(TerrainMaskStore::instance()->lastError())
         );
     }
+
+    // load() replaces the whole set, so every entry the mask brush's history holds now names a
+    // mask that either no longer exists or merely shares a name with the one it was captured
+    // from. Restoring 4 KiB blocks into the second would be the worst kind of undo.
+    TerrainMaskHistory::instance()->clear();
 
     refreshMaskList(TerrainMaskStore::instance()->activeName());
   }

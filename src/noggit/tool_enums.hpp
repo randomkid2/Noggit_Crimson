@@ -85,6 +85,10 @@ enum class editing_mode
   // Terrain shadow (MCSH) painting and baking. 16, appended after erosion for the reason stated
   // above -- nothing below this line may be renumbered.
   shadow = 16,
+  // Hand-painting a named terrain mask. 17, appended after shadow for the same reason. A mask is
+  // EDITOR-SIDE ONLY -- a project sidecar that clips where the other tools apply and writes
+  // nothing into any ADT -- so unlike every mode above it this one has no chunk data behind it.
+  terrain_mask = 17,
 };
 
 enum water_opacity

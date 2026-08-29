@@ -10,6 +10,7 @@
 #include <noggit/ModelInstance.h> // ModelInstance
 #include <noggit/ModelManager.h> // ModelManager
 #include <noggit/project/CurrentProject.hpp>
+#include <noggit/SafeFileWrite.hpp>
 #include <noggit/texture_set.hpp>
 #include <noggit/TileWater.hpp>
 #include <noggit/WMOInstance.h> // WMOInstance
@@ -25,6 +26,7 @@
 #include <QtCore/QSettings>
 
 #include <cassert>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <string>
@@ -547,7 +549,7 @@ void MapTile::getVertexInternal(float x, float z, glm::vec3* v)
 
 /// --- Only saving related below this line. --------------------------
 
-void MapTile::saveTile(World* world)
+bool MapTile::saveTile(World* world)
 {
   // if we want to save a duplicate with mclq in a separate folder
   /*
@@ -562,12 +564,35 @@ void MapTile::saveTile(World* world)
   QSettings settings;
   bool use_mclq = settings.value("use_mclq_liquids_export", false).toBool();
 
-  save(world, use_mclq);
+  bool const saved = save(world, use_mclq);
+
+  // Recorded here rather than at save()'s three exits because saveTile is the only caller of
+  // save(), so one assignment covers every path, and because it must be cleared by a later
+  // successful attempt as well as set by a failed one.
+  _last_save_failed = !saved;
+
+  return saved;
 }
 
-void MapTile::save(World* world, bool save_using_mclq_liquids)
+bool MapTile::save(World* world, bool save_using_mclq_liquids)
 {
   Log << "Saving ADT \"" << _file_key.stringRepr() << "\"." << std::endl;
+
+  // Computed exactly as BlizzardArchive::ClientFile's NEW_FILE constructor computed it before
+  // this function stopped using ClientFile to write: a FileKey built from _file_key.filepath(),
+  // then ClientData::getDiskPath. getDiskPath reads only filepath() when one is present
+  // (ClientData.cpp:640-664), so this is the same string on every client version, even though the
+  // constructor also ran deduceOtherComponent on non-WotLK clients -- that can only fill in a
+  // fileDataID, which getDiskPath then ignores.
+  //
+  // Hoisted to the top so that the two abandon-the-save paths below name the same file the
+  // successful path would have written.
+  BlizzardArchive::Listfile::FileKey const disk_file_key (_file_key.filepath());
+
+  std::filesystem::path const disk_path
+    ( Noggit::Application::NoggitApplication::instance()->clientData()->getDiskPath
+        (disk_file_key)
+    );
 
   int lID;  // This is a global counting variable. Do not store something in here you need later.
   std::vector<WMOInstance*> lObjectInstances;
@@ -817,7 +842,17 @@ void MapTile::save(World* world, bool save_using_mclq_liquids)
     if (filename_to_offset_and_name == lModels.end())
     {
       LogError << "There is a problem with saving the doodads. We have a doodad that somehow changed the name during the saving function. However this got produced, you can get a reward from schlumpf by pasting him this line." << std::endl;
-      return;
+
+      // Abandons the ADT without writing anything, which is right -- an MDDF entry pointing at an
+      // MMDX offset that does not exist would produce a file the client cannot load. What was
+      // wrong is that it used to return void, so MapIndex::saveChanged cleared `changed` for a
+      // tile that had never reached the disk and the edits became unloadable a moment later.
+      Noggit::reportSaveFailure
+        ( disk_path
+        , "a doodad filename changed while the tile was being written, so the ADT was not saved"
+        );
+
+      return false;
     }
 
     lMDDF_Data[lID].nameID = filename_to_offset_and_name->second.nameID;
@@ -853,7 +888,15 @@ void MapTile::save(World* world, bool save_using_mclq_liquids)
     if (filename_to_offset_and_name == lObjects.end())
     {
       LogError << "There is a problem with saving the objects. We have an object that somehow changed the name during the saving function. However this got produced, you can get a reward from schlumpf by pasting him this line." << std::endl;
-      return;
+
+      // Same as the MDDF case above: nothing is written, so the tile is still dirty and the caller
+      // has to be told, or the in-memory copy is dropped on the next unload.
+      Noggit::reportSaveFailure
+        ( disk_path
+        , "a WMO filename changed while the tile was being written, so the ADT was not saved"
+        );
+
+      return false;
     }
 
     lMODF_Data[lID].nameID = filename_to_offset_and_name->second.nameID;
@@ -942,13 +985,27 @@ void MapTile::save(World* world, bool save_using_mclq_liquids)
   }
 #endif
 
+  bool saved (false);
+
   {
-    BlizzardArchive::ClientFile f(_file_key.filepath(), Noggit::Application::NoggitApplication::instance()->clientData()
-      , BlizzardArchive::ClientFile::NEW_FILE);
+    // This used to be BlizzardArchive::ClientFile::save(), which opened the real ADT with
+    // std::ofstream in out mode (ClientFile.cpp:139). That truncates the destination at open(),
+    // before one byte of the replacement exists, and the function then wrote, closed, and set
+    // _external = true without ever looking at the stream state (ClientFile.cpp:142-145). A full
+    // disk, a read-only project folder or antivirus taking the handle mid-write therefore left a
+    // truncated ADT -- the terrain, textures, water and object placements of one 533-yard tile,
+    // for which there is no other copy -- and reported nothing anywhere the user would see. Only
+    // a failure to OPEN the file said anything, and it said it to std::cout (ClientFile.cpp:150).
+    //
+    // The bytes are untouched: the same data_up_to(lCurrentPosition) vector that used to be
+    // handed to setBuffer is handed to the writer, and the writer emits it with a single
+    // ostream::write, as ClientFile::save did. disk_path is the same destination the ClientFile
+    // constructor would have derived; see the note where it is built.
+
     // \todo This sounds wrong. There shouldn't *be* unused nulls to
     // begin with.
-    f.setBuffer(lADTFile.data_up_to(lCurrentPosition)); // cleaning unused nulls at the end of file
-    f.save();
+    saved = Noggit::writeFileGuarded
+      (disk_path, lADTFile.data_up_to(lCurrentPosition)); // cleaning unused nulls at the end of file
 
     // adspartan's way, save MCLQ files separately
     /*
@@ -965,6 +1022,8 @@ void MapTile::save(World* world, bool save_using_mclq_liquids)
   lObjectInstances.clear();
   lModelInstances.clear();
   lModels.clear();
+
+  return saved;
 }
 
 
@@ -1139,6 +1198,11 @@ void MapTile::unpin()
 bool MapTile::pinned() const
 {
   return _pin_count.load() > 0;
+}
+
+bool MapTile::lastSaveFailed() const
+{
+  return _last_save_failed.load();
 }
 
 std::vector<uint32_t>* MapTile::get_uids()

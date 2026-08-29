@@ -31,6 +31,7 @@ class QPlainTextEdit;
 class QPushButton;
 class QSpinBox;
 class QStackedWidget;
+class QTimer;
 
 namespace Noggit::Ui
 {
@@ -122,7 +123,16 @@ namespace Noggit::Ui
       void onSave();
       void onReload();
 
+      // Re-reads the two pieces of store state this dialog does not exclusively own -- the clip
+      // switch and the selected mask's paint fold. Both are also writable from the mask brush's
+      // tool panel, and TerrainMaskStore has no change signal by design (see the note on the
+      // class), so a second window on the same store either polls or lies. Driven by
+      // _shared_state_poll at 500 ms.
+      void refreshSharedState();
+
       MapView* _map_view;
+
+      QTimer* _shared_state_poll = nullptr;
 
       // Guards the widget-to-model direction while the model-to-widget direction is running. Every
       // property widget is connected to onLayerEdited, and loadLayerIntoWidgets sets all of them --

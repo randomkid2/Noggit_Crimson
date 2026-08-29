@@ -4,6 +4,7 @@
 
 #include <noggit/MapView.h>
 #include <noggit/World.h>
+#include <noggit/database/ChunkSpawnMove.hpp>
 #include <noggit/database/DatabaseSettings.hpp>
 #include <noggit/database/SchemaIntrospector.hpp>
 #include <noggit/database/SpawnSceneCache.hpp>
@@ -19,6 +20,7 @@
 
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
+#include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QGroupBox>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
@@ -31,11 +33,14 @@
 #include <QtWidgets/QStyle>
 #include <QtWidgets/QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 #include <exception>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace Noggit::Ui;
@@ -291,6 +296,79 @@ DatabaseSpawnPanel::DatabaseSpawnPanel(MapView* map_view, QWidget* parent)
 
   layout->addWidget(create_box);
 
+  // --- following a terrain move ------------------------------------------------------------
+  //
+  // The spawn half of a chunk move. Moving terrain and leaving what stands on it behind produces
+  // a world that is worse than the one before the edit -- the ground is somewhere else and every
+  // creature is standing where it used to be -- and until now the editor could do exactly that:
+  // ChunkTransform has been in the tree since the first audit of this fork with its unit tests as
+  // its only caller.
+  auto chunk_move_box (new QGroupBox("Move spawns with terrain", this));
+  auto chunk_move_layout (new QVBoxLayout(chunk_move_box));
+
+  auto chunk_move_offset_row (new QHBoxLayout());
+  chunk_move_offset_row->addWidget(new QLabel("Offset ADT X", this));
+
+  _chunk_move_dx = new QSpinBox(this);
+  _chunk_move_dx->setRange(-63, 63);
+  _chunk_move_dx->setToolTip
+    ("How many ADT tiles east the terrain was moved. Noggit's x, which is the direction the\n"
+     "server's y decreases in -- the conversion is done for you.");
+  chunk_move_offset_row->addWidget(_chunk_move_dx, 1);
+
+  chunk_move_offset_row->addWidget(new QLabel("Z", this));
+
+  _chunk_move_dz = new QSpinBox(this);
+  _chunk_move_dz->setRange(-63, 63);
+  _chunk_move_dz->setToolTip("How many ADT tiles south the terrain was moved.");
+  chunk_move_offset_row->addWidget(_chunk_move_dz, 1);
+
+  chunk_move_layout->addLayout(chunk_move_offset_row);
+
+  auto chunk_move_turn_row (new QHBoxLayout());
+  chunk_move_turn_row->addWidget(new QLabel("Turn", this));
+
+  _chunk_move_turn = new QComboBox(this);
+  _chunk_move_turn->addItem("None");
+  _chunk_move_turn->addItem("90°");
+  _chunk_move_turn->addItem("180°");
+  _chunk_move_turn->addItem("270°");
+  _chunk_move_turn->setToolTip
+    ("Quarter turns of the picked region, in the same sense the Chunk Manipulator's Rotate 90\n"
+     "turns terrain. A creature's facing turns with it and a gameobject's rotation quaternion is\n"
+     "rewritten from the new yaw, so nothing ends up facing two ways at once.");
+  chunk_move_turn_row->addWidget(_chunk_move_turn, 1);
+
+  chunk_move_turn_row->addWidget(new QLabel("Height", this));
+
+  _chunk_move_height = new QDoubleSpinBox(this);
+  // The Chunk Manipulator's own height offset slider runs to +/- 500 units
+  // (ChunkManipulatorPanel.cpp:342), so this matches it: a move that followed a paste can then be
+  // described exactly rather than clamped to something near it.
+  _chunk_move_height->setRange(-500.0, 500.0);
+  _chunk_move_height->setDecimals(2);
+  _chunk_move_height->setSuffix(" yd");
+  _chunk_move_height->setToolTip
+    ("Added to every moved spawn's height, matching the paste's height offset.\n"
+     "Cannot be combined with a turn: see the message the button gives if you try.");
+  chunk_move_turn_row->addWidget(_chunk_move_height, 1);
+
+  chunk_move_layout->addLayout(chunk_move_turn_row);
+
+  _chunk_move_button = new QPushButton("Move loaded spawns on the picked tiles", this);
+  _chunk_move_button->setToolTip
+    ("Applies the same move to every loaded spawn standing on the tiles picked above.\n"
+     "Nothing is written: they become pending edits like any other and reach SQL through\n"
+     "Save to database, as a reviewable changeset.");
+  chunk_move_layout->addWidget(_chunk_move_button);
+
+  _chunk_move_status = new QLabel
+    ("Pick the tiles the terrain came FROM, then say where it went.", this);
+  _chunk_move_status->setWordWrap(true);
+  chunk_move_layout->addWidget(_chunk_move_status);
+
+  layout->addWidget(chunk_move_box);
+
   // --- moving ----------------------------------------------------------------------------
   auto move_box (new QGroupBox("Selected spawn", this));
   auto move_layout (new QVBoxLayout(move_box));
@@ -359,6 +437,9 @@ DatabaseSpawnPanel::DatabaseSpawnPanel(MapView* map_view, QWidget* parent)
   connect(focus_button, &QPushButton::clicked, this, &DatabaseSpawnPanel::onFocus);
 
   connect(place_here, &QPushButton::clicked, this, &DatabaseSpawnPanel::onPlaceAtCamera);
+
+  connect(_chunk_move_button, &QPushButton::clicked, this
+         , &DatabaseSpawnPanel::onMoveSpawnsWithTerrain);
 
   // valueChanged, not editingFinished: this only enables a checkbox, so reacting to every step
   // costs nothing and the alternative leaves place mode greyed out until focus moves elsewhere.
@@ -436,6 +517,140 @@ DatabaseSpawnPanel::DatabaseSpawnPanel(MapView* map_view, QWidget* parent)
 
   updateTileStatus();
   refresh();
+}
+
+void DatabaseSpawnPanel::onMoveSpawnsWithTerrain()
+{
+  auto* cache = _map_view->databaseSpawns();
+
+  if (!cache)
+  {
+    // Null in two quite different situations and the message has to cover both: a build without
+    // Connector/C++ never constructs a scene at all, and a build with it constructs one lazily on
+    // the first load. Neither has anything to move, and neither is a failure.
+    _chunk_move_status->setText
+      ("No spawns are loaded, so there is nothing to move with the terrain.");
+
+    QMessageBox::information
+      ( this
+      , "Move spawns with terrain"
+#ifdef USE_MYSQL_UID_STORAGE
+      , "No database spawns are loaded. Pick the tiles the terrain came from and press \"Load "
+        "picked tiles\" first -- the spawn layer only exists once something has been loaded into "
+        "it, and a chunk move cannot follow spawns the editor has never read."
+#else
+      , "This build has no database support. Reconfigure with -DUSE_SQL=ON."
+#endif
+      );
+
+    return;
+  }
+
+  std::vector<::TileIndex> const tiles (_tile_picker->selectedAdtTiles());
+
+  if (tiles.empty())
+  {
+    _chunk_move_status->setText("Pick the tiles the terrain came FROM on the grid above.");
+
+    return;
+  }
+
+  int const quarter_turns (_chunk_move_turn->currentIndex());
+
+  // Every chunk of every picked tile, on the map-wide 1024 x 1024 grid the Chunk Manipulator's
+  // SelectedChunkIndex::globalX/globalZ also work in. Whole tiles, because that is what the picker
+  // can express; the module underneath takes an arbitrary set, so the Chunk Manipulator's radius
+  // selection will hand it a ragged one unchanged.
+  Noggit::Database::ChunkMove move;
+  move.source_chunks.reserve(tiles.size() * 16 * 16);
+
+  int min_chunk_x (std::numeric_limits<int>::max());
+  int min_chunk_z (std::numeric_limits<int>::max());
+  int max_chunk_x (std::numeric_limits<int>::min());
+  int max_chunk_z (std::numeric_limits<int>::min());
+
+  for (::TileIndex const& tile : tiles)
+  {
+    int const base_x (static_cast<int>(tile.x) * 16);
+    int const base_z (static_cast<int>(tile.z) * 16);
+
+    for (int cx (0); cx < 16; ++cx)
+    {
+      for (int cz (0); cz < 16; ++cz)
+      {
+        move.source_chunks.push_back(Noggit::Database::ChunkAddress{base_x + cx, base_z + cz});
+      }
+    }
+
+    min_chunk_x = std::min(min_chunk_x, base_x);
+    min_chunk_z = std::min(min_chunk_z, base_z);
+    max_chunk_x = std::max(max_chunk_x, base_x + 15);
+    max_chunk_z = std::max(max_chunk_z, base_z + 15);
+  }
+
+  int const width (max_chunk_x - min_chunk_x + 1);
+  int const height (max_chunk_z - min_chunk_z + 1);
+
+  // Where the block's minimum corner ends up, following the Chunk Manipulator's own rule so the
+  // two agree: ChunkClipboard::applyGridOp sends block cell (bx, bz) to (bz, w - 1 - bx) and swaps
+  // the block's width and height, and it anchors the result on the box's minimum corner rather
+  // than re-centring it. Applied here `quarter_turns` times to the corner cell (0, 0), which is
+  // the one correspondence Database::ChunkMove needs.
+  int corner_x (0);
+  int corner_z (0);
+  int block_width (width);
+  int block_height (height);
+
+  for (int turn (0); turn < quarter_turns; ++turn)
+  {
+    int const rotated_x (corner_z);
+    int const rotated_z (block_width - 1 - corner_x);
+
+    corner_x = rotated_x;
+    corner_z = rotated_z;
+
+    std::swap(block_width, block_height);
+  }
+
+  move.reference_source = Noggit::Database::ChunkAddress{min_chunk_x, min_chunk_z};
+  move.reference_destination = Noggit::Database::ChunkAddress
+    { min_chunk_x + corner_x + _chunk_move_dx->value() * 16
+    , min_chunk_z + corner_z + _chunk_move_dz->value() * 16
+    };
+  move.quarter_turns = quarter_turns;
+  move.mirrored = false;
+  move.height_offset = _chunk_move_height->value();
+
+  Noggit::Database::ChunkSpawnMoveReport const report
+    (Noggit::Database::moveSpawnsWithChunks(*cache, move));
+
+  QString message (QString::fromStdString(report.summary));
+
+  for (auto const& issue : report.issues)
+  {
+    // BLOCKING rather than ERROR, because <wingdi.h> defines ERROR as 0 and Qt reaches windows.h;
+    // see the note on ValidationIssue::Severity.
+    QString const prefix
+      ( issue.severity == Noggit::Database::ValidationIssue::Severity::BLOCKING
+          ? QStringLiteral("Blocked: ")
+          : QStringLiteral("Warning: ")
+      );
+
+    message += QStringLiteral("\n\n") + prefix + QString::fromStdString(issue.message);
+  }
+
+  _chunk_move_status->setText(QString::fromStdString(report.summary));
+
+  if (report.moved() > 0)
+  {
+    // Same order as every other edit in this panel: mutate the cache, tell the renderer its
+    // overlay is stale, then rebuild the list. Doing the last two the other way round leaves the
+    // list describing positions the viewport has not caught up with.
+    _map_view->markSpawnOverlayDirty();
+    refresh();
+  }
+
+  QMessageBox::information(this, "Move spawns with terrain", message);
 }
 
 void DatabaseSpawnPanel::applyOrientationIfChanged()
